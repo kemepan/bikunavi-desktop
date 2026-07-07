@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+dist/
+build/
+release/
+vendor/live2dcubismcore.min.js
+*.log
+*.tmp
+*.wav
+
+# Local launchd files may contain machine-specific absolute paths.
+launchd/*.plist
+!launchd/*.plist.template

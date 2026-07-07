@@ -1,0 +1,180 @@
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  position: relative;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+#stage:active {
+  cursor: grabbing;
+}
+
+#bubble {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 9px 12px;
+  border: 1px solid rgb(70 54 88 / 14%);
+  border-radius: 20px 20px 20px 3px;
+  color: #17131d;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 8px 24px rgb(31 18 43 / 20%);
+  font: 12.5px/1.45 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, calc(-100% + 7px)) scale(0.97);
+  transition: opacity 420ms ease, transform 420ms ease;
+  pointer-events: auto;
+}
+
+#bubble.is-active {
+  opacity: 1;
+  transform: translate(-50%, -100%) scale(1);
+}
+
+#bubble.has-chat {
+  min-width: min(204px, calc(100% - 16px));
+}
+
+.bubble-message {
+  white-space: pre-wrap;
+}
+
+.source-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.source-links button {
+  appearance: none;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid rgb(80 55 100 / 18%);
+  border-radius: 999px;
+  color: #513761;
+  background: #f4edf8;
+  font: 10px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.source-links button:hover {
+  background: #eadcf2;
+}
+
+.chat-message {
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.chat-history {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 4px;
+  color: #74677c;
+  font-size: 10px;
+}
+
+.chat-history button {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #4b3d55;
+  background: #eee5f3;
+  cursor: pointer;
+}
+
+.chat-history button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.chat-form {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.chat-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid rgb(80 55 100 / 24%);
+  border-radius: 9px;
+  color: #211827;
+  background: white;
+  font: 11px/1.25 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  user-select: text;
+}
+
+.chat-form button {
+  appearance: none;
+  flex: none;
+  padding: 5px 7px;
+  border: 1px solid rgb(80 55 100 / 24%);
+  border-radius: 10px;
+  color: #33263d;
+  background: #f5eff9;
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  cursor: pointer;
+}
+
+.chat-form button:hover {
+  background: #eadcf2;
+}
+
+.chat-form button:active {
+  transform: translateY(1px);
+}
+
+#status {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border-radius: 10px;
+  color: white;
+  background: rgb(55 35 75 / 75%);
+  font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+#status:empty {
+  display: none;
+}

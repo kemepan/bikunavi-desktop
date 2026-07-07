@@ -1,0 +1,282 @@
+{
+	"Version": 3,
+	"Parameters": [
+		{
+			"Id": "ParamAngleX",
+			"GroupId": "",
+			"Name": "角度 X"
+		},
+		{
+			"Id": "ParamAngleY",
+			"GroupId": "",
+			"Name": "角度 Y"
+		},
+		{
+			"Id": "ParamAngleZ",
+			"GroupId": "",
+			"Name": "角度 Z"
+		},
+		{
+			"Id": "ParamHeadR",
+			"GroupId": "",
+			"Name": "頭調整用"
+		},
+		{
+			"Id": "ParamEyeLOpen",
+			"GroupId": "",
+			"Name": "左目　開閉"
+		},
+		{
+			"Id": "ParamEyeLSmile",
+			"GroupId": "",
+			"Name": "左目　笑顔"
+		},
+		{
+			"Id": "ParamEyeROpen",
+			"GroupId": "",
+			"Name": "右目　開閉"
+		},
+		{
+			"Id": "ParamEyeRSmile",
+			"GroupId": "",
+			"Name": "右目　笑顔"
+		},
+		{
+			"Id": "ParamEyeBallX",
+			"GroupId": "",
+			"Name": "目玉 X"
+		},
+		{
+			"Id": "ParamEyeBallY",
+			"GroupId": "",
+			"Name": "目玉 Y"
+		},
+		{
+			"Id": "ParamMouthForm",
+			"GroupId": "",
+			"Name": "口　変形"
+		},
+		{
+			"Id": "ParamMouthOpenY",
+			"GroupId": "",
+			"Name": "口　開閉"
+		},
+		{
+			"Id": "ParamBrowLForm",
+			"GroupId": "",
+			"Name": "左眉　変形"
+		},
+		{
+			"Id": "ParamBrowRForm",
+			"GroupId": "",
+			"Name": "右眉　変形"
+		},
+		{
+			"Id": "Paramf01",
+			"GroupId": "",
+			"Name": "顔01"
+		},
+		{
+			"Id": "Paramf02",
+			"GroupId": "",
+			"Name": "顔02"
+		},
+		{
+			"Id": "Paramf03",
+			"GroupId": "",
+			"Name": "顔03"
+		},
+		{
+			"Id": "Paramf04",
+			"GroupId": "",
+			"Name": "顔04"
+		},
+		{
+			"Id": "Paramf05",
+			"GroupId": "",
+			"Name": "顔05"
+		},
+		{
+			"Id": "Paramf06",
+			"GroupId": "",
+			"Name": "顔06"
+		},
+		{
+			"Id": "ParamCheek",
+			"GroupId": "",
+			"Name": "照れ"
+		},
+		{
+			"Id": "ParamBodyAngleX",
+			"GroupId": "",
+			"Name": "体の回転 X"
+		},
+		{
+			"Id": "ParamBodyAngleY",
+			"GroupId": "",
+			"Name": "体の回転 Y"
+		},
+		{
+			"Id": "ParamBodyAngleZ",
+			"GroupId": "",
+			"Name": "体の回転 Z"
+		},
+		{
+			"Id": "ParamBodyPositionY",
+			"GroupId": "",
+			"Name": "体の位置Y"
+		},
+		{
+			"Id": "Happy",
+			"GroupId": "",
+			"Name": "喜び1"
+		},
+		{
+			"Id": "Happy2",
+			"GroupId": "",
+			"Name": "喜び2"
+		},
+		{
+			"Id": "Happy3",
+			"GroupId": "",
+			"Name": "喜び3"
+		},
+		{
+			"Id": "ParamBreath",
+			"GroupId": "",
+			"Name": "呼吸"
+		},
+		{
+			"Id": "ParamArmRotateL",
+			"GroupId": "ParamGroup",
+			"Name": "左腕"
+		},
+		{
+			"Id": "ParamArmRotateL2",
+			"GroupId": "ParamGroup",
+			"Name": "左前腕"
+		},
+		{
+			"Id": "ParamArmRotateL3",
+			"GroupId": "ParamGroup",
+			"Name": "左手"
+		},
+		{
+			"Id": "ParamArmRotateR",
+			"GroupId": "ParamGroup",
+			"Name": "右腕"
+		},
+		{
+			"Id": "ParamArmRotateR2",
+			"GroupId": "ParamGroup",
+			"Name": "右前腕"
+		},
+		{
+			"Id": "ParamArmRotateR3",
+			"GroupId": "ParamGroup",
+			"Name": "右手"
+		},
+		{
+			"Id": "ParamHairFront",
+			"GroupId": "",
+			"Name": "髪揺れ　前"
+		},
+		{
+			"Id": "ParamHairFront2",
+			"GroupId": "",
+			"Name": "髪揺れ　前2"
+		},
+		{
+			"Id": "ParamHairSide",
+			"GroupId": "",
+			"Name": "髪揺れ　横"
+		},
+		{
+			"Id": "ParamHairBack",
+			"GroupId": "",
+			"Name": "髪揺れ　後"
+		},
+		{
+			"Id": "ParamBodyY",
+			"GroupId": "",
+			"Name": "体揺れY"
+		},
+		{
+			"Id": "ParamBodyX",
+			"GroupId": "",
+			"Name": "体揺れX"
+		},
+		{
+			"Id": "Paramribbon",
+			"GroupId": "",
+			"Name": "あごリボン"
+		},
+		{
+			"Id": "ParamsleaveR1",
+			"GroupId": "",
+			"Name": "腕リボン1"
+		},
+		{
+			"Id": "ParamsleaveR2",
+			"GroupId": "",
+			"Name": "腕リボン2"
+		},
+		{
+			"Id": "ParamAcceX1",
+			"GroupId": "",
+			"Name": "アクセ　揺れX1"
+		},
+		{
+			"Id": "ParamAcceX2",
+			"GroupId": "",
+			"Name": "アクセ　揺れX2"
+		}
+	],
+	"ParameterGroups": [
+		{
+			"Id": "ParamGroup",
+			"GroupId": "",
+			"Name": "腕"
+		}
+	],
+	"Parts": [
+		{
+			"Id": "face",
+			"Name": "face"
+		},
+		{
+			"Id": "Part5",
+			"Name": "顔"
+		},
+		{
+			"Id": "Part3",
+			"Name": "左腕"
+		},
+		{
+			"Id": "Part",
+			"Name": "左目"
+		},
+		{
+			"Id": "Part2",
+			"Name": "右目"
+		}
+	],
+	"CombinedParameters": [
+		[
+			"ParamAngleX",
+			"ParamAngleY"
+		],
+		[
+			"ParamEyeBallX",
+			"ParamEyeBallY"
+		],
+		[
+			"ParamMouthForm",
+			"ParamMouthOpenY"
+		],
+		[
+			"ParamBodyY",
+			"ParamBodyX"
+		]
+	]
+}

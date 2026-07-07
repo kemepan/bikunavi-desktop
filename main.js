@@ -219,7 +219,14 @@ const FORTUNE_STEMS = [
   { symbol: "壬", element: "水", keyword: "流す", mood: "詰まりをほどく" },
   { symbol: "癸", element: "水", keyword: "潤す", mood: "静かに補給する" }
 ];
-const FORTUNE_BRANCHES = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"];
+// 五行を、干支のような専門用語ではなく「その日の気分の色」として平易に言い換える。
+const FORTUNE_ELEMENTS = {
+  木: { mood: "すくすく伸びる", color: "みどり" },
+  火: { mood: "ぱっと明るい", color: "あかね" },
+  土: { mood: "どっしり落ち着く", color: "つちいろ" },
+  金: { mood: "きゅっと締まる", color: "きんいろ" },
+  水: { mood: "すっと流れる", color: "みずいろ" }
+};
 const FORTUNE_ACTIONS = [
   "机の上をひと区画だけ空ける",
   "途中保存してから次へ進む",
@@ -393,14 +400,14 @@ function makeDailyFortune(date = new Date()) {
   const { year, month, day } = getJstDateParts(date);
   const dateNumber = year * 10000 + month * 100 + day;
   const stem = FORTUNE_STEMS[dateNumber % FORTUNE_STEMS.length];
-  const branch = FORTUNE_BRANCHES[(Math.floor(dateNumber / 3) + day) % FORTUNE_BRANCHES.length];
+  const element = FORTUNE_ELEMENTS[stem.element];
   const action = FORTUNE_ACTIONS[(dateNumber + month) % FORTUNE_ACTIONS.length];
   const item = FORTUNE_ITEMS[(dateNumber + day) % FORTUNE_ITEMS.length];
   const lines = [
-    `今日のびくたん占いです。${stem.symbol}${branch}っぽい${stem.element}の日です。`,
+    `今日のびくたん占いです。${element.mood}、${element.color}っぽい一日になりそうですよ。`,
     `テーマは「${stem.keyword}」。${stem.mood}感じでいきましょう。`,
-    `${action}と吉です。`,
-    `ラッキー小物は${item}です。`
+    `${action}と、いい流れになりそうです。`,
+    `ラッキー小物は${item}。手元にあると心強いですよ。`
   ];
   return {
     text: lines.join("\n"),

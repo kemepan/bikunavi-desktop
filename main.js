@@ -582,145 +582,7 @@ function buildTrayMenu() {
         tray.setContextMenu(buildTrayMenu());
       }
     },
-    {
-      label: "いつも手前",
-      type: "checkbox",
-      checked: companionWindow?.isAlwaysOnTop() ?? true,
-      click: (item) => {
-        companionWindow?.setAlwaysOnTop(item.checked);
-        saveStateSoon();
-      }
-    },
-    {
-      label: "自動移動",
-      type: "checkbox",
-      checked: autoMoveEnabled,
-      click: (item) => {
-        autoMoveEnabled = item.checked;
-        if (!autoMoveEnabled) clearInterval(autoMoveTimer);
-        tray.setContextMenu(buildTrayMenu());
-        saveStateSoon();
-      }
-    },
-    {
-      label: "音楽にノる",
-      type: "checkbox",
-      checked: musicReactEnabled,
-      click: (item) => {
-        musicReactEnabled = item.checked;
-        if (!musicReactEnabled && musicPlaying) {
-          musicPlaying = false;
-          companionWindow?.webContents.send("companion:music-playing", false);
-        }
-        tray.setContextMenu(buildTrayMenu());
-        saveStateSoon();
-      }
-    },
-    {
-      label: "自動セリフの間隔",
-      submenu: [
-        { label: "30秒", intervalMs: 30000 },
-        { label: "1分", intervalMs: 60000 },
-        { label: "2分", intervalMs: 120000 }
-      ].map((option) => ({
-        label: option.label,
-        type: "radio",
-        checked: idleIntervalMs === option.intervalMs,
-        click: () => {
-          idleIntervalMs = option.intervalMs;
-          companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
-          tray.setContextMenu(buildTrayMenu());
-          saveStateSoon();
-        }
-      }))
-    },
-    {
-      label: "読み上げ",
-      type: "checkbox",
-      checked: speechEnabled,
-      click: (item) => {
-        speechEnabled = item.checked;
-        if (!speechEnabled) stopSpeech();
-        tray.setContextMenu(buildTrayMenu());
-        saveStateSoon();
-      }
-    },
-    {
-      label: "自動セリフも読む",
-      type: "checkbox",
-      checked: idleSpeechEnabled,
-      enabled: speechEnabled,
-      click: (item) => {
-        idleSpeechEnabled = item.checked;
-        tray.setContextMenu(buildTrayMenu());
-        saveStateSoon();
-      }
-    },
-    {
-      label: "読み上げ速度",
-      enabled: speechEnabled,
-      submenu: [
-        { label: "ゆっくり", rate: 150 },
-        { label: "標準", rate: 190 },
-        { label: "速め", rate: 230 }
-      ].map((option) => ({
-        label: option.label,
-        type: "radio",
-        checked: speechRate === option.rate,
-        click: () => {
-          speechRate = option.rate;
-          tray.setContextMenu(buildTrayMenu());
-          saveStateSoon();
-        }
-      }))
-    },
-    {
-      label: "音声テスト",
-      enabled: speechEnabled,
-      click: () => {
-        speakText("びくたんの音声テストです。聞こえますか？", "answer")
-          .catch((error) => console.error("Voice test failed:", error));
-      }
-    },
-    {
-      label: "今日のびくたん占い",
-      click: showDailyFortune
-    },
-    {
-      label: "占いを自動セリフに混ぜる",
-      type: "checkbox",
-      checked: fortuneAutoEnabled,
-      click: (item) => {
-        fortuneAutoEnabled = item.checked;
-        tray.setContextMenu(buildTrayMenu());
-        saveStateSoon();
-      }
-    },
-    {
-      label: "最近のセリフを表示",
-      click: () => {
-        companionWindow?.webContents.send("companion:show-line-history");
-      }
-    },
-    {
-      label: "セリフ・会話履歴を消去",
-      click: () => {
-        persistedState.lineHistory = [];
-        persistedState.chatEntries = [];
-        conversationHistory.length = 0;
-        companionWindow?.webContents.send("companion:clear-history");
-        saveStateSoon();
-      }
-    },
-    {
-      label: "サイズ",
-      submenu: Object.entries(SIZE_PRESETS).map(([name, preset]) => ({
-        label: preset.label,
-        type: "radio",
-        checked: currentSize === name,
-        click: () => setCompanionSize(name)
-      }))
-    },
+    { type: "separator" },
     {
       label: pomodoroState.active
         ? `ポモドーロ: ${pomodoroState.label} ${formatPomodoroTime(pomodoroState.remaining)}${pomodoroState.running ? "" : " 一時停止中"}`
@@ -757,15 +619,177 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "右下へ戻す",
-      click: () => {
-        const display = screen.getPrimaryDisplay().workArea;
-        const [width, height] = companionWindow.getSize();
-        companionWindow.setPosition(
-          display.x + display.width - width - 24,
-          display.y + display.height - height - 24
-        );
-      }
+      label: "今日のびくたん占い",
+      click: showDailyFortune
+    },
+    {
+      label: "セリフ履歴",
+      submenu: [
+        {
+          label: "最近のセリフを表示",
+          click: () => {
+            companionWindow?.webContents.send("companion:show-line-history");
+          }
+        },
+        { type: "separator" },
+        {
+          label: "セリフ・会話履歴を消去",
+          click: () => {
+            persistedState.lineHistory = [];
+            persistedState.chatEntries = [];
+            conversationHistory.length = 0;
+            companionWindow?.webContents.send("companion:clear-history");
+            saveStateSoon();
+          }
+        }
+      ]
+    },
+    { type: "separator" },
+    {
+      label: "読み上げ",
+      submenu: [
+        {
+          label: "読み上げする",
+          type: "checkbox",
+          checked: speechEnabled,
+          click: (item) => {
+            speechEnabled = item.checked;
+            if (!speechEnabled) stopSpeech();
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        {
+          label: "自動セリフも読む",
+          type: "checkbox",
+          checked: idleSpeechEnabled,
+          enabled: speechEnabled,
+          click: (item) => {
+            idleSpeechEnabled = item.checked;
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        { type: "separator" },
+        { label: "速度", enabled: false },
+        ...[
+          { label: "ゆっくり", rate: 150 },
+          { label: "標準", rate: 190 },
+          { label: "速め", rate: 230 }
+        ].map((option) => ({
+          label: option.label,
+          type: "radio",
+          checked: speechRate === option.rate,
+          enabled: speechEnabled,
+          click: () => {
+            speechRate = option.rate;
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        })),
+        { type: "separator" },
+        {
+          label: "音声テスト",
+          enabled: speechEnabled,
+          click: () => {
+            speakText("びくたんの音声テストです。聞こえますか？", "answer")
+              .catch((error) => console.error("Voice test failed:", error));
+          }
+        }
+      ]
+    },
+    {
+      label: "ふるまい",
+      submenu: [
+        {
+          label: "自動移動",
+          type: "checkbox",
+          checked: autoMoveEnabled,
+          click: (item) => {
+            autoMoveEnabled = item.checked;
+            if (!autoMoveEnabled) clearInterval(autoMoveTimer);
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        {
+          label: "音楽にノる",
+          type: "checkbox",
+          checked: musicReactEnabled,
+          click: (item) => {
+            musicReactEnabled = item.checked;
+            if (!musicReactEnabled && musicPlaying) {
+              musicPlaying = false;
+              companionWindow?.webContents.send("companion:music-playing", false);
+            }
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        {
+          label: "占いを自動セリフに混ぜる",
+          type: "checkbox",
+          checked: fortuneAutoEnabled,
+          click: (item) => {
+            fortuneAutoEnabled = item.checked;
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        { type: "separator" },
+        { label: "自動セリフの間隔", enabled: false },
+        ...[
+          { label: "30秒", intervalMs: 30000 },
+          { label: "1分", intervalMs: 60000 },
+          { label: "2分", intervalMs: 120000 }
+        ].map((option) => ({
+          label: option.label,
+          type: "radio",
+          checked: idleIntervalMs === option.intervalMs,
+          click: () => {
+            idleIntervalMs = option.intervalMs;
+            companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        }))
+      ]
+    },
+    {
+      label: "表示とサイズ",
+      submenu: [
+        {
+          label: "いつも手前",
+          type: "checkbox",
+          checked: companionWindow?.isAlwaysOnTop() ?? true,
+          click: (item) => {
+            companionWindow?.setAlwaysOnTop(item.checked);
+            saveStateSoon();
+          }
+        },
+        { type: "separator" },
+        { label: "サイズ", enabled: false },
+        ...Object.entries(SIZE_PRESETS).map(([name, preset]) => ({
+          label: preset.label,
+          type: "radio",
+          checked: currentSize === name,
+          click: () => setCompanionSize(name)
+        })),
+        { type: "separator" },
+        {
+          label: "右下へ戻す",
+          click: () => {
+            if (!companionWindow) return;
+            const display = screen.getPrimaryDisplay().workArea;
+            const [width, height] = companionWindow.getSize();
+            companionWindow.setPosition(
+              display.x + display.width - width - 24,
+              display.y + display.height - height - 24
+            );
+            saveStateSoon();
+          }
+        }
+      ]
     },
     { type: "separator" },
     { label: "終了", role: "quit" }

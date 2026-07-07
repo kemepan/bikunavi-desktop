@@ -305,7 +305,26 @@ function createWindow() {
   });
   companionWindow.on("moved", saveStateSoon);
   companionWindow.loadURL(`${APP_SCHEME}://app/index.html`);
-  companionWindow.once("ready-to-show", () => companionWindow.showInactive());
+  companionWindow.once("ready-to-show", () => {
+    if (companionWindow && !companionWindow.isDestroyed()) companionWindow.showInactive();
+  });
+  // macOSの透明・フレームレス窓では ready-to-show が発火しないことがあり、
+  // その場合ウィンドウが永久に不可視のままになるため、時間で強制表示する。
+  const showFallbackTimer = setTimeout(() => {
+    if (companionWindow && !companionWindow.isDestroyed() && !companionWindow.isVisible()) {
+      console.log("ready-to-show did not fire; showing window via fallback");
+      companionWindow.showInactive();
+    }
+    tray?.setContextMenu(buildTrayMenu());
+  }, 1500);
+  companionWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("Renderer process gone:", details?.reason);
+    if (details?.reason !== "clean-exit") {
+      companionWindow?.destroy();
+      companionWindow = undefined;
+      createWindow();
+    }
+  });
   cursorTimer = setInterval(() => {
     if (!companionWindow || !companionWindow.isVisible()) return;
     const cursor = screen.getCursorScreenPoint();
@@ -316,6 +335,8 @@ function createWindow() {
     });
   }, 33);
   companionWindow.on("closed", () => {
+    console.log("Companion window closed");
+    clearTimeout(showFallbackTimer);
     clearInterval(cursorTimer);
     companionWindow = undefined;
   });
@@ -954,6 +975,9 @@ app.whenReady().then(() => {
     const filePath = path.join(__dirname, requestPath);
     if (filePath !== __dirname && !filePath.startsWith(__dirname + path.sep)) {
       return new Response("Forbidden", { status: 403 });
+    }
+    if (!fs.existsSync(filePath)) {
+      return new Response("Not Found", { status: 404 });
     }
     return net.fetch(pathToFileURL(filePath).toString());
   });

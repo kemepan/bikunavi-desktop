@@ -1420,6 +1420,9 @@ async function fetchLatestTopics() {
   }
 
   latestTopicSources = new Map(sourceItems.map((item) => [item.id, item]));
+  console.log(
+    `Topics fetched: ai=${aiNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}`
+  );
 
   const promptText = [
     aiNews.length ? `AI関連の最新見出し:\n${aiNews.join("\n")}` : "",
@@ -1506,6 +1509,9 @@ async function generateIdleLines() {
         })
         .filter((item) => item.text.length >= 4 && item.text.length <= 160);
       if (lines.length < 5) throw new Error("セリフの生成数が不足しました");
+      console.log(
+        `Idle lines generated: ${lines.length} (sources付き: ${lines.filter((line) => line.sources.length).length})`
+      );
       const queuedLines = [...lines];
       if (fortuneAutoEnabled) {
         const fortune = makeDailyFortune();

@@ -85,6 +85,22 @@ npm run package
 
 `~/Library/Application Support/bikunavi-desktop/state.json` に、ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）を保存します。
 
+## 手動での起動・再起動
+
+メニューバーの🌱から「終了」するとアプリごと終了します（アイコンも消えます）。再び起動するには:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/jp.a.bikunavi-desktop"
+```
+
+または `npm run package` で作った `dist/びくにたん-darwin-arm64/びくにたん.app` をダブルクリックでも起動できます。
+
+コードを変更した後の反映は、次のスクリプトで一括実行できます（コピー→検証→再起動）:
+
+```bash
+./scripts/deploy-launchagent.sh
+```
+
 ## macOSログイン時の自動起動
 
 macOSのプライバシー保護により、LaunchAgentからDocuments配下の開発フォルダを直接実行すると失敗することがあります。そのため、実行用一式を `~/Library/Application Support/BikunaviDesktop/` へコピーして起動します。

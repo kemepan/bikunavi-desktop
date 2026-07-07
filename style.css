@@ -61,28 +61,82 @@ body {
   min-width: min(204px, calc(100% - 16px));
 }
 
+#bubble.has-history {
+  min-width: min(188px, calc(100% - 16px));
+}
+
 .bubble-message {
   white-space: pre-wrap;
+}
+
+.history-message {
+  max-width: 240px;
+  text-align: left;
+}
+
+#bubble.has-timer {
+  min-width: 132px;
+  border-color: rgb(168 80 48 / 20%);
+  background: rgb(255 250 244 / 95%);
+}
+
+.timer-message {
+  color: #3a2530;
+  font-weight: 650;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.timer-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.timer-actions button {
+  appearance: none;
+  min-width: 64px;
+  padding: 7px 10px;
+  border: 1px solid rgb(130 78 44 / 20%);
+  border-radius: 999px;
+  color: #4a2d1f;
+  background: #f6eadf;
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  cursor: pointer;
+}
+
+.timer-actions button:hover {
+  background: #eddac8;
+}
+
+.timer-actions button.is-danger {
+  color: #6d2732;
+  background: #f6e5e8;
+}
+
+.timer-actions button.is-danger:hover {
+  background: #edcfd6;
 }
 
 .source-links {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 5px;
-  margin-top: 6px;
+  gap: 7px;
+  margin-top: 8px;
 }
 
 .source-links button {
   appearance: none;
   max-width: 160px;
   overflow: hidden;
-  padding: 3px 7px;
+  padding: 6px 9px;
   border: 1px solid rgb(80 55 100 / 18%);
   border-radius: 999px;
   color: #513761;
   background: #f4edf8;
-  font: 10px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  font: 10.5px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -97,28 +151,37 @@ body {
   text-align: left;
 }
 
-.chat-history {
+.chat-history,
+.line-history {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 8px;
   color: #74677c;
   font-size: 10px;
 }
 
-.chat-history button {
-  width: 22px;
-  height: 18px;
+.chat-history button,
+.line-history button {
+  width: 28px;
+  height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #4b3d55;
   background: #eee5f3;
   cursor: pointer;
 }
 
-.chat-history button:disabled {
+.line-history button.is-wide {
+  width: auto;
+  min-width: 44px;
+  padding: 0 9px;
+}
+
+.chat-history button:disabled,
+.line-history button:disabled {
   opacity: 0.3;
   cursor: default;
 }

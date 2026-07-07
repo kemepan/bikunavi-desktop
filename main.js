@@ -7,7 +7,8 @@ const {
   screen,
   ipcMain,
   clipboard,
-  shell
+  shell,
+  powerMonitor
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -30,6 +31,7 @@ let speechProcess;
 let speechSequence = 0;
 let activeSpeechId;
 let speechFile;
+const speechWaiters = new Map();
 let voicevoxProcess;
 let voicevoxOwned = false;
 let voicevoxReadyPromise;
@@ -42,6 +44,19 @@ const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
+let systemSleeping = false;
+let fortuneAutoEnabled = true;
+let pomodoroTimer;
+let pomodoroState = {
+  active: false,
+  running: false,
+  phase: undefined,
+  label: "",
+  duration: 0,
+  remaining: 0,
+  startedAt: 0,
+  endsAt: 0
+};
 
 const FALLBACK_IDLE_LINES = [
   "水分とってます？",
@@ -57,6 +72,87 @@ const SIZE_PRESETS = {
   medium: { label: "中", width: 280, height: 598 },
   large: { label: "大", width: 360, height: 718 }
 };
+
+const POMODORO_PRESETS = {
+  focus90: {
+    label: "90分作業",
+    duration: 90 * 60,
+    startMessage: "90分作業、はじめましょう。深めに潜るやつですね。びくたん、静かに見守ります。",
+    nextPhase: "break15",
+    nextReason: "autoBreakStarted",
+    nextMessage: "90分おつかれさまです。15分休憩に入ります。いったん画面から離れてもいいやつです。"
+  },
+  break15: {
+    label: "15分休憩",
+    duration: 15 * 60,
+    startMessage: "15分休憩です。ちゃんと休む時間にしましょう。",
+    nextPhase: "focus90",
+    nextReason: "autoFocusStarted",
+    nextMessage: "15分休憩おしまいです。次の90分、ゆっくり戻っていきましょう。"
+  },
+  focus25: {
+    label: "25分作業",
+    duration: 25 * 60,
+    startMessage: "25分集中、はじめましょう。びくたん、ここで見てますね。",
+    nextPhase: "break5",
+    nextReason: "autoBreakStarted",
+    nextMessage: "25分おつかれさまです。5分休憩に入ります。目と肩、ちょっとゆるめましょう。"
+  },
+  break5: {
+    label: "5分休憩",
+    duration: 5 * 60,
+    startMessage: "5分休憩です。目と肩、ちょっとゆるめましょう。",
+    nextPhase: "focus25",
+    nextReason: "autoFocusStarted",
+    nextMessage: "5分休憩おしまいです。次の25分、ゆるっと始めましょう。"
+  },
+  focus15: {
+    label: "15分作業",
+    duration: 15 * 60,
+    startMessage: "15分作業、いきましょう。短く区切って、さくっと進める回です。",
+    nextPhase: "focus15",
+    nextReason: "autoFocusStarted",
+    nextMessage: "15分おつかれさまです。肩を落として、深呼吸をひとつ。では、続けていきましょう。"
+  }
+};
+
+const FORTUNE_STEMS = [
+  { symbol: "甲", element: "木", keyword: "育てる", mood: "広げるより、芽を守る" },
+  { symbol: "乙", element: "木", keyword: "整える", mood: "小さく手を入れる" },
+  { symbol: "丙", element: "火", keyword: "見せる", mood: "明るく出してみる" },
+  { symbol: "丁", element: "火", keyword: "灯す", mood: "一点集中で温める" },
+  { symbol: "戊", element: "土", keyword: "固める", mood: "土台を作る" },
+  { symbol: "己", element: "土", keyword: "ならす", mood: "散らばりをまとめる" },
+  { symbol: "庚", element: "金", keyword: "削る", mood: "余分を落とす" },
+  { symbol: "辛", element: "金", keyword: "磨く", mood: "細部をきれいにする" },
+  { symbol: "壬", element: "水", keyword: "流す", mood: "詰まりをほどく" },
+  { symbol: "癸", element: "水", keyword: "潤す", mood: "静かに補給する" }
+];
+const FORTUNE_BRANCHES = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"];
+const FORTUNE_ACTIONS = [
+  "机の上をひと区画だけ空ける",
+  "途中保存してから次へ進む",
+  "よく使うファイルを一つだけ定位置に戻す",
+  "大きい作業を三つに割る",
+  "飲み物を用意してから始める",
+  "後回しメモを一行だけ書く",
+  "ブラウザのタブを三つ閉じる",
+  "5分だけ手を動かしてみる",
+  "今日やらないことを一つ決める",
+  "ケーブルやペンを一つ戻す"
+];
+const FORTUNE_ITEMS = [
+  "あたたかい飲み物",
+  "小さなメモ",
+  "白い余白",
+  "いつものペン",
+  "畳んだハンカチ",
+  "お気に入りの曲",
+  "空のトレイ",
+  "短いチェックリスト",
+  "明るい画面",
+  "一口のおやつ"
+];
 
 const traySvg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
@@ -145,6 +241,201 @@ function setCompanionSize(sizeName) {
   tray?.setContextMenu(buildTrayMenu());
 }
 
+function getJstDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day)
+  };
+}
+
+function makeDailyFortune(date = new Date()) {
+  const { year, month, day } = getJstDateParts(date);
+  const dateNumber = year * 10000 + month * 100 + day;
+  const stem = FORTUNE_STEMS[dateNumber % FORTUNE_STEMS.length];
+  const branch = FORTUNE_BRANCHES[(Math.floor(dateNumber / 3) + day) % FORTUNE_BRANCHES.length];
+  const action = FORTUNE_ACTIONS[(dateNumber + month) % FORTUNE_ACTIONS.length];
+  const item = FORTUNE_ITEMS[(dateNumber + day) % FORTUNE_ITEMS.length];
+  const lines = [
+    `今日のびくたん占いです。${stem.symbol}${branch}っぽい${stem.element}の日です。`,
+    `テーマは「${stem.keyword}」。${stem.mood}感じでいきましょう。`,
+    `${action}と吉です。`,
+    `ラッキー小物は${item}です。`
+  ];
+  return {
+    text: lines.join("\n"),
+    lines,
+    sources: []
+  };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function showDailyFortune() {
+  const fortune = makeDailyFortune();
+  try {
+    const lines = Array.isArray(fortune.lines) && fortune.lines.length
+      ? fortune.lines
+      : [fortune.text];
+    for (const [index, line] of lines.entries()) {
+      if (systemSleeping) return;
+      companionWindow?.webContents.send("companion:fortune", {
+        text: line,
+        sources: [],
+        index,
+        total: lines.length
+      });
+      await speakAndWait(line, "answer");
+      if (index < lines.length - 1) await delay(450);
+    }
+  } catch (error) {
+    console.error("Fortune speech failed:", error);
+  }
+}
+
+function formatPomodoroTime(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = safeSeconds % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function getPomodoroSnapshot(reason = "tick") {
+  return {
+    ...pomodoroState,
+    reason,
+    timeText: formatPomodoroTime(pomodoroState.remaining)
+  };
+}
+
+function refreshPomodoroUi(reason = "tick") {
+  if (tray) {
+    tray.setTitle(pomodoroState.active ? `🍅 ${formatPomodoroTime(pomodoroState.remaining)}` : "🌱");
+    tray.setContextMenu(buildTrayMenu());
+  }
+  companionWindow?.webContents.send("companion:pomodoro", getPomodoroSnapshot(reason));
+}
+
+function clearPomodoroTimer() {
+  if (pomodoroTimer) {
+    clearInterval(pomodoroTimer);
+    pomodoroTimer = undefined;
+  }
+}
+
+function completePomodoro() {
+  const preset = POMODORO_PRESETS[pomodoroState.phase];
+  clearPomodoroTimer();
+
+  if (preset?.nextPhase) {
+    startPomodoro(preset.nextPhase, {
+      reason: preset.nextReason || "autoFocusStarted",
+      message: preset.nextMessage
+    });
+    return;
+  }
+
+  pomodoroState = {
+    ...pomodoroState,
+    active: false,
+    running: false,
+    remaining: 0,
+    endsAt: 0
+  };
+  refreshPomodoroUi("completed");
+  if (preset?.completeMessage) {
+    speakFromMain(preset.completeMessage, "answer").catch((error) => {
+      console.error("Pomodoro completion speech failed:", error);
+    });
+  }
+}
+
+function tickPomodoro() {
+  if (!pomodoroState.active || !pomodoroState.running) return;
+  const remaining = Math.max(0, Math.ceil((pomodoroState.endsAt - Date.now()) / 1000));
+  if (remaining === pomodoroState.remaining && remaining > 0) return;
+  pomodoroState = { ...pomodoroState, remaining };
+  if (remaining <= 0) {
+    completePomodoro();
+    return;
+  }
+  refreshPomodoroUi("tick");
+}
+
+function startPomodoro(phase, options = {}) {
+  const preset = POMODORO_PRESETS[phase];
+  if (!preset) return;
+  clearPomodoroTimer();
+  const now = Date.now();
+  pomodoroState = {
+    active: true,
+    running: true,
+    phase,
+    label: preset.label,
+    duration: preset.duration,
+    remaining: preset.duration,
+    startedAt: now,
+    endsAt: now + preset.duration * 1000
+  };
+  pomodoroTimer = setInterval(tickPomodoro, 1000);
+  refreshPomodoroUi(options.reason || "started");
+  const message = options.message ?? preset.startMessage;
+  if (options.speak !== false && message) {
+    speakFromMain(message, "answer").catch((error) => {
+      console.error("Pomodoro start speech failed:", error);
+    });
+  }
+}
+
+function pausePomodoro() {
+  if (!pomodoroState.active || !pomodoroState.running) return;
+  tickPomodoro();
+  clearPomodoroTimer();
+  pomodoroState = {
+    ...pomodoroState,
+    running: false,
+    endsAt: 0
+  };
+  refreshPomodoroUi("paused");
+}
+
+function resumePomodoro() {
+  if (!pomodoroState.active || pomodoroState.running) return;
+  pomodoroState = {
+    ...pomodoroState,
+    running: true,
+    endsAt: Date.now() + pomodoroState.remaining * 1000
+  };
+  clearPomodoroTimer();
+  pomodoroTimer = setInterval(tickPomodoro, 1000);
+  refreshPomodoroUi("resumed");
+}
+
+function stopPomodoro() {
+  if (!pomodoroState.active) return;
+  clearPomodoroTimer();
+  pomodoroState = {
+    active: false,
+    running: false,
+    phase: undefined,
+    label: "",
+    duration: 0,
+    remaining: 0,
+    startedAt: 0,
+    endsAt: 0
+  };
+  refreshPomodoroUi("stopped");
+}
+
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
@@ -210,6 +501,25 @@ function buildTrayMenu() {
       }
     },
     {
+      label: "今日のびくたん占い",
+      click: showDailyFortune
+    },
+    {
+      label: "占いを自動セリフに混ぜる",
+      type: "checkbox",
+      checked: fortuneAutoEnabled,
+      click: (item) => {
+        fortuneAutoEnabled = item.checked;
+        tray.setContextMenu(buildTrayMenu());
+      }
+    },
+    {
+      label: "最近のセリフを表示",
+      click: () => {
+        companionWindow?.webContents.send("companion:show-line-history");
+      }
+    },
+    {
       label: "サイズ",
       submenu: Object.entries(SIZE_PRESETS).map(([name, preset]) => ({
         label: preset.label,
@@ -217,6 +527,41 @@ function buildTrayMenu() {
         checked: currentSize === name,
         click: () => setCompanionSize(name)
       }))
+    },
+    {
+      label: pomodoroState.active
+        ? `ポモドーロ: ${pomodoroState.label} ${formatPomodoroTime(pomodoroState.remaining)}${pomodoroState.running ? "" : " 一時停止中"}`
+        : "ポモドーロ",
+      submenu: [
+        {
+          label: "90分 作業を開始",
+          click: () => startPomodoro("focus90")
+        },
+        {
+          label: "25分 作業を開始",
+          click: () => startPomodoro("focus25")
+        },
+        {
+          label: "15分 作業を開始",
+          click: () => startPomodoro("focus15")
+        },
+        { type: "separator" },
+        {
+          label: "一時停止",
+          enabled: pomodoroState.active && pomodoroState.running,
+          click: pausePomodoro
+        },
+        {
+          label: "再開",
+          enabled: pomodoroState.active && !pomodoroState.running,
+          click: resumePomodoro
+        },
+        {
+          label: "停止",
+          enabled: pomodoroState.active,
+          click: stopPomodoro
+        }
+      ]
     },
     {
       label: "右下へ戻す",
@@ -247,7 +592,15 @@ function stopSpeech() {
   }
   if (stoppedSpeechId) {
     companionWindow?.webContents.send("companion:speech-ended", stoppedSpeechId);
+    resolveSpeechWaiter(stoppedSpeechId);
   }
+}
+
+function setSystemSleeping(sleeping) {
+  if (systemSleeping === sleeping) return;
+  systemSleeping = sleeping;
+  if (systemSleeping) stopSpeech();
+  companionWindow?.webContents.send("companion:system-sleep", systemSleeping);
 }
 
 async function isVoicevoxReady() {
@@ -338,14 +691,24 @@ function startSpeechProcess(child, speechId, file) {
         speechFile = undefined;
       }
       companionWindow?.webContents.send("companion:speech-ended", speechId);
+      resolveSpeechWaiter(speechId);
     }
   });
   child.on("error", (error) => {
     console.error("Speech failed:", error);
+    resolveSpeechWaiter(speechId);
   });
 }
 
+function resolveSpeechWaiter(speechId) {
+  const waiter = speechWaiters.get(speechId);
+  if (!waiter) return;
+  speechWaiters.delete(speechId);
+  waiter();
+}
+
 async function speakText(rawText, kind) {
+  if (systemSleeping) return undefined;
   if (!speechEnabled || (kind === "idle" && !idleSpeechEnabled)) return undefined;
   const text = String(rawText ?? "")
     .replace(/https?:\/\/\S+/g, "")
@@ -384,6 +747,34 @@ async function speakText(rawText, kind) {
   return speechId;
 }
 
+async function speakFromMain(text, kind = "answer") {
+  const speechId = await speakText(text, kind);
+  if (speechId) {
+    companionWindow?.webContents.send("companion:speech-started", {
+      speechId,
+      kind
+    });
+  }
+  return speechId;
+}
+
+async function speakAndWait(text, kind = "answer") {
+  const speechId = await speakFromMain(text, kind);
+  if (!speechId) return undefined;
+  const fallbackMs = Math.min(12000, Math.max(1600, String(text).length * 170));
+  await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      speechWaiters.delete(speechId);
+      resolve();
+    }, fallbackMs);
+    speechWaiters.set(speechId, () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  return speechId;
+}
+
 app.whenReady().then(() => {
   app.dock?.hide();
   createWindow();
@@ -397,6 +788,12 @@ app.whenReady().then(() => {
   tray.setToolTip("びくにたん");
   tray.setContextMenu(buildTrayMenu());
   startMusicPlaybackMonitor();
+  powerMonitor.on("suspend", () => {
+    setSystemSleeping(true);
+  });
+  powerMonitor.on("resume", () => {
+    setSystemSleeping(false);
+  });
   ensureVoicevoxEngine().catch((error) => {
     console.error("VOICEVOX prewarm failed:", error);
   });
@@ -425,7 +822,7 @@ ipcMain.on("companion:drag-end", () => {
 });
 
 ipcMain.on("companion:auto-move", () => {
-  if (!companionWindow || dragOrigin || characterHovered || musicPlaying) return;
+  if (!companionWindow || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) return;
   clearInterval(autoMoveTimer);
 
   const bounds = companionWindow.getBounds();
@@ -439,7 +836,7 @@ ipcMain.on("companion:auto-move", () => {
   const duration = 10000;
 
   autoMoveTimer = setInterval(() => {
-    if (!companionWindow || dragOrigin || characterHovered || musicPlaying) {
+    if (!companionWindow || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) {
       clearInterval(autoMoveTimer);
       return;
     }
@@ -698,13 +1095,14 @@ function parseChatResponse(rawResponse, sourceMap) {
 }
 
 function shouldAttachLatestTopics(message) {
-  return /ニュース|最新|最近|今日|いま|今|時事|話題|トレンド|記事|ソース|出典|URL|情報|AI|生成AI|OpenAI/i.test(message);
+  return /ニュース|最新|最近|今日|いま|今|時事|話題|トレンド|記事|ソース|出典|URL|情報|AI|生成AI|OpenAI|生活|暮らし|家事|時短|整理|収納|掃除|ライフハック/i.test(message);
 }
 
 async function fetchLatestTopics() {
   const generalNews = [];
   const techNews = [];
   const aiNews = [];
+  const lifestyleNews = [];
   const sourceItems = [];
 
   const addSources = (kind, items) => {
@@ -714,6 +1112,7 @@ async function fetchLatestTopics() {
       sourceItems.push(sourceItem);
       if (kind === "A") aiNews.push(formatTopicForPrompt(id, sourceItem));
       else if (kind === "G") generalNews.push(formatTopicForPrompt(id, sourceItem));
+      else if (kind === "L") lifestyleNews.push(formatTopicForPrompt(id, sourceItem));
       else techNews.push(formatTopicForPrompt(id, sourceItem));
     }
   };
@@ -767,10 +1166,22 @@ async function fetchLatestTopics() {
     addSources("A", parseRssItems(xml, 15));
   })();
 
+  const lifestyleNewsTask = (async () => {
+    const query = encodeURIComponent("ライフハック OR 生活の知恵 OR 家事 時短 OR 整理術 OR 収納");
+    const response = await fetch(
+      `https://news.google.com/rss/search?q=${query}&hl=ja&gl=JP&ceid=JP:ja`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!response.ok) throw new Error(`Google Lifestyle News RSS: ${response.status}`);
+    const xml = await response.text();
+    addSources("L", parseRssItems(xml, 12));
+  })();
+
   const results = await Promise.allSettled([
     googleNewsTask,
     hackerNewsTask,
-    aiNewsTask
+    aiNewsTask,
+    lifestyleNewsTask
   ]);
   for (const result of results) {
     if (result.status === "rejected") {
@@ -782,6 +1193,7 @@ async function fetchLatestTopics() {
 
   const promptText = [
     aiNews.length ? `AI関連の最新見出し:\n${aiNews.join("\n")}` : "",
+    lifestyleNews.length ? `生活ハック・暮らしの見出し:\n${lifestyleNews.join("\n")}` : "",
     generalNews.length ? `日本の最新見出し:\n${generalNews.join("\n")}` : "",
     techNews.length ? `技術コミュニティの最新見出し:\n${techNews.join("\n")}` : ""
   ].filter(Boolean).join("\n\n");
@@ -807,17 +1219,20 @@ async function generateIdleLines() {
       `現在の日本時間は ${now} です。`,
       "ユーザーが作業中に、たまに話すセリフを20個作ってください。",
       "通常のセリフは10〜35文字、情報共有系は50〜120文字の自然な日本語にしてください。各セリフは改行せず、一行に一つだけ出力してください。",
-      "出力形式は必ず `種別|参照ID|セリフ` にしてください。通常セリフは `normal||セリフ`、ニュース系は `news|A3|セリフ` のように、元にした見出しのIDを1〜2個入れてください。",
+      "出力形式は必ず `種別|参照ID|セリフ` にしてください。通常セリフは `normal||セリフ`、ニュース系は `news|A3|セリフ`、生活ハック系は `life|L3|セリフ` のように、元にした見出しのIDを1〜2個入れてください。",
       "番号、箇条書き記号、引用符、説明は付けないでください。",
       "自己紹介や『AIナビです』は禁止です。",
       "気の合う作業仲間のような、具体的でくだけた口調にしてください。",
       "時間帯、休憩、保存確認、創作やPC作業、日常の小ネタ、軽いユーモアを混ぜてください。",
       "ポエム、格言、抽象的な励まし、悟った言い回し、仏教・スピリチュアル調は禁止です。",
       latestTopicText
-        ? "20個のうち5個はAI関連ニュース、2個はその他の時事・技術ネタにしてください。残りは日常や制作の短いセリフにしてください。"
+        ? "20個のうち5個はAI関連ニュース、3個は生活ハック・暮らしの小ネタ、2個はその他の時事・技術ネタにしてください。残りは日常や制作の短いセリフにしてください。"
         : "",
       latestTopicText
-        ? "ニュース系は情報共有として少し長めに、見出しから分かる出来事と、創作やPC作業の相棒として気になる点を一つ話してください。"
+        ? "ニュース系・生活ハック系は情報共有として少し長めに、見出しから分かる出来事やコツと、創作やPC作業の相棒として気になる点を一つ話してください。"
+        : "",
+      latestTopicText
+        ? "生活ハック系は、机まわり、整理、家事時短、休憩、作業環境、買い物前の確認など、すぐ試せる軽い内容にしてください。医療・治療・サプリ・危険な掃除方法・不安を煽る健康話は避けてください。"
         : "",
       latestTopicText
         ? "見出しだけで分からない詳細は補わず、推測は『〜かもしれません』と明示してください。ニュース媒体名は自然に入れられる場合だけ添えてください。"
@@ -837,14 +1252,15 @@ async function generateIdleLines() {
         .map((line) => line.replace(/^["「]|["」]$/g, ""))
         .map((line) => {
           const parts = line.split("|").map((part) => part.trim());
-          if (parts.length >= 3 && /^(?:normal|news)$/i.test(parts[0])) {
+          if (parts.length >= 3 && /^(?:normal|news|life)$/i.test(parts[0])) {
             const text = parts.slice(2).join("|").trim();
             const sourceIds = parts[1]
               .split(",")
               .map((id) => id.replace(/[\[\]]/g, "").trim())
               .filter(Boolean)
               .slice(0, 2);
-            const sources = parts[0].toLowerCase() === "news"
+            const kind = parts[0].toLowerCase();
+            const sources = ["news", "life"].includes(kind)
               ? sourceIds
                 .map((id) => latestTopics.sources.get(id))
                 .filter(Boolean)
@@ -860,7 +1276,16 @@ async function generateIdleLines() {
         })
         .filter((item) => item.text.length >= 4 && item.text.length <= 160);
       if (lines.length < 5) throw new Error("セリフの生成数が不足しました");
-      idleLineQueue.push(...lines);
+      const queuedLines = [...lines];
+      if (fortuneAutoEnabled) {
+        const fortune = makeDailyFortune();
+        const fortuneLines = (fortune.lines || [fortune.text]).map((text) => ({
+          text,
+          sources: []
+        }));
+        queuedLines.splice(Math.min(queuedLines.length, 2), 0, ...fortuneLines);
+      }
+      idleLineQueue.push(...queuedLines.slice(0, 20));
     } catch (error) {
       console.error("Idle line generation failed:", error);
       idleLineQueue.push(...FALLBACK_IDLE_LINES);
@@ -939,6 +1364,17 @@ ipcMain.handle("companion:speak", (_event, text, kind = "answer") => {
 
 ipcMain.handle("companion:music-playing", () => musicPlaying);
 
+ipcMain.handle("companion:system-sleeping", () => systemSleeping);
+
+ipcMain.handle("companion:pomodoro-state", () => getPomodoroSnapshot("sync"));
+
+ipcMain.handle("companion:pomodoro-action", (_event, action) => {
+  if (action === "pause") pausePomodoro();
+  else if (action === "resume") resumePomodoro();
+  else if (action === "stop") stopPomodoro();
+  return getPomodoroSnapshot("sync");
+});
+
 ipcMain.handle("companion:open-url", async (_event, rawUrl) => {
   const url = String(rawUrl ?? "");
   if (!/^https?:\/\//.test(url)) return false;
@@ -951,6 +1387,7 @@ ipcMain.on("companion:stop-speech", () => {
 });
 
 app.on("before-quit", () => {
+  clearPomodoroTimer();
   clearInterval(mediaPlaybackTimer);
   stopSpeech();
   if (voicevoxOwned) voicevoxProcess?.kill("SIGTERM");

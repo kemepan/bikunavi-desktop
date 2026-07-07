@@ -43,6 +43,9 @@ let chatActive = false;
 let pendingQuestion = "";
 let chatEntryIndex = -1;
 const chatEntries = [];
+const lineHistory = [];
+let lineHistoryIndex = -1;
+let lineHistoryActive = false;
 let currentEmote = { ...EMOTES.default };
 let blinkTimer = 0;
 let hideBubbleTimer;
@@ -53,8 +56,12 @@ let chatIdleTimer;
 let suppressHoverUntilLeave = false;
 let currentSpeechId;
 let currentSpeechKind;
+let currentSpeechHoldMs = 900;
 let musicPlaying = false;
 let musicDanceWeight = 0;
+let systemSleeping = false;
+let pomodoroState = { active: false, running: false, remaining: 0, label: "", timeText: "" };
+let pomodoroHideTimer;
 
 function fitModel() {
   if (!model || !visualBounds) return;
@@ -113,12 +120,57 @@ function getVisualBounds(internalModel) {
     : { minX: 0, minY: 0, maxX: originalModelWidth, maxY: originalModelHeight };
 }
 
+function isPointInActiveBubble(point) {
+  if (!bubble.classList.contains("is-active")) return false;
+  const rect = bubble.getBoundingClientRect();
+  const padding = bubble.classList.contains("has-chat") || bubble.classList.contains("has-history")
+    ? 24
+    : 14;
+  const insideBubble = (
+    point.x >= rect.left - padding &&
+    point.x <= rect.right + padding &&
+    point.y >= rect.top - padding &&
+    point.y <= rect.bottom + padding
+  );
+  if (insideBubble) return true;
+  if (!characterHitBounds) return false;
+
+  // Make the air between the character and the speech bubble feel touchable.
+  // Without this bridge, moving the cursor from びくたん to small buttons can
+  // briefly leave both hit areas and the UI changes under the cursor.
+  const bridgeLeft = Math.min(rect.left, characterHitBounds.x) - 28;
+  const bridgeRight = Math.max(rect.right, characterHitBounds.x + characterHitBounds.width) + 28;
+  const bridgeTop = rect.top - 12;
+  const bridgeBottom = characterHitBounds.y + 44;
+  return (
+    point.x >= bridgeLeft &&
+    point.x <= bridgeRight &&
+    point.y >= bridgeTop &&
+    point.y <= bridgeBottom
+  );
+}
+
 function normalizeSpeechItem(item) {
   if (typeof item === "string") return { text: item, sources: [] };
   return {
     text: String(item?.text ?? ""),
     sources: Array.isArray(item?.sources) ? item.sources : []
   };
+}
+
+function rememberLine(item, kind = "line") {
+  const speechItem = normalizeSpeechItem(item);
+  if (!speechItem.text.trim()) return;
+  const previous = lineHistory[lineHistory.length - 1];
+  if (previous?.text === speechItem.text) return;
+  lineHistory.push({
+    text: speechItem.text,
+    sources: speechItem.sources,
+    kind,
+    time: Date.now()
+  });
+  if (lineHistory.length > 20) lineHistory.shift();
+  if (!lineHistoryActive) lineHistoryIndex = lineHistory.length - 1;
 }
 
 function makeSourceLabel(source, index) {
@@ -155,6 +207,8 @@ function createSourceLinks(sources) {
 
 function showBubble(item) {
   clearTimeout(hideBubbleTimer);
+  clearTimeout(pomodoroHideTimer);
+  lineHistoryActive = false;
   const speechItem = normalizeSpeechItem(item);
   bubble.replaceChildren();
   const message = document.createElement("div");
@@ -163,8 +217,199 @@ function showBubble(item) {
   bubble.append(message);
   const sourceList = createSourceLinks(speechItem.sources);
   if (sourceList) bubble.append(sourceList);
-  bubble.classList.remove("has-actions", "has-chat");
+  bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
   bubble.classList.add("is-active");
+}
+
+function showLineHistory(index = lineHistoryIndex) {
+  clearTimeout(hideBubbleTimer);
+  clearTimeout(pomodoroHideTimer);
+  bubble.replaceChildren();
+  bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
+  bubble.classList.add("has-history", "is-active");
+  lineHistoryActive = true;
+
+  if (!lineHistory.length) {
+    const empty = document.createElement("div");
+    empty.className = "bubble-message";
+    empty.textContent = "まだセリフ履歴がありません。";
+    bubble.append(empty);
+    const controls = document.createElement("div");
+    controls.className = "line-history";
+    controls.append(createLineHistoryCloseButton());
+    bubble.append(controls);
+    return;
+  }
+
+  lineHistoryIndex = Math.max(0, Math.min(index, lineHistory.length - 1));
+  const entry = lineHistory[lineHistoryIndex];
+  const message = document.createElement("div");
+  message.className = "bubble-message history-message";
+  message.textContent = entry.text;
+  bubble.append(message);
+  const sourceList = createSourceLinks(entry.sources);
+  if (sourceList) bubble.append(sourceList);
+
+  const controls = document.createElement("div");
+  controls.className = "line-history";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.textContent = "‹";
+  previous.title = "前のセリフ";
+  previous.disabled = lineHistoryIndex <= 0;
+  previous.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showLineHistory(lineHistoryIndex - 1);
+  });
+
+  const count = document.createElement("span");
+  count.textContent = `${lineHistoryIndex + 1}/${lineHistory.length}`;
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.textContent = "›";
+  next.title = "次のセリフ";
+  next.disabled = lineHistoryIndex >= lineHistory.length - 1;
+  next.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showLineHistory(lineHistoryIndex + 1);
+  });
+
+  const replay = document.createElement("button");
+  replay.type = "button";
+  replay.className = "is-wide";
+  replay.textContent = "再読";
+  replay.title = "このセリフを読み上げ";
+  replay.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    ipcRenderer.invoke("companion:speak", entry.text, "answer").catch(console.error);
+  });
+
+  controls.append(previous, count, next, replay);
+  controls.append(createLineHistoryCloseButton());
+  bubble.append(controls);
+}
+
+function createLineHistoryCloseButton() {
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "is-wide";
+  close.textContent = "閉じる";
+  close.title = "セリフ履歴を閉じる";
+  close.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    lineHistoryActive = false;
+    if (isHovered && !pomodoroState.active) {
+      showChatBubble();
+    } else {
+      hideBubble();
+      resumeAmbientState();
+    }
+  });
+  return close;
+}
+
+function getIdleSpeechHoldMs(item) {
+  const speechItem = normalizeSpeechItem(item);
+  const hasSources = speechItem.sources.some((source) => /^https?:\/\//.test(source?.url || ""));
+  if (hasSources) return 30000;
+  if (speechItem.text.length >= 70) return 18000;
+  return 900;
+}
+
+function createPomodoroControls(state) {
+  if (!state.active) return undefined;
+  const controls = document.createElement("div");
+  controls.className = "timer-actions";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.textContent = state.running ? "一時停止" : "再開";
+  toggle.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      pomodoroState = await ipcRenderer.invoke(
+        "companion:pomodoro-action",
+        state.running ? "pause" : "resume"
+      );
+      showPomodoroBubble(pomodoroState, true);
+    } catch (error) {
+      console.error("Pomodoro toggle failed:", error);
+    }
+  });
+
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.textContent = "停止";
+  stop.className = "is-danger";
+  stop.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      pomodoroState = await ipcRenderer.invoke("companion:pomodoro-action", "stop");
+      showPomodoroBubble(pomodoroState, true);
+    } catch (error) {
+      console.error("Pomodoro stop failed:", error);
+    }
+  });
+
+  controls.append(toggle, stop);
+  return controls;
+}
+
+function showPomodoroBubble(state = pomodoroState, force = false) {
+  clearTimeout(hideBubbleTimer);
+  clearTimeout(pomodoroHideTimer);
+  lineHistoryActive = false;
+  if ((chatActive || dragging) && !force) return;
+
+  if (!state.active && state.reason === "stopped") {
+    const stoppedLine = "ポモドーロ、止めました。";
+    rememberLine(stoppedLine, "timer");
+    showBubble(stoppedLine);
+    hideBubble(2200);
+    return;
+  }
+
+  const title = state.active
+    ? `${state.label || "ポモドーロ"}${state.running ? "" : " 一時停止中"}`
+    : "ポモドーロ完了";
+  const text = state.reason === "completed"
+    ? `${state.label || "タイマー"}おしまいです。\nおつかれさまでした！`
+    : `${title}\n${state.timeText || "0:00"}`;
+  if (["started", "autoBreakStarted", "autoFocusStarted", "paused", "resumed", "completed"].includes(state.reason)) {
+    rememberLine(text, "timer");
+  }
+
+  bubble.replaceChildren();
+  const message = document.createElement("div");
+  message.className = "bubble-message timer-message";
+  message.textContent = text;
+  bubble.append(message);
+  if (state.active && isHovered) {
+    const controls = createPomodoroControls(state);
+    if (controls) bubble.append(controls);
+  }
+  bubble.classList.remove("has-actions", "has-chat", "has-history");
+  bubble.classList.add("has-timer", "is-active");
+
+  if (state.reason === "completed") {
+    setEmote("joy");
+    pomodoroHideTimer = setTimeout(() => hideBubble(), 9000);
+  } else if (state.active) {
+    setEmote(musicPlaying ? "joy" : getPomodoroEmote(state));
+  }
+}
+
+function getPomodoroEmote(state = pomodoroState) {
+  if (!state.active) return "default";
+  if (!state.running) return "joy";
+  return String(state.phase || "").startsWith("focus") ? "default" : "joy";
 }
 
 function shortenForBubble(text, limit) {
@@ -174,6 +419,8 @@ function shortenForBubble(text, limit) {
 
 function showChatBubble(busy = false) {
   clearTimeout(hideBubbleTimer);
+  clearTimeout(pomodoroHideTimer);
+  lineHistoryActive = false;
   bubble.replaceChildren();
   const message = document.createElement("div");
   message.className = "chat-message";
@@ -250,6 +497,7 @@ function showChatBubble(busy = false) {
     if (event.key === "Escape") closeChat();
   });
   bubble.append(form);
+  bubble.classList.remove("has-timer", "has-history");
   bubble.classList.add("has-chat", "is-active");
 }
 
@@ -335,7 +583,7 @@ async function runChat(rawMessage) {
 function hideBubble(delay = 0) {
   clearTimeout(hideBubbleTimer);
   hideBubbleTimer = setTimeout(() => {
-    if (!isSpeaking && !isHovered && !dragging && !chatActive) {
+    if (!isSpeaking && !isHovered && !dragging && !chatActive && !lineHistoryActive && !pomodoroState.active) {
       bubble.classList.remove("is-active");
     }
   }, delay);
@@ -359,6 +607,8 @@ function resumeAmbientState() {
   stopMotions();
   if (musicPlaying && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
     setEmote("joy");
+  } else if (pomodoroState.active && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
+    setEmote(getPomodoroEmote(pomodoroState));
   } else if (!isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
     setEmote("default");
   }
@@ -369,15 +619,25 @@ function enterCharacter() {
   isHovered = true;
   ipcRenderer.send("companion:hover", true);
   setEmote("joy");
-  showChatBubble();
-  model?.motion("Wave", 0);
+  if (lineHistoryActive) return;
+  if (pomodoroState.active) {
+    showPomodoroBubble(pomodoroState, true);
+  } else {
+    showChatBubble();
+    model?.motion("Wave", 0);
+  }
 }
 
 function leaveCharacter() {
   if (!isHovered || dragging) return;
   isHovered = false;
   ipcRenderer.send("companion:hover", false);
-  hideBubble(1500);
+  if (lineHistoryActive) {
+    resumeAmbientState();
+    return;
+  }
+  if (pomodoroState.active) showPomodoroBubble(pomodoroState);
+  else hideBubble(1500);
   resumeAmbientState();
 }
 
@@ -389,6 +649,8 @@ function startChatter() {
       dragging ||
       isSpeaking ||
       chatActive ||
+      pomodoroState.active ||
+      systemSleeping ||
       idleChatterBusy ||
       !model
     ) return;
@@ -396,7 +658,7 @@ function startChatter() {
     idleChatterBusy = true;
     try {
       const lineItem = normalizeSpeechItem(await ipcRenderer.invoke("companion:idle-line"));
-      if (isHovered || dragging || chatActive) return;
+      if (systemSleeping || isHovered || dragging || chatActive) return;
 
       let speechId = null;
       try {
@@ -404,25 +666,31 @@ function startChatter() {
       } catch (speechError) {
         console.error("Idle speech failed:", speechError);
       }
-      if (isHovered || dragging || chatActive) {
+      if (systemSleeping || isHovered || dragging || chatActive) {
         if (speechId) ipcRenderer.send("companion:stop-speech");
         return;
       }
 
       isSpeaking = true;
+      currentSpeechHoldMs = getIdleSpeechHoldMs(lineItem);
       if (speechId) {
         currentSpeechId = speechId;
         currentSpeechKind = "idle";
       }
+      rememberLine(lineItem, "idle");
       showBubble(lineItem);
       setEmote("joy");
 
       clearTimeout(chatterEndTimer);
       const displayDuration = speechId
         ? 60000
-        : Math.min(30000, Math.max(6500, lineItem.text.length * 180));
+        : Math.max(
+          currentSpeechHoldMs,
+          Math.min(30000, Math.max(6500, lineItem.text.length * 180))
+        );
       chatterEndTimer = setTimeout(() => {
         currentSpeechKind = undefined;
+        currentSpeechHoldMs = 900;
         isSpeaking = false;
         resumeAmbientState();
         hideBubble();
@@ -437,10 +705,10 @@ function startChatter() {
 
 function startFloating() {
   setTimeout(() => {
-    if (!isHovered && !dragging && !chatActive) ipcRenderer.send("companion:auto-move");
+    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) ipcRenderer.send("companion:auto-move");
   }, 1000);
   setInterval(() => {
-    if (!isHovered && !dragging && !chatActive) ipcRenderer.send("companion:auto-move");
+    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) ipcRenderer.send("companion:auto-move");
   }, 15000);
 }
 
@@ -522,6 +790,9 @@ async function start() {
     startChatter();
     startFloating();
     musicPlaying = Boolean(await ipcRenderer.invoke("companion:music-playing"));
+    systemSleeping = Boolean(await ipcRenderer.invoke("companion:system-sleeping"));
+    pomodoroState = await ipcRenderer.invoke("companion:pomodoro-state");
+    if (pomodoroState.active) showPomodoroBubble(pomodoroState);
     resumeAmbientState();
     console.log("サイト版の挙動でびくにたんを起動しました");
     window.addEventListener("resize", () => {
@@ -536,7 +807,8 @@ async function start() {
 
 ipcRenderer.on("companion:cursor", (_event, point) => {
   if (!model || pointerDown) return;
-  const inside = characterHitBounds?.contains(point.x, point.y) ?? false;
+  const insideCharacter = characterHitBounds?.contains(point.x, point.y) ?? false;
+  const inside = insideCharacter || isPointInActiveBubble(point);
   if (suppressHoverUntilLeave) {
     if (!inside) suppressHoverUntilLeave = false;
     model.focus(point.x, point.y);
@@ -554,15 +826,73 @@ ipcRenderer.on("companion:speech-ended", (_event, speechId) => {
   currentSpeechKind = undefined;
   isSpeaking = false;
   if (speechKind === "idle") {
+    const holdMs = currentSpeechHoldMs;
+    currentSpeechHoldMs = 900;
     clearTimeout(chatterEndTimer);
     resumeAmbientState();
-    hideBubble(900);
+    hideBubble(holdMs);
   }
+});
+
+ipcRenderer.on("companion:speech-started", (_event, payload) => {
+  currentSpeechId = payload?.speechId;
+  currentSpeechKind = payload?.kind || "answer";
+  isSpeaking = Boolean(currentSpeechId);
 });
 
 ipcRenderer.on("companion:music-playing", (_event, playing) => {
   musicPlaying = Boolean(playing);
   resumeAmbientState();
+});
+
+ipcRenderer.on("companion:fortune", (_event, fortune) => {
+  const fortuneItem = normalizeSpeechItem(fortune);
+  rememberLine(fortuneItem, "fortune");
+  showBubble(fortuneItem);
+  setEmote("joy");
+  hideBubble(25000);
+});
+
+ipcRenderer.on("companion:show-line-history", () => {
+  showLineHistory(lineHistory.length ? lineHistory.length - 1 : 0);
+  setEmote("joy");
+});
+
+ipcRenderer.on("companion:system-sleep", (_event, sleeping) => {
+  systemSleeping = Boolean(sleeping);
+  if (systemSleeping) {
+    clearTimeout(chatterEndTimer);
+    clearTimeout(responseSpeechTimer);
+    idleChatterBusy = false;
+    isSpeaking = false;
+    currentSpeechId = undefined;
+    currentSpeechKind = undefined;
+    lineHistoryActive = false;
+    if (!chatActive) bubble.classList.remove("is-active");
+    return;
+  }
+  ipcRenderer.invoke("companion:prepare-idle-lines").catch(console.error);
+  resumeAmbientState();
+  if (pomodoroState.active && !chatActive && !dragging) {
+    showPomodoroBubble(pomodoroState);
+  }
+});
+
+ipcRenderer.on("companion:pomodoro", (_event, state) => {
+  pomodoroState = state || {
+    active: false,
+    running: false,
+    remaining: 0,
+    label: "",
+    timeText: ""
+  };
+  const reason = pomodoroState.reason;
+  if (["started", "autoBreakStarted", "autoFocusStarted", "paused", "resumed", "completed", "stopped"].includes(reason)) {
+    showPomodoroBubble(pomodoroState, reason === "completed");
+  } else if (pomodoroState.active && bubble.classList.contains("has-timer")) {
+    showPomodoroBubble(pomodoroState);
+  }
+  if (!pomodoroState.active && reason !== "completed") resumeAmbientState();
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -582,7 +912,9 @@ canvas.addEventListener("pointermove", (event) => {
     clearTimeout(chatterEndTimer);
     isSpeaking = false;
     setEmote("surprised");
-    showBubble("わわっ！どこに連れていくんですか〜？");
+    const dragLine = "わわっ！どこに連れていくんですか〜？";
+    rememberLine(dragLine, "system");
+    showBubble(dragLine);
     ipcRenderer.send("companion:drag-start");
   }
   if (dragging) ipcRenderer.send("companion:drag-move");
@@ -599,7 +931,8 @@ canvas.addEventListener("pointerup", (event) => {
     showChatBubble();
   } else {
     resumeAmbientState();
-    hideBubble(1500);
+    if (pomodoroState.active) showPomodoroBubble(pomodoroState);
+    else hideBubble(1500);
   }
 });
 
@@ -612,7 +945,8 @@ canvas.addEventListener("pointercancel", () => {
     showChatBubble();
   } else {
     resumeAmbientState();
-    hideBubble(1500);
+    if (pomodoroState.active) showPomodoroBubble(pomodoroState);
+    else hideBubble(1500);
   }
 });
 

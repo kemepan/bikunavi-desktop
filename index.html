@@ -2,6 +2,8 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>びくにたん</title>
     <link rel="stylesheet" href="style.css">
@@ -11,6 +13,9 @@
     <canvas id="stage"></canvas>
     <div id="status">読み込み中…</div>
     <script src="vendor/live2dcubismcore.min.js"></script>
+    <script src="node_modules/pixi.js/dist/browser/pixi.min.js"></script>
+    <script src="node_modules/@pixi/unsafe-eval/dist/browser/unsafe-eval.min.js"></script>
+    <script src="node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

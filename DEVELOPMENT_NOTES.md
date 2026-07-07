@@ -1,6 +1,6 @@
 # びくにたん Desktop — 開発履歴・引き継ぎ
 
-最終更新: 2026-07-07
+最終更新: 2026-07-08
 
 ## 目的
 
@@ -227,23 +227,41 @@ npm start
 - LaunchAgentはmacOSのプライバシー保護によりDocuments配下を直接実行できないため、Vaultを原本、Application Supportを実行先とする
 - 今後Vault側を編集した場合、Application Support側へ再コピーしてLaunchAgentを再起動する
 
+## 2026-07-08 の改善
+
+### Electronセキュリティ改善（完了）
+
+- `nodeIntegration: false` / `contextIsolation: true` / `sandbox: true` へ移行
+- `preload.js` を新設し、contextBridge で許可チャンネルだけを `window.bikunavi` として公開
+- `webSecurity` を有効に戻し、代わりに独自特権スキーム `bikunavi://` で `__dirname` 配下だけを配信（パストラバーサル拒否付き）
+- `index.html` に CSP を設定。pixi.js v6 の `new Function` 依存は `@pixi/unsafe-eval`（依存追加）で解決
+- pixi.js / pixi-live2d-display は `require` をやめ、`node_modules` 内のブラウザビルドを `<script>` で読込
+- 非推奨だった `console-message` の旧シグネチャをイベントオブジェクト形式へ更新
+
+### 永続化（完了）
+
+- 保存先: `~/Library/Application Support/bikunavi-desktop/state.json`
+- 対象: ウィンドウ位置（復元時はディスプレイ内へクランプ）、サイズ、いつも手前、読み上げ設定、速度、占い、自動移動、音楽反応、自動セリフ間隔、セリフ履歴20件、会話履歴10件、Codex文脈用の直近会話
+- 変更時にデバウンス保存（800ms）、終了時に同期保存
+- Rendererの履歴は `companion:save-history` / `companion:load-history` で main と同期（main側でサニタイズ）
+
+### メニュー・UI追加（完了）
+
+- トレイメニューに「自動移動」「音楽にノる」「自動セリフの間隔（30秒/1分/2分）」「セリフ・会話履歴を消去」を追加
+- 会話吹き出しとセリフ履歴に「コピー」ボタンを追加（クリップボードへ）
+
+### .app 化（完了）
+
+- `npm run package` で `@electron/packager` により `dist/びくにたん-darwin-arm64/びくにたん.app` を生成し、ad-hoc署名
+- `native/now-playing` を spawn するため asar は無効（`--no-asar`）
+
 ## 次回以降の調整候補
 
-1. `.app` 化し、ダブルクリック起動へ対応
-2. ウィンドウ位置・サイズ・会話履歴の永続化
-3. 吹き出し専用領域を常時確保せず、会話時だけ動的に上へ拡張
-4. AIの書き込み操作に、差分表示とユーザー承認フローを追加
-5. 「今日の予定」「Brain検索」「お願い」などのショートカット
-6. ソースURL一覧、回答全文のコピー、履歴一覧、履歴削除
-7. Codex応答のストリーミング表示
-8. 自動移動・音楽反応のON/OFF・間隔・速度をメニュー設定化
-9. GitHub private repositoryへの初回保存
-10. 配布前のElectronセキュリティ改善
-   - `nodeIntegration: true`
-   - `contextIsolation: false`
-   - `webSecurity: false`
-   - CSP未設定
-11. Electronの `console-message` 非推奨APIを更新
+1. 吹き出し専用領域を常時確保せず、会話時だけ動的に上へ拡張
+2. AIの書き込み操作に、差分表示とユーザー承認フローを追加
+3. 「今日の予定」「Brain検索」「お願い」などのショートカット
+4. Codex応答のストリーミング表示
+5. ソースURL一覧、履歴一覧UI
 
 ## 注意点
 

@@ -6,15 +6,18 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check renderer.js",
+    "check": "node --check main.js && node --check renderer.js && node --check preload.js",
+    "package": "electron-packager . びくにたん --platform=darwin --out=dist --overwrite --no-asar --ignore='^/dist(/|$)' --ignore='^/docs(/|$)' --ignore='^/launchd(/|$)' --ignore='^/\\.gitignore$' --ignore='\\.log$' && codesign --force --deep --sign - 'dist/びくにたん-darwin-arm64/びくにたん.app' && echo '.app を作成しました: dist/びくにたん-darwin-arm64/'",
     "build-media-helper": "xcrun clang -fblocks -framework Foundation native/now-playing.m -o native/now-playing",
     "fetch-core": "node scripts/fetch-cubism-core.mjs"
   },
   "dependencies": {
+    "@pixi/unsafe-eval": "^6.5.10",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10"
   },
   "devDependencies": {
+    "@electron/packager": "^20.0.2",
     "electron": "^37.2.0"
   },
   "overrides": {

@@ -8,22 +8,109 @@ const {
   ipcMain,
   clipboard,
   shell,
-  powerMonitor
+  powerMonitor,
+  protocol,
+  net
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
+
+// file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
+// 特権スキームで index.html と Live2D 素材を配信する。
+const APP_SCHEME = "bikunavi";
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+]);
+
+const DEFAULT_STATE = {
+  size: "small",
+  position: undefined,
+  alwaysOnTop: true,
+  speechEnabled: true,
+  idleSpeechEnabled: true,
+  speechRate: 190,
+  fortuneAutoEnabled: true,
+  autoMoveEnabled: true,
+  musicReactEnabled: true,
+  idleIntervalMs: 30000,
+  lineHistory: [],
+  chatEntries: [],
+  conversationHistory: []
+};
+const stateFilePath = path.join(app.getPath("userData"), "state.json");
+
+function loadPersistedState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+    return { ...DEFAULT_STATE, ...parsed };
+  } catch (_error) {
+    return { ...DEFAULT_STATE };
+  }
+}
+
+const persistedState = loadPersistedState();
+let stateSaveTimer;
+
+function collectState() {
+  persistedState.size = currentSize;
+  persistedState.alwaysOnTop = companionWindow?.isAlwaysOnTop() ?? persistedState.alwaysOnTop;
+  persistedState.speechEnabled = speechEnabled;
+  persistedState.idleSpeechEnabled = idleSpeechEnabled;
+  persistedState.speechRate = speechRate;
+  persistedState.fortuneAutoEnabled = fortuneAutoEnabled;
+  persistedState.autoMoveEnabled = autoMoveEnabled;
+  persistedState.musicReactEnabled = musicReactEnabled;
+  persistedState.idleIntervalMs = idleIntervalMs;
+  persistedState.conversationHistory = conversationHistory.slice(-12);
+  if (companionWindow) persistedState.position = companionWindow.getPosition();
+}
+
+function saveStateNow() {
+  clearTimeout(stateSaveTimer);
+  stateSaveTimer = undefined;
+  collectState();
+  try {
+    fs.writeFileSync(stateFilePath, JSON.stringify(persistedState, null, 2));
+  } catch (error) {
+    console.error("State save failed:", error);
+  }
+}
+
+function saveStateSoon() {
+  clearTimeout(stateSaveTimer);
+  stateSaveTimer = setTimeout(saveStateNow, 800);
+}
 
 let companionWindow;
 let tray;
 let dragOrigin;
 let cursorTimer;
 let autoMoveTimer;
-let currentSize = "small";
+let currentSize = ["small", "medium", "large"].includes(persistedState.size)
+  ? persistedState.size
+  : "small";
 let characterHovered = false;
-let speechEnabled = true;
-let idleSpeechEnabled = true;
-let speechRate = 190;
+let speechEnabled = Boolean(persistedState.speechEnabled);
+let idleSpeechEnabled = Boolean(persistedState.idleSpeechEnabled);
+let speechRate = [150, 190, 230].includes(persistedState.speechRate)
+  ? persistedState.speechRate
+  : 190;
+let autoMoveEnabled = Boolean(persistedState.autoMoveEnabled);
+let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
+let idleIntervalMs = [30000, 60000, 120000].includes(persistedState.idleIntervalMs)
+  ? persistedState.idleIntervalMs
+  : 30000;
 let speechProvider = "voicevox";
 const voicevoxSpeaker = 58;
 const voicevoxVoiceLabel = "猫使ビィ";
@@ -35,7 +122,11 @@ const speechWaiters = new Map();
 let voicevoxProcess;
 let voicevoxOwned = false;
 let voicevoxReadyPromise;
-const conversationHistory = [];
+const conversationHistory = Array.isArray(persistedState.conversationHistory)
+  ? persistedState.conversationHistory
+      .filter((turn) => turn && typeof turn.text === "string" && ["user", "assistant"].includes(turn.role))
+      .slice(-12)
+  : [];
 const idleLineQueue = [];
 let idleLineGeneration;
 let latestTopicSources = new Map();
@@ -45,7 +136,7 @@ let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
 let systemSleeping = false;
-let fortuneAutoEnabled = true;
+let fortuneAutoEnabled = Boolean(persistedState.fortuneAutoEnabled);
 let pomodoroTimer;
 let pomodoroState = {
   active: false,
@@ -159,15 +250,32 @@ const traySvg = `
   <path fill="black" d="M8 5C5 2 2 3 1 1c4-1 7 0 8 3 1-3 4-4 8-3-1 2-4 1-7 4v2h3c2 0 3 1 3 3v5c0 2-1 3-3 3H5c-2 0-3-1-3-3v-5c0-2 1-3 3-3h3V5Zm-3 5v5h8v-5H5Z"/>
 </svg>`;
 
+function restoreWindowPosition(width, height) {
+  const fallbackArea = screen.getPrimaryDisplay().workArea;
+  const fallback = {
+    x: fallbackArea.x + fallbackArea.width - width - 24,
+    y: fallbackArea.y + fallbackArea.height - height - 24
+  };
+  const saved = persistedState.position;
+  if (!Array.isArray(saved) || saved.length !== 2) return fallback;
+  const [savedX, savedY] = saved.map(Number);
+  if (!Number.isFinite(savedX) || !Number.isFinite(savedY)) return fallback;
+  const area = screen.getDisplayMatching({ x: savedX, y: savedY, width, height }).workArea;
+  return {
+    x: Math.max(area.x, Math.min(savedX, area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(savedY, area.y + area.height - height))
+  };
+}
+
 function createWindow() {
-  const display = screen.getPrimaryDisplay().workArea;
   const { width, height } = SIZE_PRESETS[currentSize];
+  const { x, y } = restoreWindowPosition(width, height);
 
   companionWindow = new BrowserWindow({
     width,
     height,
-    x: display.x + display.width - width - 24,
-    y: display.y + display.height - height - 24,
+    x,
+    y,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
@@ -175,25 +283,28 @@ function createWindow() {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    alwaysOnTop: true,
+    alwaysOnTop: persistedState.alwaysOnTop !== false,
     skipTaskbar: true,
     show: false,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      webSecurity: false
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
     }
   });
 
   companionWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  companionWindow.webContents.on("console-message", (_event, level, message) => {
-    const logger = level >= 2 ? console.error : console.log;
-    logger(`[renderer] ${message}`);
+  companionWindow.webContents.on("console-message", (event) => {
+    const isError = event.level === "error" || event.level === "warning";
+    const logger = isError ? console.error : console.log;
+    logger(`[renderer] ${event.message}`);
   });
   companionWindow.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`Renderer load failed (${code}): ${description}`);
   });
-  companionWindow.loadFile("index.html");
+  companionWindow.on("moved", saveStateSoon);
+  companionWindow.loadURL(`${APP_SCHEME}://app/index.html`);
   companionWindow.once("ready-to-show", () => companionWindow.showInactive());
   cursorTimer = setInterval(() => {
     if (!companionWindow || !companionWindow.isVisible()) return;
@@ -239,6 +350,7 @@ function setCompanionSize(sizeName) {
   );
   companionWindow.setPosition(x, y);
   tray?.setContextMenu(buildTrayMenu());
+  saveStateSoon();
 }
 
 function getJstDateParts(date = new Date()) {
@@ -453,7 +565,53 @@ function buildTrayMenu() {
       label: "いつも手前",
       type: "checkbox",
       checked: companionWindow?.isAlwaysOnTop() ?? true,
-      click: (item) => companionWindow?.setAlwaysOnTop(item.checked)
+      click: (item) => {
+        companionWindow?.setAlwaysOnTop(item.checked);
+        saveStateSoon();
+      }
+    },
+    {
+      label: "自動移動",
+      type: "checkbox",
+      checked: autoMoveEnabled,
+      click: (item) => {
+        autoMoveEnabled = item.checked;
+        if (!autoMoveEnabled) clearInterval(autoMoveTimer);
+        tray.setContextMenu(buildTrayMenu());
+        saveStateSoon();
+      }
+    },
+    {
+      label: "音楽にノる",
+      type: "checkbox",
+      checked: musicReactEnabled,
+      click: (item) => {
+        musicReactEnabled = item.checked;
+        if (!musicReactEnabled && musicPlaying) {
+          musicPlaying = false;
+          companionWindow?.webContents.send("companion:music-playing", false);
+        }
+        tray.setContextMenu(buildTrayMenu());
+        saveStateSoon();
+      }
+    },
+    {
+      label: "自動セリフの間隔",
+      submenu: [
+        { label: "30秒", intervalMs: 30000 },
+        { label: "1分", intervalMs: 60000 },
+        { label: "2分", intervalMs: 120000 }
+      ].map((option) => ({
+        label: option.label,
+        type: "radio",
+        checked: idleIntervalMs === option.intervalMs,
+        click: () => {
+          idleIntervalMs = option.intervalMs;
+          companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+          tray.setContextMenu(buildTrayMenu());
+          saveStateSoon();
+        }
+      }))
     },
     {
       label: "読み上げ",
@@ -463,6 +621,7 @@ function buildTrayMenu() {
         speechEnabled = item.checked;
         if (!speechEnabled) stopSpeech();
         tray.setContextMenu(buildTrayMenu());
+        saveStateSoon();
       }
     },
     {
@@ -473,6 +632,7 @@ function buildTrayMenu() {
       click: (item) => {
         idleSpeechEnabled = item.checked;
         tray.setContextMenu(buildTrayMenu());
+        saveStateSoon();
       }
     },
     {
@@ -489,6 +649,7 @@ function buildTrayMenu() {
         click: () => {
           speechRate = option.rate;
           tray.setContextMenu(buildTrayMenu());
+          saveStateSoon();
         }
       }))
     },
@@ -511,12 +672,23 @@ function buildTrayMenu() {
       click: (item) => {
         fortuneAutoEnabled = item.checked;
         tray.setContextMenu(buildTrayMenu());
+        saveStateSoon();
       }
     },
     {
       label: "最近のセリフを表示",
       click: () => {
         companionWindow?.webContents.send("companion:show-line-history");
+      }
+    },
+    {
+      label: "セリフ・会話履歴を消去",
+      click: () => {
+        persistedState.lineHistory = [];
+        persistedState.chatEntries = [];
+        conversationHistory.length = 0;
+        companionWindow?.webContents.send("companion:clear-history");
+        saveStateSoon();
       }
     },
     {
@@ -776,6 +948,15 @@ async function speakAndWait(text, kind = "answer") {
 }
 
 app.whenReady().then(() => {
+  protocol.handle(APP_SCHEME, (request) => {
+    const url = new URL(request.url);
+    const requestPath = path.normalize(decodeURIComponent(url.pathname));
+    const filePath = path.join(__dirname, requestPath);
+    if (filePath !== __dirname && !filePath.startsWith(__dirname + path.sep)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
   app.dock?.hide();
   createWindow();
 
@@ -822,7 +1003,7 @@ ipcMain.on("companion:drag-end", () => {
 });
 
 ipcMain.on("companion:auto-move", () => {
-  if (!companionWindow || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) return;
+  if (!companionWindow || !autoMoveEnabled || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) return;
   clearInterval(autoMoveTimer);
 
   const bounds = companionWindow.getBounds();
@@ -970,6 +1151,7 @@ async function detectMusicPlayback() {
 
 async function updateMusicPlayback() {
   if (mediaPlaybackCheckRunning) return;
+  if (!musicReactEnabled) return;
   mediaPlaybackCheckRunning = true;
   try {
     const playing = await detectMusicPlayback();
@@ -1343,6 +1525,7 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     { role: "assistant", text: response.text }
   );
   if (conversationHistory.length > 12) conversationHistory.splice(0, 2);
+  saveStateSoon();
   return response;
 });
 
@@ -1386,10 +1569,61 @@ ipcMain.on("companion:stop-speech", () => {
   stopSpeech();
 });
 
+function getRendererSettings() {
+  return { idleIntervalMs };
+}
+
+ipcMain.handle("companion:settings", () => getRendererSettings());
+
+ipcMain.handle("companion:copy-text", (_event, rawText) => {
+  const text = String(rawText ?? "").slice(0, 20000);
+  if (!text) return false;
+  clipboard.writeText(text);
+  return true;
+});
+
+function sanitizeSources(sources) {
+  return (Array.isArray(sources) ? sources : [])
+    .filter((source) => source && /^https?:\/\//.test(String(source.url || "")))
+    .slice(0, 4)
+    .map((source) => ({
+      title: String(source.title || "").slice(0, 180),
+      url: String(source.url).slice(0, 1000),
+      source: String(source.source || "").slice(0, 80)
+    }));
+}
+
+ipcMain.handle("companion:load-history", () => ({
+  lineHistory: Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory : [],
+  chatEntries: Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries : []
+}));
+
+ipcMain.on("companion:save-history", (_event, payload) => {
+  persistedState.lineHistory = (Array.isArray(payload?.lineHistory) ? payload.lineHistory : [])
+    .slice(-20)
+    .map((entry) => ({
+      text: String(entry?.text ?? "").slice(0, 2000),
+      sources: sanitizeSources(entry?.sources),
+      kind: String(entry?.kind ?? "line").slice(0, 20),
+      time: Number(entry?.time) || Date.now()
+    }))
+    .filter((entry) => entry.text);
+  persistedState.chatEntries = (Array.isArray(payload?.chatEntries) ? payload.chatEntries : [])
+    .slice(-10)
+    .map((entry) => ({
+      question: String(entry?.question ?? "").slice(0, 4000),
+      answer: String(entry?.answer ?? "").slice(0, 4000),
+      sources: sanitizeSources(entry?.sources)
+    }))
+    .filter((entry) => entry.question || entry.answer);
+  saveStateSoon();
+});
+
 app.on("before-quit", () => {
   clearPomodoroTimer();
   clearInterval(mediaPlaybackTimer);
   stopSpeech();
+  saveStateNow();
   if (voicevoxOwned) voicevoxProcess?.kill("SIGTERM");
 });
 

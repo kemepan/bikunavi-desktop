@@ -1,8 +1,6 @@
-const PIXI = require("pixi.js");
-const { ipcRenderer } = require("electron");
-window.PIXI = PIXI;
-
-const { Live2DModel } = require("pixi-live2d-display/cubism4");
+// PIXI と PIXI.live2d は index.html の <script> で読み込むブラウザビルドを使う。
+// Node 連携は preload.js が公開する window.bikunavi 経由のみ。
+const { Live2DModel } = PIXI.live2d;
 
 const canvas = document.querySelector("#stage");
 const bubble = document.querySelector("#bubble");
@@ -62,6 +60,16 @@ let musicDanceWeight = 0;
 let systemSleeping = false;
 let pomodoroState = { active: false, running: false, remaining: 0, label: "", timeText: "" };
 let pomodoroHideTimer;
+let idleIntervalMs = 30000;
+let chatterTimer;
+let historySaveTimer;
+
+function saveHistorySoon() {
+  clearTimeout(historySaveTimer);
+  historySaveTimer = setTimeout(() => {
+    bikunavi.send("companion:save-history", { lineHistory, chatEntries });
+  }, 1200);
+}
 
 function fitModel() {
   if (!model || !visualBounds) return;
@@ -171,6 +179,7 @@ function rememberLine(item, kind = "line") {
   });
   if (lineHistory.length > 20) lineHistory.shift();
   if (!lineHistoryActive) lineHistoryIndex = lineHistory.length - 1;
+  saveHistorySoon();
 }
 
 function makeSourceLabel(source, index) {
@@ -198,7 +207,7 @@ function createSourceLinks(sources) {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      ipcRenderer.invoke("companion:open-url", source.url).catch(console.error);
+      bikunavi.invoke("companion:open-url", source.url).catch(console.error);
     });
     sourceList.append(link);
   }
@@ -285,10 +294,21 @@ function showLineHistory(index = lineHistoryIndex) {
   replay.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    ipcRenderer.invoke("companion:speak", entry.text, "answer").catch(console.error);
+    bikunavi.invoke("companion:speak", entry.text, "answer").catch(console.error);
   });
 
-  controls.append(previous, count, next, replay);
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "is-wide";
+  copy.textContent = "コピー";
+  copy.title = "このセリフをコピー";
+  copy.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    bikunavi.invoke("companion:copy-text", entry.text).catch(console.error);
+  });
+
+  controls.append(previous, count, next, replay, copy);
   controls.append(createLineHistoryCloseButton());
   bubble.append(controls);
 }
@@ -333,7 +353,7 @@ function createPomodoroControls(state) {
     event.preventDefault();
     event.stopPropagation();
     try {
-      pomodoroState = await ipcRenderer.invoke(
+      pomodoroState = await bikunavi.invoke(
         "companion:pomodoro-action",
         state.running ? "pause" : "resume"
       );
@@ -351,7 +371,7 @@ function createPomodoroControls(state) {
     event.preventDefault();
     event.stopPropagation();
     try {
-      pomodoroState = await ipcRenderer.invoke("companion:pomodoro-action", "stop");
+      pomodoroState = await bikunavi.invoke("companion:pomodoro-action", "stop");
       showPomodoroBubble(pomodoroState, true);
     } catch (error) {
       console.error("Pomodoro stop failed:", error);
@@ -461,7 +481,18 @@ function showChatBubble(busy = false) {
       showChatBubble();
       scheduleChatIdleReset();
     });
-    history.append(previous, count, next);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "コピー";
+    copy.title = "この回答をコピー";
+    copy.addEventListener("click", () => {
+      const current = chatEntries[chatEntryIndex];
+      if (current) {
+        bikunavi.invoke("companion:copy-text", current.answer).catch(console.error);
+      }
+      scheduleChatIdleReset();
+    });
+    history.append(previous, count, next, copy);
     bubble.append(message);
     if (sourceList) bubble.append(sourceList);
     bubble.append(history);
@@ -489,7 +520,7 @@ function showChatBubble(busy = false) {
   });
   input.addEventListener("focus", () => {
     chatActive = true;
-    ipcRenderer.send("companion:hover", true);
+    bikunavi.send("companion:hover", true);
     scheduleChatIdleReset();
   });
   input.addEventListener("input", scheduleChatIdleReset);
@@ -504,7 +535,7 @@ function showChatBubble(busy = false) {
 function closeChat() {
   clearTimeout(chatIdleTimer);
   chatActive = false;
-  ipcRenderer.send("companion:hover", isHovered);
+  bikunavi.send("companion:hover", isHovered);
   if (!isHovered) hideBubble();
 }
 
@@ -520,7 +551,7 @@ function scheduleChatIdleReset() {
     suppressHoverUntilLeave = true;
     resumeAmbientState();
     bubble.classList.remove("is-active");
-    ipcRenderer.send("companion:hover", false);
+    bikunavi.send("companion:hover", false);
   }, 30000);
 }
 
@@ -533,14 +564,14 @@ async function runChat(rawMessage) {
   isSpeaking = false;
   isThinking = true;
   pendingQuestion = message;
-  ipcRenderer.send("companion:hover", true);
+  bikunavi.send("companion:hover", true);
   setEmote("thinking");
   showChatBubble(true);
   try {
-    const response = normalizeSpeechItem(await ipcRenderer.invoke("companion:chat", message));
+    const response = normalizeSpeechItem(await bikunavi.invoke("companion:chat", message));
     let speechId = null;
     try {
-      speechId = await ipcRenderer.invoke("companion:speak", response.text, "answer");
+      speechId = await bikunavi.invoke("companion:speak", response.text, "answer");
     } catch (speechError) {
       console.error("Speech failed:", speechError);
     }
@@ -548,6 +579,7 @@ async function runChat(rawMessage) {
     chatEntries.push({ question: message, answer: response.text, sources: response.sources });
     if (chatEntries.length > 10) chatEntries.shift();
     chatEntryIndex = chatEntries.length - 1;
+    saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
     showChatBubble();
@@ -570,7 +602,9 @@ async function runChat(rawMessage) {
       question: message,
       answer: "うまく考えられませんでした。Codexのログイン状態を確認してください。"
     });
+    if (chatEntries.length > 10) chatEntries.shift();
     chatEntryIndex = chatEntries.length - 1;
+    saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
     isSpeaking = false;
@@ -617,7 +651,7 @@ function resumeAmbientState() {
 function enterCharacter() {
   if (isHovered || dragging) return;
   isHovered = true;
-  ipcRenderer.send("companion:hover", true);
+  bikunavi.send("companion:hover", true);
   setEmote("joy");
   if (lineHistoryActive) return;
   if (pomodoroState.active) {
@@ -631,7 +665,7 @@ function enterCharacter() {
 function leaveCharacter() {
   if (!isHovered || dragging) return;
   isHovered = false;
-  ipcRenderer.send("companion:hover", false);
+  bikunavi.send("companion:hover", false);
   if (lineHistoryActive) {
     resumeAmbientState();
     return;
@@ -642,8 +676,13 @@ function leaveCharacter() {
 }
 
 function startChatter() {
-  ipcRenderer.invoke("companion:prepare-idle-lines").catch(console.error);
-  setInterval(async () => {
+  bikunavi.invoke("companion:prepare-idle-lines").catch(console.error);
+  scheduleChatter();
+}
+
+function scheduleChatter() {
+  clearInterval(chatterTimer);
+  chatterTimer = setInterval(async () => {
     if (
       isHovered ||
       dragging ||
@@ -657,17 +696,17 @@ function startChatter() {
 
     idleChatterBusy = true;
     try {
-      const lineItem = normalizeSpeechItem(await ipcRenderer.invoke("companion:idle-line"));
+      const lineItem = normalizeSpeechItem(await bikunavi.invoke("companion:idle-line"));
       if (systemSleeping || isHovered || dragging || chatActive) return;
 
       let speechId = null;
       try {
-        speechId = await ipcRenderer.invoke("companion:speak", lineItem.text, "idle");
+        speechId = await bikunavi.invoke("companion:speak", lineItem.text, "idle");
       } catch (speechError) {
         console.error("Idle speech failed:", speechError);
       }
       if (systemSleeping || isHovered || dragging || chatActive) {
-        if (speechId) ipcRenderer.send("companion:stop-speech");
+        if (speechId) bikunavi.send("companion:stop-speech");
         return;
       }
 
@@ -700,15 +739,15 @@ function startChatter() {
     } finally {
       idleChatterBusy = false;
     }
-  }, 30000);
+  }, idleIntervalMs);
 }
 
 function startFloating() {
   setTimeout(() => {
-    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) ipcRenderer.send("companion:auto-move");
+    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
   }, 1000);
   setInterval(() => {
-    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) ipcRenderer.send("companion:auto-move");
+    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
   }, 15000);
 }
 
@@ -787,11 +826,40 @@ async function start() {
       core.setParameterValueById("ParamMouthOpenY", mouthOpen);
     });
 
+    try {
+      const settings = await bikunavi.invoke("companion:settings");
+      if ([30000, 60000, 120000].includes(settings?.idleIntervalMs)) {
+        idleIntervalMs = settings.idleIntervalMs;
+      }
+    } catch (error) {
+      console.error("Settings load failed:", error);
+    }
+    try {
+      const saved = await bikunavi.invoke("companion:load-history");
+      for (const entry of saved?.lineHistory ?? []) {
+        if (!entry?.text) continue;
+        lineHistory.push({
+          ...normalizeSpeechItem(entry),
+          kind: entry.kind || "line",
+          time: entry.time || Date.now()
+        });
+      }
+      lineHistory.splice(0, Math.max(0, lineHistory.length - 20));
+      lineHistoryIndex = lineHistory.length - 1;
+      for (const entry of saved?.chatEntries ?? []) {
+        if (entry?.question || entry?.answer) chatEntries.push(entry);
+      }
+      chatEntries.splice(0, Math.max(0, chatEntries.length - 10));
+      chatEntryIndex = chatEntries.length - 1;
+    } catch (error) {
+      console.error("History load failed:", error);
+    }
+
     startChatter();
     startFloating();
-    musicPlaying = Boolean(await ipcRenderer.invoke("companion:music-playing"));
-    systemSleeping = Boolean(await ipcRenderer.invoke("companion:system-sleeping"));
-    pomodoroState = await ipcRenderer.invoke("companion:pomodoro-state");
+    musicPlaying = Boolean(await bikunavi.invoke("companion:music-playing"));
+    systemSleeping = Boolean(await bikunavi.invoke("companion:system-sleeping"));
+    pomodoroState = await bikunavi.invoke("companion:pomodoro-state");
     if (pomodoroState.active) showPomodoroBubble(pomodoroState);
     resumeAmbientState();
     console.log("サイト版の挙動でびくにたんを起動しました");
@@ -805,7 +873,7 @@ async function start() {
   }
 }
 
-ipcRenderer.on("companion:cursor", (_event, point) => {
+bikunavi.on("companion:cursor", (point) => {
   if (!model || pointerDown) return;
   const insideCharacter = characterHitBounds?.contains(point.x, point.y) ?? false;
   const inside = insideCharacter || isPointInActiveBubble(point);
@@ -819,7 +887,7 @@ ipcRenderer.on("companion:cursor", (_event, point) => {
   model.focus(point.x, point.y);
 });
 
-ipcRenderer.on("companion:speech-ended", (_event, speechId) => {
+bikunavi.on("companion:speech-ended", (speechId) => {
   if (speechId !== currentSpeechId) return;
   const speechKind = currentSpeechKind;
   currentSpeechId = undefined;
@@ -834,18 +902,18 @@ ipcRenderer.on("companion:speech-ended", (_event, speechId) => {
   }
 });
 
-ipcRenderer.on("companion:speech-started", (_event, payload) => {
+bikunavi.on("companion:speech-started", (payload) => {
   currentSpeechId = payload?.speechId;
   currentSpeechKind = payload?.kind || "answer";
   isSpeaking = Boolean(currentSpeechId);
 });
 
-ipcRenderer.on("companion:music-playing", (_event, playing) => {
+bikunavi.on("companion:music-playing", (playing) => {
   musicPlaying = Boolean(playing);
   resumeAmbientState();
 });
 
-ipcRenderer.on("companion:fortune", (_event, fortune) => {
+bikunavi.on("companion:fortune", (fortune) => {
   const fortuneItem = normalizeSpeechItem(fortune);
   rememberLine(fortuneItem, "fortune");
   showBubble(fortuneItem);
@@ -853,12 +921,27 @@ ipcRenderer.on("companion:fortune", (_event, fortune) => {
   hideBubble(25000);
 });
 
-ipcRenderer.on("companion:show-line-history", () => {
+bikunavi.on("companion:settings-changed", (settings) => {
+  if ([30000, 60000, 120000].includes(settings?.idleIntervalMs)) {
+    idleIntervalMs = settings.idleIntervalMs;
+    scheduleChatter();
+  }
+});
+
+bikunavi.on("companion:clear-history", () => {
+  lineHistory.length = 0;
+  chatEntries.length = 0;
+  lineHistoryIndex = -1;
+  chatEntryIndex = -1;
+  if (lineHistoryActive) showLineHistory(0);
+});
+
+bikunavi.on("companion:show-line-history", () => {
   showLineHistory(lineHistory.length ? lineHistory.length - 1 : 0);
   setEmote("joy");
 });
 
-ipcRenderer.on("companion:system-sleep", (_event, sleeping) => {
+bikunavi.on("companion:system-sleep", (sleeping) => {
   systemSleeping = Boolean(sleeping);
   if (systemSleeping) {
     clearTimeout(chatterEndTimer);
@@ -871,14 +954,14 @@ ipcRenderer.on("companion:system-sleep", (_event, sleeping) => {
     if (!chatActive) bubble.classList.remove("is-active");
     return;
   }
-  ipcRenderer.invoke("companion:prepare-idle-lines").catch(console.error);
+  bikunavi.invoke("companion:prepare-idle-lines").catch(console.error);
   resumeAmbientState();
   if (pomodoroState.active && !chatActive && !dragging) {
     showPomodoroBubble(pomodoroState);
   }
 });
 
-ipcRenderer.on("companion:pomodoro", (_event, state) => {
+bikunavi.on("companion:pomodoro", (state) => {
   pomodoroState = state || {
     active: false,
     running: false,
@@ -915,15 +998,15 @@ canvas.addEventListener("pointermove", (event) => {
     const dragLine = "わわっ！どこに連れていくんですか〜？";
     rememberLine(dragLine, "system");
     showBubble(dragLine);
-    ipcRenderer.send("companion:drag-start");
+    bikunavi.send("companion:drag-start");
   }
-  if (dragging) ipcRenderer.send("companion:drag-move");
+  if (dragging) bikunavi.send("companion:drag-move");
 });
 
 canvas.addEventListener("pointerup", (event) => {
   if (!pointerDown) return;
   canvas.releasePointerCapture(event.pointerId);
-  if (dragging) ipcRenderer.send("companion:drag-end");
+  if (dragging) bikunavi.send("companion:drag-end");
   pointerDown = undefined;
   dragging = false;
   if (isHovered) {
@@ -937,7 +1020,7 @@ canvas.addEventListener("pointerup", (event) => {
 });
 
 canvas.addEventListener("pointercancel", () => {
-  if (dragging) ipcRenderer.send("companion:drag-end");
+  if (dragging) bikunavi.send("companion:drag-end");
   pointerDown = undefined;
   dragging = false;
   if (isHovered) {

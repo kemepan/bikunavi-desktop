@@ -26,6 +26,9 @@ Live2Dキャラクター「びくにたん」をmacOSデスクトップに常駐
 - 音楽アプリやChrome/YouTubeで音声再生中のノリノリ反応
 - ポモドーロ中でも音楽再生中はノリノリ反応を継続
 - macOSスリープ中は自動セリフと読み上げを停止し、復帰後に再開
+- ウィンドウ位置・サイズ・各種設定・セリフ履歴・会話履歴の永続化（再起動後も保持）
+- メニューバーからの設定: 自動移動ON/OFF、音楽反応ON/OFF、自動セリフの間隔（30秒/1分/2分）、履歴の消去
+- 会話回答・セリフ履歴のコピーボタン
 - メニューバーから使えるポモドーロタイマー
   - 90分作業
   - 25分作業
@@ -62,6 +65,25 @@ npm start
 ```bash
 npm run check
 ```
+
+## .app の作成（ダブルクリック起動）
+
+```bash
+npm run package
+```
+
+`dist/びくにたん-darwin-arm64/びくにたん.app` が生成されます。ad-hoc署名済みなので、この Mac 上ではダブルクリックで起動できます（他の Mac に配布する場合は正式な署名・公証が必要）。
+
+## セキュリティ構成
+
+- Renderer は `nodeIntegration: false` / `contextIsolation: true` / `sandbox: true`
+- Node 連携は `preload.js` の contextBridge（許可チャンネルのみ）経由
+- ファイル配信は独自スキーム `bikunavi://`（アプリフォルダ外へのアクセスは拒否）
+- CSP 設定済み。pixi.js の動的コード生成は `@pixi/unsafe-eval` で CSP を緩めず対応
+
+## 設定・履歴の保存先
+
+`~/Library/Application Support/bikunavi-desktop/state.json` に、ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）を保存します。
 
 ## macOSログイン時の自動起動
 
@@ -118,7 +140,8 @@ Codex CLIまわりは環境変数で上書きできます。
 
 | ファイル | 役割 |
 |---|---|
-| `main.js` | Electronウィンドウ、Tray、LaunchAgent向け起動、Codex CLI、VOICEVOX、ニュース取得 |
+| `main.js` | Electronウィンドウ、Tray、LaunchAgent向け起動、Codex CLI、VOICEVOX、ニュース取得、設定・履歴の永続化 |
+| `preload.js` | contextBridge。Rendererへ許可したIPCチャンネルだけを公開 |
 | `renderer.js` | Live2D描画、表情、口パク、会話UI、ソースリンク表示、ドラッグ判定 |
 | `style.css` | 透明画面、吹き出し、入力欄、ソースボタン |
 | `index.html` | Canvas、吹き出し、Cubism Core読込 |

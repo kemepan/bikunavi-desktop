@@ -269,4 +269,4 @@ npm start
 - Cubism Coreは `.gitignore` 対象。新環境では `npm run fetch-core` が必要。
 - Live2Dモデルとサイト側素材の権利・配布条件は、`.app` を外部配布する前に再確認する。
 - GitHubへ置く場合、素材の権利確認が済むまではprivate repository推奨。
-- コミット・pushは未実施。
+- リモート: `https://github.com/kemepan/bikunavi-desktop`（private）。2026-07-08にセキュリティ改善・永続化・.app化までpush済み。

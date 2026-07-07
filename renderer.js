@@ -60,6 +60,9 @@ let musicDanceWeight = 0;
 let systemSleeping = false;
 let pomodoroState = { active: false, running: false, remaining: 0, label: "", timeText: "" };
 let pomodoroHideTimer;
+// いま素の吹き出しに出しているソース。ニュース吹き出しにホバーして会話欄へ
+// 切り替わっても、このソースボタンを引き継いで消さないために覚えておく。
+let displayedLineSources = [];
 let idleIntervalMs = 30000;
 let chatterTimer;
 let historySaveTimer;
@@ -224,7 +227,10 @@ function showBubble(item) {
   message.className = "bubble-message";
   message.textContent = speechItem.text;
   bubble.append(message);
-  const sourceList = createSourceLinks(speechItem.sources);
+  const validSources = (speechItem.sources || [])
+    .filter((source) => /^https?:\/\//.test(source?.url || ""));
+  displayedLineSources = validSources;
+  const sourceList = createSourceLinks(validSources);
   if (sourceList) bubble.append(sourceList);
   bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
   bubble.classList.add("is-active");
@@ -233,6 +239,7 @@ function showBubble(item) {
 function showLineHistory(index = lineHistoryIndex) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
+  displayedLineSources = [];
   bubble.replaceChildren();
   bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
   bubble.classList.add("has-history", "is-active");
@@ -386,6 +393,7 @@ function showPomodoroBubble(state = pomodoroState, force = false) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
+  displayedLineSources = [];
   if ((chatActive || dragging) && !force) return;
 
   if (!state.active && state.reason === "stopped") {
@@ -437,7 +445,7 @@ function shortenForBubble(text, limit) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
 }
 
-function showChatBubble(busy = false) {
+function showChatBubble(busy = false, carriedSources = []) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
@@ -455,7 +463,12 @@ function showChatBubble(busy = false) {
     message.textContent = "何をお手伝いしましょう？";
   }
 
-  const sourceList = !busy && entry ? createSourceLinks(entry.sources) : undefined;
+  // ニュース吹き出しからホバーで会話欄へ切り替わった時は、直前に見ていた
+  // ソースボタンを優先して残す。それ以外は表示中の回答のソースを出す。
+  const sourceList = busy
+    ? undefined
+    : createSourceLinks(carriedSources.length ? carriedSources : entry?.sources);
+  displayedLineSources = [];
   if (!busy && chatEntries.length) {
     const history = document.createElement("div");
     history.className = "chat-history";
@@ -619,6 +632,7 @@ function hideBubble(delay = 0) {
   hideBubbleTimer = setTimeout(() => {
     if (!isSpeaking && !isHovered && !dragging && !chatActive && !lineHistoryActive && !pomodoroState.active) {
       bubble.classList.remove("is-active");
+      displayedLineSources = [];
     }
   }, delay);
 }
@@ -657,7 +671,7 @@ function enterCharacter() {
   if (pomodoroState.active) {
     showPomodoroBubble(pomodoroState, true);
   } else {
-    showChatBubble();
+    showChatBubble(false, displayedLineSources);
     model?.motion("Wave", 0);
   }
 }

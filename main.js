@@ -1410,6 +1410,7 @@ async function fetchLatestTopics() {
   const techNews = [];
   const aiNews = [];
   const lifestyleNews = [];
+  const designNews = [];
   const sourceItems = [];
 
   const addSources = (kind, items) => {
@@ -1420,6 +1421,7 @@ async function fetchLatestTopics() {
       if (kind === "A") aiNews.push(formatTopicForPrompt(id, sourceItem));
       else if (kind === "G") generalNews.push(formatTopicForPrompt(id, sourceItem));
       else if (kind === "L") lifestyleNews.push(formatTopicForPrompt(id, sourceItem));
+      else if (kind === "D") designNews.push(formatTopicForPrompt(id, sourceItem));
       else techNews.push(formatTopicForPrompt(id, sourceItem));
     }
   };
@@ -1462,8 +1464,9 @@ async function fetchLatestTopics() {
     );
   })();
 
+  // when:1d を付けて直近1日の記事に絞り、鮮度を上げる。
   const aiNewsTask = (async () => {
-    const query = encodeURIComponent("生成AI OR 人工知能 OR AIモデル");
+    const query = encodeURIComponent("生成AI OR 人工知能 OR AIモデル when:1d");
     const response = await fetch(
       `https://news.google.com/rss/search?q=${query}&hl=ja&gl=JP&ceid=JP:ja`,
       { signal: AbortSignal.timeout(8000) }
@@ -1473,8 +1476,21 @@ async function fetchLatestTopics() {
     addSources("A", parseRssItems(xml, 15));
   })();
 
+  const designNewsTask = (async () => {
+    const query = encodeURIComponent(
+      "UIデザイン OR UXデザイン OR Webデザイン OR グラフィックデザイン OR タイポグラフィ OR フォント OR 配色 OR デザインツール when:2d"
+    );
+    const response = await fetch(
+      `https://news.google.com/rss/search?q=${query}&hl=ja&gl=JP&ceid=JP:ja`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!response.ok) throw new Error(`Google Design News RSS: ${response.status}`);
+    const xml = await response.text();
+    addSources("D", parseRssItems(xml, 12));
+  })();
+
   const lifestyleNewsTask = (async () => {
-    const query = encodeURIComponent("ライフハック OR 生活の知恵 OR 家事 時短 OR 整理術 OR 収納");
+    const query = encodeURIComponent("ライフハック OR 生活の知恵 OR 家事 時短 OR 整理術 OR 収納 when:2d");
     const response = await fetch(
       `https://news.google.com/rss/search?q=${query}&hl=ja&gl=JP&ceid=JP:ja`,
       { signal: AbortSignal.timeout(8000) }
@@ -1488,6 +1504,7 @@ async function fetchLatestTopics() {
     googleNewsTask,
     hackerNewsTask,
     aiNewsTask,
+    designNewsTask,
     lifestyleNewsTask
   ]);
   for (const result of results) {
@@ -1498,11 +1515,12 @@ async function fetchLatestTopics() {
 
   latestTopicSources = new Map(sourceItems.map((item) => [item.id, item]));
   console.log(
-    `Topics fetched: ai=${aiNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}`
+    `Topics fetched: ai=${aiNews.length} design=${designNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}`
   );
 
   const promptText = [
     aiNews.length ? `AI関連の最新見出し:\n${aiNews.join("\n")}` : "",
+    designNews.length ? `デザイン・制作まわりの見出し:\n${designNews.join("\n")}` : "",
     lifestyleNews.length ? `生活ハック・暮らしの見出し:\n${lifestyleNews.join("\n")}` : "",
     generalNews.length ? `日本の最新見出し:\n${generalNews.join("\n")}` : "",
     techNews.length ? `技術コミュニティの最新見出し:\n${techNews.join("\n")}` : ""
@@ -1529,7 +1547,7 @@ async function generateIdleLines() {
       `現在の日本時間は ${now} です。`,
       "ユーザーが作業中に、たまに話すセリフを20個作ってください。",
       "通常のセリフは10〜35文字、情報共有系は50〜120文字の自然な日本語にしてください。各セリフは改行せず、一行に一つだけ出力してください。",
-      "出力形式は必ず `種別|参照ID|セリフ` にしてください。通常セリフは `normal||セリフ`、ニュース系は `news|A3|セリフ`、生活ハック系は `life|L3|セリフ` のように、元にした見出しのIDを1〜2個入れてください。",
+      "出力形式は必ず `種別|参照ID|セリフ` にしてください。通常セリフは `normal||セリフ`、ニュース系（AI・デザイン・その他）は `news|A3|セリフ` や `news|D3|セリフ`、生活ハック系は `life|L3|セリフ` のように、元にした見出しのIDを1〜2個入れてください。",
       "番号、箇条書き記号、引用符、説明は付けないでください。",
       "自己紹介や『AIナビです』は禁止です。",
       "気の合う作業仲間のような、具体的でくだけた口調にしてください。",
@@ -1537,10 +1555,13 @@ async function generateIdleLines() {
       "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、ふと浮かんだ小ネタ、コーヒーや音楽など身の回りの話、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
       "ポエム、格言、抽象的な励まし、悟った言い回し、仏教・スピリチュアル調は禁止です。",
       latestTopicText
-        ? "20個のうち5個はAI関連ニュース、3個は生活ハック・暮らしの小ネタ、2個はその他の時事・技術ネタにしてください。残りは日常や制作の短いセリフにしてください。"
+        ? "20個のうち4個はAI関連ニュース、3個はデザイン・制作まわりのニュース、2個は生活ハック・暮らしの小ネタ、1個はその他の時事・技術ネタにしてください。残りは日常や制作の短いセリフにしてください。該当する見出しが無いカテゴリは無理に埋めず、通常セリフに回してください。"
         : "",
       latestTopicText
-        ? "ニュース系・生活ハック系は情報共有として少し長めに、見出しから分かる出来事やコツと、創作やPC作業の相棒として気になる点を一つ話してください。"
+        ? "デザイン系は、UI・UX・Webデザイン、フォントやタイポグラフィ、配色、デザインツール（Figma等）、制作の小ネタなど、作り手として興味を持てる切り口で話してください。"
+        : "",
+      latestTopicText
+        ? "ニュース系・デザイン系・生活ハック系は情報共有として少し長めに、見出しから分かる出来事やコツと、創作やPC作業の相棒として気になる点を一つ話してください。"
         : "",
       latestTopicText
         ? "生活ハック系は、机まわり、整理、家事時短、休憩、作業環境、買い物前の確認など、すぐ試せる軽い内容にしてください。医療・治療・サプリ・危険な掃除方法・不安を煽る健康話は避けてください。"

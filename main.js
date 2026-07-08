@@ -267,12 +267,33 @@ const FORTUNE_STEMS = [
   { symbol: "癸", element: "水", keyword: "潤す", mood: "静かに補給する" }
 ];
 // 五行を、干支のような専門用語ではなく「その日の気分の色」として平易に言い換える。
+// bgm は具体的な曲名ではなく雰囲気・ジャンルで薦める（実在を確認できない曲名は出さない）。
 const FORTUNE_ELEMENTS = {
-  木: { mood: "すくすく伸びる", color: "みどり" },
-  火: { mood: "ぱっと明るい", color: "あかね" },
-  土: { mood: "どっしり落ち着く", color: "つちいろ" },
-  金: { mood: "きゅっと締まる", color: "きんいろ" },
-  水: { mood: "すっと流れる", color: "みずいろ" }
+  木: {
+    mood: "すくすく伸びる",
+    color: "みどり",
+    bgm: ["軽やかなアコースティックギター", "朝に合うやさしいフォーク", "爽やかなボサノヴァ"]
+  },
+  火: {
+    mood: "ぱっと明るい",
+    color: "あかね",
+    bgm: ["テンション上がるアップテンポなポップ", "明るいシティポップ", "元気の出るファンク"]
+  },
+  土: {
+    mood: "どっしり落ち着く",
+    color: "つちいろ",
+    bgm: ["落ち着いたローファイ・ヒップホップ", "ゆったりしたジャズ", "低音の心地よいチルアウト"]
+  },
+  金: {
+    mood: "きゅっと締まる",
+    color: "きんいろ",
+    bgm: ["集中用のミニマルなピアノ", "研ぎ澄ますようなアンビエント・テクノ", "静かなクラシック"]
+  },
+  水: {
+    mood: "すっと流れる",
+    color: "みずいろ",
+    bgm: ["さらさら流れるアンビエント", "静かな作業用のチル", "雨音まじりのローファイ"]
+  }
 };
 const FORTUNE_ACTIONS = [
   "机の上をひと区画だけ空ける",
@@ -450,11 +471,13 @@ function makeDailyFortune(date = new Date()) {
   const element = FORTUNE_ELEMENTS[stem.element];
   const action = FORTUNE_ACTIONS[(dateNumber + month) % FORTUNE_ACTIONS.length];
   const item = FORTUNE_ITEMS[(dateNumber + day) % FORTUNE_ITEMS.length];
+  const bgm = element.bgm[(dateNumber + month + day) % element.bgm.length];
   const lines = [
     `今日のびくたん占いです。${element.mood}、${element.color}っぽい一日になりそうですよ。`,
     `テーマは「${stem.keyword}」。${stem.mood}感じでいきましょう。`,
     `${action}と、いい流れになりそうです。`,
-    `ラッキー小物は${item}。手元にあると心強いですよ。`
+    `ラッキー小物は${item}。手元にあると心強いですよ。`,
+    `今日のおすすめBGMは、${bgm}。作業に馴染むと思いますよ。`
   ];
   return {
     text: lines.join("\n"),

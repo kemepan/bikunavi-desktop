@@ -129,7 +129,49 @@ const conversationHistory = Array.isArray(persistedState.conversationHistory)
   : [];
 const idleLineQueue = [];
 let idleLineGeneration;
+// 直近に話した自動セリフを覚えておき、しばらくは繰り返さない。
+const RECENT_IDLE_LIMIT = 30;
+const recentIdleKeys = [];
+let fallbackIdleIndex = 0;
+let lastFortuneQueuedDate;
 let latestTopicSources = new Map();
+
+function idleKey(item) {
+  const text = typeof item === "string" ? item : item?.text ?? "";
+  return text.replace(/\s+/g, "").replace(/[。、!！?？…・]/g, "");
+}
+
+function rememberRecentIdle(item) {
+  const key = idleKey(item);
+  if (!key) return;
+  recentIdleKeys.push(key);
+  while (recentIdleKeys.length > RECENT_IDLE_LIMIT) recentIdleKeys.shift();
+}
+
+function pickFallbackIdleLine() {
+  for (let attempt = 0; attempt < FALLBACK_IDLE_LINES.length; attempt += 1) {
+    const candidate = FALLBACK_IDLE_LINES[fallbackIdleIndex % FALLBACK_IDLE_LINES.length];
+    fallbackIdleIndex += 1;
+    if (!recentIdleKeys.includes(idleKey(candidate))) return candidate;
+  }
+  return FALLBACK_IDLE_LINES[fallbackIdleIndex++ % FALLBACK_IDLE_LINES.length];
+}
+
+// キューから、最近話していない行を優先して取り出す。
+// 新鮮な行がなければ、溜まった既出行を1つ捨てて予備の一言を返す（既出は返さない）。
+function takeFreshIdleLine() {
+  for (let index = 0; index < idleLineQueue.length; index += 1) {
+    if (!recentIdleKeys.includes(idleKey(idleLineQueue[index]))) {
+      const [line] = idleLineQueue.splice(index, 1);
+      rememberRecentIdle(line);
+      return line;
+    }
+  }
+  if (idleLineQueue.length) idleLineQueue.shift();
+  const line = pickFallbackIdleLine();
+  rememberRecentIdle(line);
+  return line;
+}
 const characterSheetPath = path.join(__dirname, "CHARACTER_SHEET.md");
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
 let mediaPlaybackTimer;
@@ -150,12 +192,16 @@ let pomodoroState = {
 };
 
 const FALLBACK_IDLE_LINES = [
-  "水分とってます？",
-  "肩、上がってませんか？",
-  "保存しました？ 念のため！",
-  "その作業、あと少しですか？",
-  "いったん休憩します？",
-  "画面、見つめすぎ注意です。"
+  "この静かな集中、いい感じです。",
+  "コーヒー、そろそろ湯気が恋しいですね。",
+  "さっきの手さばき、地味に速かったです。",
+  "変な思いつき、こういう時こそ拾いどきです。",
+  "肩、ちょっとだけ回すと楽になりますよ。",
+  "画面の中、少しずつ形になってきましたね。",
+  "その配色、目にすっと入ってきます。",
+  "小さい直し、あとで効いてくるやつです。",
+  "机の上、創作の気配が濃いです。",
+  "ふう、いったん伸びしてもいい頃です。"
 ];
 
 const SIZE_PRESETS = {
@@ -1521,14 +1567,28 @@ async function generateIdleLines() {
       console.log(
         `Idle lines generated: ${lines.length} (sources付き: ${lines.filter((line) => line.sources.length).length})`
       );
-      const queuedLines = [...lines];
+      // 重複を避けるため、既にキューにある/最近話した行と同じものは除く。
+      const queuedKeys = new Set(idleLineQueue.map(idleKey));
+      const queuedLines = [];
+      for (const line of lines) {
+        const key = idleKey(line);
+        if (!key || queuedKeys.has(key) || recentIdleKeys.includes(key)) continue;
+        queuedKeys.add(key);
+        queuedLines.push(line);
+      }
+      // 占いは毎バッチではなく1日1回だけ差し込む（毎回同じ4行の再生を防ぐ）。
       if (fortuneAutoEnabled) {
-        const fortune = makeDailyFortune();
-        const fortuneLines = (fortune.lines || [fortune.text]).map((text) => ({
-          text,
-          sources: []
-        }));
-        queuedLines.splice(Math.min(queuedLines.length, 2), 0, ...fortuneLines);
+        const { year, month, day } = getJstDateParts();
+        const dateStr = `${year}-${month}-${day}`;
+        if (lastFortuneQueuedDate !== dateStr) {
+          lastFortuneQueuedDate = dateStr;
+          const fortune = makeDailyFortune();
+          const fortuneLines = (fortune.lines || [fortune.text]).map((text) => ({
+            text,
+            sources: []
+          }));
+          queuedLines.splice(Math.min(queuedLines.length, 2), 0, ...fortuneLines);
+        }
       }
       idleLineQueue.push(...queuedLines.slice(0, 20));
     } catch (error) {
@@ -1599,7 +1659,11 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 
 ipcMain.handle("companion:idle-line", async () => {
   if (!idleLineQueue.length) await generateIdleLines();
-  const line = idleLineQueue.shift() ?? FALLBACK_IDLE_LINES[0];
+  // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
+  const allRecent = idleLineQueue.length > 0 &&
+    idleLineQueue.every((item) => recentIdleKeys.includes(idleKey(item)));
+  if (allRecent) await generateIdleLines();
+  const line = takeFreshIdleLine();
   if (idleLineQueue.length < 5) generateIdleLines().catch(() => {});
   return line;
 });

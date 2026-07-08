@@ -370,22 +370,21 @@ function createPomodoroControls(state) {
     }
   });
 
-  const stop = document.createElement("button");
-  stop.type = "button";
-  stop.textContent = "停止";
-  stop.className = "is-danger";
-  stop.addEventListener("click", async (event) => {
+  const finish = document.createElement("button");
+  finish.type = "button";
+  finish.textContent = "完了";
+  finish.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
     try {
-      pomodoroState = await bikunavi.invoke("companion:pomodoro-action", "stop");
-      showPomodoroBubble(pomodoroState, true);
+      // 完了の吹き出しは main からの "completed" イベントで表示するので、ここでは再描画しない。
+      await bikunavi.invoke("companion:pomodoro-action", "finish");
     } catch (error) {
-      console.error("Pomodoro stop failed:", error);
+      console.error("Pomodoro finish failed:", error);
     }
   });
 
-  controls.append(toggle, stop);
+  controls.append(toggle, finish);
   return controls;
 }
 
@@ -396,19 +395,11 @@ function showPomodoroBubble(state = pomodoroState, force = false) {
   displayedLineSources = [];
   if ((chatActive || dragging) && !force) return;
 
-  if (!state.active && state.reason === "stopped") {
-    const stoppedLine = "ポモドーロ、止めました。";
-    rememberLine(stoppedLine, "timer");
-    showBubble(stoppedLine);
-    hideBubble(2200);
-    return;
-  }
-
   const title = state.active
     ? `${state.label || "ポモドーロ"}${state.running ? "" : " 一時停止中"}`
     : "ポモドーロ完了";
   const text = state.reason === "completed"
-    ? `${state.label || "タイマー"}おしまいです。\nおつかれさまでした！`
+    ? (state.message || `${state.label || "タイマー"}おしまいです。\nおつかれさまでした！`)
     : `${title}\n${state.timeText || "0:00"}`;
   if (["started", "autoBreakStarted", "autoFocusStarted", "paused", "resumed", "completed"].includes(state.reason)) {
     rememberLine(text, "timer");

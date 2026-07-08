@@ -630,9 +630,21 @@ function resumePomodoro() {
   refreshPomodoroUi("resumed");
 }
 
-function stopPomodoro() {
+// ポモドーロ完了時のねぎらい。画面は見えないので、集中に区切りをつけたこと自体を労う。
+const POMODORO_FINISH_MESSAGES = [
+  "おつかれさまでした！ 一区切りつきましたね。ここまでのがんばり、いい感じです。",
+  "ポモドーロ完了です。よく続きました。少し肩の力を抜いてくださいね。",
+  "おつかれさまです！ ひと区切りですね。自分をちょっと褒めていい時間です。",
+  "完了です。集中の時間、おつかれさまでした。水分とって、ひと息どうぞ。",
+  "ここまでよくがんばりました！ ゆっくり深呼吸して、おつかれさまです。"
+];
+
+function finishPomodoro() {
   if (!pomodoroState.active) return;
   clearPomodoroTimer();
+  const message = POMODORO_FINISH_MESSAGES[
+    Math.floor(Math.random() * POMODORO_FINISH_MESSAGES.length)
+  ];
   pomodoroState = {
     active: false,
     running: false,
@@ -641,9 +653,13 @@ function stopPomodoro() {
     duration: 0,
     remaining: 0,
     startedAt: 0,
-    endsAt: 0
+    endsAt: 0,
+    message
   };
-  refreshPomodoroUi("stopped");
+  refreshPomodoroUi("completed");
+  speakFromMain(message, "answer").catch((error) => {
+    console.error("Pomodoro finish speech failed:", error);
+  });
 }
 
 function buildTrayMenu() {
@@ -689,9 +705,9 @@ function buildTrayMenu() {
           click: resumePomodoro
         },
         {
-          label: "停止",
+          label: "完了",
           enabled: pomodoroState.active,
-          click: stopPomodoro
+          click: finishPomodoro
         }
       ]
     },
@@ -1726,7 +1742,7 @@ ipcMain.handle("companion:pomodoro-state", () => getPomodoroSnapshot("sync"));
 ipcMain.handle("companion:pomodoro-action", (_event, action) => {
   if (action === "pause") pausePomodoro();
   else if (action === "resume") resumePomodoro();
-  else if (action === "stop") stopPomodoro();
+  else if (action === "finish" || action === "stop") finishPomodoro();
   return getPomodoroSnapshot("sync");
 });
 

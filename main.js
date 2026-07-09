@@ -10,7 +10,8 @@ const {
   shell,
   powerMonitor,
   protocol,
-  net
+  net,
+  globalShortcut
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -20,6 +21,7 @@ const { spawn } = require("node:child_process");
 // file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
 // 特権スキームで index.html と Live2D 素材を配信する。
 const APP_SCHEME = "bikunavi";
+const CHAT_SHORTCUT = "CommandOrControl+Shift+B";
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -46,7 +48,10 @@ const DEFAULT_STATE = {
   idleIntervalMs: 30000,
   lineHistory: [],
   chatEntries: [],
-  conversationHistory: []
+  conversationHistory: [],
+  characterAnswers: {},
+  pendingCharacterQuestionId: undefined,
+  lastCharacterQuestionAt: 0
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
 
@@ -119,6 +124,7 @@ let speechSequence = 0;
 let activeSpeechId;
 let speechFile;
 const speechWaiters = new Map();
+let lastTopDocked;
 let voicevoxProcess;
 let voicevoxOwned = false;
 let voicevoxReadyPromise;
@@ -130,8 +136,8 @@ const conversationHistory = Array.isArray(persistedState.conversationHistory)
 const idleLineQueue = [];
 let idleLineGeneration;
 // 直近に話した自動セリフを覚えておき、しばらくは繰り返さない。
-const RECENT_IDLE_LIMIT = 30;
-const recentIdleKeys = [];
+const RECENT_IDLE_LIMIT = 60;
+const recentIdleItems = [];
 let fallbackIdleIndex = 0;
 let lastFortuneQueuedDate;
 let latestTopicSources = new Map();
@@ -141,18 +147,64 @@ function idleKey(item) {
   return text.replace(/\s+/g, "").replace(/[。、!！?？…・]/g, "");
 }
 
+function idleSourceUrls(item) {
+  if (!item || typeof item === "string" || !Array.isArray(item.sources)) return [];
+  return item.sources
+    .map((source) => String(source?.url || "").trim())
+    .filter(Boolean);
+}
+
+function bigrams(text) {
+  const chars = [...idleKey(text)];
+  if (chars.length < 2) return new Set(chars);
+  return new Set(chars.slice(0, -1).map((char, index) => char + chars[index + 1]));
+}
+
+function idleSimilarity(left, right) {
+  const leftKey = idleKey(left);
+  const rightKey = idleKey(right);
+  if (!leftKey || !rightKey) return 0;
+  if (leftKey === rightKey) return 1;
+  if (Math.min(leftKey.length, rightKey.length) >= 10 &&
+      (leftKey.includes(rightKey) || rightKey.includes(leftKey))) return 0.9;
+  const leftPairs = bigrams(leftKey);
+  const rightPairs = bigrams(rightKey);
+  if (!leftPairs.size || !rightPairs.size) return 0;
+  let shared = 0;
+  for (const pair of leftPairs) {
+    if (rightPairs.has(pair)) shared += 1;
+  }
+  return (2 * shared) / (leftPairs.size + rightPairs.size);
+}
+
+function isRecentIdle(item) {
+  const urls = new Set(idleSourceUrls(item));
+  return recentIdleItems.some((recent) => {
+    if (urls.size && recent.urls.some((url) => urls.has(url))) return true;
+    return idleSimilarity(item, recent.text) >= 0.68;
+  });
+}
+
 function rememberRecentIdle(item) {
   const key = idleKey(item);
   if (!key) return;
-  recentIdleKeys.push(key);
-  while (recentIdleKeys.length > RECENT_IDLE_LIMIT) recentIdleKeys.shift();
+  recentIdleItems.push({
+    text: typeof item === "string" ? item : String(item.text || ""),
+    urls: idleSourceUrls(item)
+  });
+  while (recentIdleItems.length > RECENT_IDLE_LIMIT) recentIdleItems.shift();
+}
+
+// 再起動後も直前の話題を忘れないよう、保存済みの表示履歴から復元する。
+for (const entry of (Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory : []).slice(-RECENT_IDLE_LIMIT)) {
+  rememberRecentIdle(entry);
 }
 
 function pickFallbackIdleLine() {
   for (let attempt = 0; attempt < FALLBACK_IDLE_LINES.length; attempt += 1) {
     const candidate = FALLBACK_IDLE_LINES[fallbackIdleIndex % FALLBACK_IDLE_LINES.length];
     fallbackIdleIndex += 1;
-    if (!recentIdleKeys.includes(idleKey(candidate))) return candidate;
+    if (!isRecentIdle(candidate)) return candidate;
   }
   return FALLBACK_IDLE_LINES[fallbackIdleIndex++ % FALLBACK_IDLE_LINES.length];
 }
@@ -161,7 +213,7 @@ function pickFallbackIdleLine() {
 // 新鮮な行がなければ、溜まった既出行を1つ捨てて予備の一言を返す（既出は返さない）。
 function takeFreshIdleLine() {
   for (let index = 0; index < idleLineQueue.length; index += 1) {
-    if (!recentIdleKeys.includes(idleKey(idleLineQueue[index]))) {
+    if (!isRecentIdle(idleLineQueue[index])) {
       const [line] = idleLineQueue.splice(index, 1);
       rememberRecentIdle(line);
       return line;
@@ -173,6 +225,10 @@ function takeFreshIdleLine() {
   return line;
 }
 const characterSheetPath = path.join(__dirname, "CHARACTER_SHEET.md");
+const characterQuestionsPath = path.join(__dirname, "CHARACTER_QUESTIONS.json");
+const CHARACTER_QUESTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const characterQuestionAutoEligibleAt = Date.now() + 15 * 60 * 1000;
+const characterQuestions = loadCharacterQuestions();
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
@@ -378,8 +434,16 @@ function createWindow() {
   companionWindow.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`Renderer load failed (${code}): ${description}`);
   });
-  companionWindow.on("moved", saveStateSoon);
+  companionWindow.on("move", sendWindowEdgeState);
+  companionWindow.on("moved", () => {
+    sendWindowEdgeState();
+    saveStateSoon();
+  });
   companionWindow.loadURL(`${APP_SCHEME}://app/index.html`);
+  companionWindow.webContents.on("did-finish-load", () => {
+    lastTopDocked = undefined;
+    sendWindowEdgeState();
+  });
   companionWindow.once("ready-to-show", () => {
     if (companionWindow && !companionWindow.isDestroyed()) companionWindow.showInactive();
   });
@@ -415,6 +479,18 @@ function createWindow() {
     clearInterval(cursorTimer);
     companionWindow = undefined;
   });
+}
+
+function sendWindowEdgeState() {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  const bounds = companionWindow.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  // macOSではBrowserWindowのy座標がメニューバー高（概ね20〜40px）で
+  // 強制的に止まる。副画面のworkArea.yが0でも上端到達を検出できる幅を持たせる。
+  const topDocked = bounds.y <= area.y + 42;
+  if (topDocked === lastTopDocked) return;
+  lastTopDocked = topDocked;
+  companionWindow.webContents.send("companion:window-edge", { topDocked });
 }
 
 function setCompanionSize(sizeName) {
@@ -675,6 +751,10 @@ function buildTrayMenu() {
         tray.setContextMenu(buildTrayMenu());
       }
     },
+    {
+      label: "会話欄を開く（⌘⇧B）",
+      click: openChatInput
+    },
     { type: "separator" },
     {
       label: pomodoroState.active
@@ -714,6 +794,23 @@ function buildTrayMenu() {
     {
       label: "今日のびくたん占い",
       click: showDailyFortune
+    },
+    {
+      label: `キャラカスタム（${Object.keys(getCharacterAnswers()).length}/${characterQuestions.length}）`,
+      submenu: [
+        {
+          label: getPendingCharacterQuestion()
+            ? "さっきの質問に答える"
+            : "びくたんから質問してもらう",
+          enabled: Boolean(getPendingCharacterQuestion()) ||
+            Object.keys(getCharacterAnswers()).length < characterQuestions.length,
+          click: showCharacterQuestionNow
+        },
+        {
+          label: "回答は会話と自動セリフへ反映されます",
+          enabled: false
+        }
+      ]
     },
     {
       label: "セリフ履歴",
@@ -887,6 +984,28 @@ function buildTrayMenu() {
     { type: "separator" },
     { label: "終了", role: "quit" }
   ]);
+}
+
+function openChatInput() {
+  if (!companionWindow || companionWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (!companionWindow) return;
+
+  clearInterval(autoMoveTimer);
+  const sendOpenChat = () => {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    companionWindow.show();
+    companionWindow.focus();
+    companionWindow.webContents.send("companion:open-chat");
+    tray?.setContextMenu(buildTrayMenu());
+  };
+
+  if (companionWindow.webContents.isLoading()) {
+    companionWindow.webContents.once("did-finish-load", sendOpenChat);
+  } else {
+    sendOpenChat();
+  }
 }
 
 function stopSpeech() {
@@ -1100,6 +1219,9 @@ app.whenReady().then(() => {
   });
   app.dock?.hide();
   createWindow();
+  if (!globalShortcut.register(CHAT_SHORTCUT, openChatInput)) {
+    console.error(`Global shortcut could not be registered: ${CHAT_SHORTCUT}`);
+  }
 
   const icon = nativeImage.createFromDataURL(
     `data:image/svg+xml;base64,${Buffer.from(traySvg).toString("base64")}`
@@ -1149,25 +1271,52 @@ ipcMain.on("companion:auto-move", () => {
 
   const bounds = companionWindow.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
+  const minY = area.y;
+  const maxY = area.y + area.height - bounds.height;
   const destination = {
     x: area.x + Math.round(Math.random() * Math.max(0, area.width - bounds.width)),
-    y: area.y + Math.round(Math.random() * Math.max(0, area.height - bounds.height))
+    // ときどき上端へぴったり移動する。負の座標でmacOSの上端制限を
+    // 押し切ろうとせず、表示側のtopDockedレイアウトへ任せる。
+    y: Math.random() < 0.25
+      ? minY
+      : minY + Math.round(Math.random() * Math.max(0, maxY - minY))
   };
   const origin = companionWindow.getPosition();
   const startedAt = Date.now();
   const duration = 10000;
 
+  if (!Number.isFinite(destination.x) || !Number.isFinite(destination.y) ||
+      !Number.isFinite(origin[0]) || !Number.isFinite(origin[1])) {
+    console.error(
+      `auto-move: 座標が不正なため開始を中止 dest=(${destination.x}, ${destination.y})` +
+      ` origin=(${origin[0]}, ${origin[1]}) area=${JSON.stringify(area)} bounds=${JSON.stringify(bounds)}`
+    );
+    return;
+  }
+
   autoMoveTimer = setInterval(() => {
-    if (!companionWindow || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) {
+    if (!companionWindow || companionWindow.isDestroyed() || dragOrigin || characterHovered || musicPlaying || pomodoroState.active) {
       clearInterval(autoMoveTimer);
       return;
     }
     const progress = Math.min(1, (Date.now() - startedAt) / duration);
     const eased = (1 - Math.cos(Math.PI * progress)) / 2;
-    companionWindow.setPosition(
-      Math.round(origin[0] + (destination.x - origin[0]) * eased),
-      Math.round(origin[1] + (destination.y - origin[1]) * eased)
-    );
+    const nextX = Math.round(origin[0] + (destination.x - origin[0]) * eased);
+    const nextY = Math.round(origin[1] + (destination.y - origin[1]) * eased);
+    if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
+      console.error(`auto-move: 移動中の座標が不正なため中断 next=(${nextX}, ${nextY})`);
+      clearInterval(autoMoveTimer);
+      return;
+    }
+    try {
+      companionWindow.setPosition(nextX, nextY);
+    } catch (error) {
+      // Electron/macOS側が画面構成変更の瞬間などに座標を拒否しても、
+      // タイマー由来の未捕捉例外でアプリ全体を終了させない。
+      console.error(`auto-move: setPositionを中断 next=(${nextX}, ${nextY})`, error);
+      clearInterval(autoMoveTimer);
+      return;
+    }
     if (progress === 1) clearInterval(autoMoveTimer);
   }, 33);
 });
@@ -1229,6 +1378,88 @@ function readCharacterSheet() {
     console.error("Character sheet could not be read:", error);
     return "明るく実務的で、少しだけいたずらっぽい創作仲間として話す。";
   }
+}
+
+function loadCharacterQuestions() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(characterQuestionsPath, "utf8"));
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item?.id && item?.question)
+      : [];
+  } catch (error) {
+    console.error("Character questions could not be read:", error);
+    return [];
+  }
+}
+
+function getCharacterAnswers() {
+  if (!persistedState.characterAnswers ||
+      typeof persistedState.characterAnswers !== "object" ||
+      Array.isArray(persistedState.characterAnswers)) {
+    persistedState.characterAnswers = {};
+  }
+  return persistedState.characterAnswers;
+}
+
+function formatCharacterCustomization() {
+  const answers = getCharacterAnswers();
+  const lines = characterQuestions
+    .filter((question) => answers[question.id]?.answer)
+    .map((question) => (
+      `- ${question.topic}: ${String(answers[question.id].answer).slice(0, 1000)}`
+    ));
+  if (!lines.length) return "";
+  return [
+    "以下はユーザーと会話しながら決めた追加設定です。キャラクターシートと両立させ、ユーザーの好みとして自然に反映してください。",
+    "回答文を毎回そのまま復唱したり、設定を説明したりはしないでください。",
+    ...lines
+  ].join("\n");
+}
+
+function getPendingCharacterQuestion() {
+  const id = String(persistedState.pendingCharacterQuestionId || "");
+  return characterQuestions.find((question) => question.id === id);
+}
+
+function makeCharacterQuestion(force = false) {
+  const pending = getPendingCharacterQuestion();
+  if (pending) {
+    return {
+      text: `ちょっと聞いてもいいですか？\n${pending.question}`,
+      sources: [],
+      kind: "custom-question",
+      questionId: pending.id
+    };
+  }
+
+  const lastAskedAt = Number(persistedState.lastCharacterQuestionAt) || 0;
+  if (!force && (
+    Date.now() < characterQuestionAutoEligibleAt ||
+    Date.now() - lastAskedAt < CHARACTER_QUESTION_INTERVAL_MS
+  )) return undefined;
+
+  const answers = getCharacterAnswers();
+  const question = characterQuestions.find((item) => !answers[item.id]?.answer);
+  if (!question) return undefined;
+  persistedState.pendingCharacterQuestionId = question.id;
+  persistedState.lastCharacterQuestionAt = Date.now();
+  saveStateSoon();
+  return {
+    text: `ちょっと聞いてもいいですか？\n${question.question}`,
+    sources: [],
+    kind: "custom-question",
+    questionId: question.id
+  };
+}
+
+function showCharacterQuestionNow() {
+  const item = makeCharacterQuestion(true);
+  if (!item) return;
+  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
+  if (!companionWindow) return;
+  companionWindow.show();
+  companionWindow.focus();
+  companionWindow.webContents.send("companion:custom-question", item);
 }
 
 function detectMediaRemotePlayback() {
@@ -1556,10 +1787,18 @@ async function generateIdleLines() {
     const latestTopics = await fetchLatestTopics();
     const latestTopicText = latestTopics.promptText;
     const characterSheet = readCharacterSheet();
+    const characterCustomization = formatCharacterCustomization();
+    const recentLinesForPrompt = recentIdleItems
+      .slice(-20)
+      .map((item) => `- ${item.text}`)
+      .join("\n");
     const prompt = [
       "あなたはデスクトップに住むAIコンシェルジュ「びくたん」です。",
       "以下のキャラクターシートを一貫して演じてください。例文のコピーではなく、性格・価値観・口調を新しい発言に反映してください。",
       `<character_sheet>\n${characterSheet}\n</character_sheet>`,
+      characterCustomization
+        ? `<character_customization>\n${characterCustomization}\n</character_customization>`
+        : "",
       `現在の日本時間は ${now} です。`,
       "ユーザーが作業中に、たまに話すセリフを20個作ってください。",
       "通常のセリフは10〜35文字、情報共有系は50〜120文字の自然な日本語にしてください。各セリフは改行せず、一行に一つだけ出力してください。",
@@ -1590,6 +1829,10 @@ async function generateIdleLines() {
         : "",
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
+      recentLinesForPrompt
+        ? "以下は直近に話した内容です。同じ文だけでなく、言い換え、同じニュース、同じ助言、同じ質問、同じオチも避け、別の話題を作ってください。"
+        : "",
+      recentLinesForPrompt ? `直近のセリフ（再利用禁止）:\n${recentLinesForPrompt}` : "",
       "ファイルや外部情報は調べず、この依頼と下記見出しだけに答えてください。",
       latestTopicText ? `参考にする最新見出し:\n${latestTopicText}` : ""
     ].join("\n");
@@ -1628,13 +1871,18 @@ async function generateIdleLines() {
       console.log(
         `Idle lines generated: ${lines.length} (sources付き: ${lines.filter((line) => line.sources.length).length})`
       );
-      // 重複を避けるため、既にキューにある/最近話した行と同じものは除く。
-      const queuedKeys = new Set(idleLineQueue.map(idleKey));
+      // 完全一致だけでなく、似た文章や同じ出典の記事も除く。
       const queuedLines = [];
       for (const line of lines) {
         const key = idleKey(line);
-        if (!key || queuedKeys.has(key) || recentIdleKeys.includes(key)) continue;
-        queuedKeys.add(key);
+        const duplicateInQueue = [...idleLineQueue, ...queuedLines]
+          .some((queued) => {
+            const urls = new Set(idleSourceUrls(line));
+            const sameSource = urls.size &&
+              idleSourceUrls(queued).some((url) => urls.has(url));
+            return sameSource || idleSimilarity(line, queued) >= 0.68;
+          });
+        if (!key || duplicateInQueue || isRecentIdle(line)) continue;
         queuedLines.push(line);
       }
       // 占いは毎バッチではなく1日1回だけ差し込む（毎回同じ4行の再生を防ぐ）。
@@ -1681,10 +1929,14 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     .map((turn) => `${turn.role === "user" ? "ユーザー" : "びくたん"}: ${turn.text}`)
     .join("\n");
   const characterSheet = readCharacterSheet();
+  const characterCustomization = formatCharacterCustomization();
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
     "以下のキャラクターシートを一貫して演じてください。例文をそのまま繰り返さず、性格・価値観・口調として反映してください。",
     `<character_sheet>\n${characterSheet}\n</character_sheet>`,
+    characterCustomization
+      ? `<character_customization>\n${characterCustomization}\n</character_customization>`
+      : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。",
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
@@ -1719,14 +1971,46 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 });
 
 ipcMain.handle("companion:idle-line", async () => {
+  const characterQuestion = makeCharacterQuestion(false);
+  if (characterQuestion) return characterQuestion;
   if (!idleLineQueue.length) await generateIdleLines();
   // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
   const allRecent = idleLineQueue.length > 0 &&
-    idleLineQueue.every((item) => recentIdleKeys.includes(idleKey(item)));
+    idleLineQueue.every((item) => isRecentIdle(item));
   if (allRecent) await generateIdleLines();
   const line = takeFreshIdleLine();
   if (idleLineQueue.length < 5) generateIdleLines().catch(() => {});
   return line;
+});
+
+ipcMain.handle("companion:answer-character-question", (_event, questionId, rawAnswer) => {
+  const question = characterQuestions.find((item) => item.id === String(questionId || ""));
+  const answer = String(rawAnswer || "").trim().slice(0, 1000);
+  if (!question || !answer) {
+    return { text: "うまく受け取れませんでした。もう一度聞かせてください。", sources: [] };
+  }
+  const answers = getCharacterAnswers();
+  answers[question.id] = {
+    question: question.question,
+    answer,
+    updatedAt: Date.now()
+  };
+  persistedState.pendingCharacterQuestionId = undefined;
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return {
+    text: "なるほど、覚えておきます。これからのびくたんに、少しずつ混ぜていきますね。",
+    sources: []
+  };
+});
+
+ipcMain.handle("companion:defer-character-question", (_event, questionId) => {
+  if (String(persistedState.pendingCharacterQuestionId || "") === String(questionId || "")) {
+    persistedState.pendingCharacterQuestionId = undefined;
+    saveStateSoon();
+    tray?.setContextMenu(buildTrayMenu());
+  }
+  return true;
 });
 
 ipcMain.handle("companion:speak", (_event, text, kind = "answer") => {
@@ -1808,6 +2092,7 @@ ipcMain.on("companion:save-history", (_event, payload) => {
 });
 
 app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
   clearPomodoroTimer();
   clearInterval(mediaPlaybackTimer);
   stopSpeech();

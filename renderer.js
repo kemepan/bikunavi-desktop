@@ -37,8 +37,10 @@ let dragging = false;
 let isHovered = false;
 let isSpeaking = false;
 let isThinking = false;
+let isPreparingSpeech = false;
 let chatActive = false;
 let pendingQuestion = "";
+let pendingCharacterCustomization;
 let chatEntryIndex = -1;
 const chatEntries = [];
 const lineHistory = [];
@@ -58,6 +60,7 @@ let currentSpeechHoldMs = 900;
 let musicPlaying = false;
 let musicDanceWeight = 0;
 let systemSleeping = false;
+let topDocked = false;
 let pomodoroState = { active: false, running: false, remaining: 0, label: "", timeText: "" };
 let pomodoroHideTimer;
 // いま素の吹き出しに出しているソース。ニュース吹き出しにホバーして会話欄へ
@@ -93,7 +96,10 @@ function fitModel() {
   const visualCenterX = (visualBounds.minX + visualBounds.maxX) / 2;
   const visualCenterY = (visualBounds.minY + visualBounds.maxY) / 2;
   const targetCenterX = width / 2;
-  const targetCenterY = bubbleSpace + (height - bubbleSpace) / 2;
+  // 画面上端ではキャラクターを常に上へ詰めたままにする。吹き出し表示時も
+  // 位置を戻さず、空いた足元側へ吹き出しを反転する。
+  const topDockOffset = topDocked ? 220 : 0;
+  const targetCenterY = bubbleSpace + (height - bubbleSpace) / 2 - topDockOffset;
   model.scale.set(scale);
   model.anchor.set(0.5, 0.5);
   model.position.set(
@@ -107,7 +113,10 @@ function fitModel() {
     visualHeight * scale
   );
   bubble.style.left = `${targetCenterX}px`;
-  bubble.style.top = `${characterHitBounds.y - 5}px`;
+  bubble.classList.toggle("is-below", topDocked);
+  bubble.style.top = topDocked
+    ? `${characterHitBounds.y + characterHitBounds.height + 5}px`
+    : `${characterHitBounds.y - 5}px`;
 }
 
 function getVisualBounds(internalModel) {
@@ -151,8 +160,11 @@ function isPointInActiveBubble(point) {
   // briefly leave both hit areas and the UI changes under the cursor.
   const bridgeLeft = Math.min(rect.left, characterHitBounds.x) - 28;
   const bridgeRight = Math.max(rect.right, characterHitBounds.x + characterHitBounds.width) + 28;
-  const bridgeTop = rect.top - 12;
-  const bridgeBottom = characterHitBounds.y + 44;
+  const bridgeTop = Math.min(rect.top, characterHitBounds.y) - 12;
+  const bridgeBottom = Math.max(
+    rect.bottom,
+    characterHitBounds.y + characterHitBounds.height
+  ) + 12;
   return (
     point.x >= bridgeLeft &&
     point.x <= bridgeRight &&
@@ -165,7 +177,9 @@ function normalizeSpeechItem(item) {
   if (typeof item === "string") return { text: item, sources: [] };
   return {
     text: String(item?.text ?? ""),
-    sources: Array.isArray(item?.sources) ? item.sources : []
+    sources: Array.isArray(item?.sources) ? item.sources : [],
+    kind: String(item?.kind || ""),
+    questionId: String(item?.questionId || "")
   };
 }
 
@@ -436,7 +450,7 @@ function shortenForBubble(text, limit) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
 }
 
-function showChatBubble(busy = false, carriedSources = []) {
+function showChatBubble(busy = false, carriedSources = [], preparingSpeech = false) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
@@ -446,6 +460,8 @@ function showChatBubble(busy = false, carriedSources = []) {
   const entry = chatEntries[chatEntryIndex];
   if (busy) {
     message.textContent = `あなた：${shortenForBubble(pendingQuestion, 80)}\n\nびくたん：考え中です…`;
+  } else if (pendingCharacterCustomization) {
+    message.textContent = pendingCharacterCustomization.text;
   } else if (entry) {
     message.textContent =
       `あなた：${shortenForBubble(entry.question, 80)}\n\n` +
@@ -460,7 +476,7 @@ function showChatBubble(busy = false, carriedSources = []) {
     ? undefined
     : createSourceLinks(carriedSources.length ? carriedSources : entry?.sources);
   displayedLineSources = [];
-  if (!busy && chatEntries.length) {
+  if (!busy && !pendingCharacterCustomization && chatEntries.length) {
     const history = document.createElement("div");
     history.className = "chat-history";
     const previous = document.createElement("button");
@@ -509,15 +525,36 @@ function showChatBubble(busy = false, carriedSources = []) {
   form.className = "chat-form";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "びくたんに話しかける…";
+  input.placeholder = preparingSpeech
+    ? "声を準備中…"
+    : pendingCharacterCustomization
+      ? "びくたんへの答えを書く…"
+      : "びくたんに話しかける…";
   input.maxLength = 4000;
-  input.disabled = busy;
+  input.disabled = busy || preparingSpeech;
   input.setAttribute("aria-label", "びくたんへのメッセージ");
   const send = document.createElement("button");
   send.type = "submit";
-  send.textContent = busy ? "…" : "送信";
-  send.disabled = busy;
-  form.append(input, send);
+  send.textContent = busy ? "…" : preparingSpeech ? "声…" : "送信";
+  send.disabled = busy || preparingSpeech;
+  form.append(input);
+  if (pendingCharacterCustomization && !busy && !preparingSpeech) {
+    const defer = document.createElement("button");
+    defer.type = "button";
+    defer.textContent = "あとで";
+    defer.addEventListener("click", async () => {
+      await bikunavi.invoke(
+        "companion:defer-character-question",
+        pendingCharacterCustomization?.questionId
+      );
+      pendingCharacterCustomization = undefined;
+      showChatBubble();
+      bubble.querySelector(".chat-form input")?.focus();
+      scheduleChatIdleReset();
+    });
+    form.append(defer);
+  }
+  form.append(send);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     runChat(input.value);
@@ -545,7 +582,7 @@ function closeChat() {
 
 function scheduleChatIdleReset() {
   clearTimeout(chatIdleTimer);
-  if (!chatActive || isThinking) return;
+  if (!chatActive || isThinking || isPreparingSpeech) return;
   chatIdleTimer = setTimeout(() => {
     chatActive = false;
     isSpeaking = false;
@@ -561,7 +598,7 @@ function scheduleChatIdleReset() {
 
 async function runChat(rawMessage) {
   const message = rawMessage.trim();
-  if (!message || isSpeaking) return;
+  if (!message || isSpeaking || isThinking || isPreparingSpeech) return;
   chatActive = true;
   clearTimeout(chatIdleTimer);
   clearTimeout(responseSpeechTimer);
@@ -572,22 +609,37 @@ async function runChat(rawMessage) {
   setEmote("thinking");
   showChatBubble(true);
   try {
-    const response = normalizeSpeechItem(await bikunavi.invoke("companion:chat", message));
-    let speechId = null;
-    try {
-      speechId = await bikunavi.invoke("companion:speak", response.text, "answer");
-    } catch (speechError) {
-      console.error("Speech failed:", speechError);
-    }
-
+    const customizationQuestion = pendingCharacterCustomization;
+    const response = normalizeSpeechItem(
+      customizationQuestion
+        ? await bikunavi.invoke(
+          "companion:answer-character-question",
+          customizationQuestion.questionId,
+          message
+        )
+        : await bikunavi.invoke("companion:chat", message)
+    );
+    if (customizationQuestion) pendingCharacterCustomization = undefined;
     chatEntries.push({ question: message, answer: response.text, sources: response.sources });
     if (chatEntries.length > 10) chatEntries.shift();
     chatEntryIndex = chatEntries.length - 1;
     saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
-    showChatBubble();
+    isPreparingSpeech = true;
+    // VOICEVOX の音声合成は回答生成後にも時間がかかるため、合成完了を待たず
+    // テキストを先に表示する。口パクは実際に再生が始まってから有効にする。
+    showChatBubble(false, [], true);
     setEmote("joy");
+
+    let speechId = null;
+    try {
+      speechId = await bikunavi.invoke("companion:speak", response.text, "answer");
+    } catch (speechError) {
+      console.error("Speech failed:", speechError);
+    }
+    isPreparingSpeech = false;
+    showChatBubble();
     if (speechId) {
       currentSpeechId = speechId;
       currentSpeechKind = "answer";
@@ -611,6 +663,7 @@ async function runChat(rawMessage) {
     saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
+    isPreparingSpeech = false;
     isSpeaking = false;
     showChatBubble();
     setEmote("surprised");
@@ -703,6 +756,9 @@ function scheduleChatter() {
     try {
       const lineItem = normalizeSpeechItem(await bikunavi.invoke("companion:idle-line"));
       if (systemSleeping || isHovered || dragging || chatActive) return;
+      if (lineItem.kind === "custom-question" && lineItem.questionId) {
+        pendingCharacterCustomization = lineItem;
+      }
 
       let speechId = null;
       try {
@@ -892,6 +948,53 @@ bikunavi.on("companion:cursor", (point) => {
   model.focus(point.x, point.y);
 });
 
+bikunavi.on("companion:window-edge", (state) => {
+  const nextTopDocked = Boolean(state?.topDocked);
+  if (topDocked === nextTopDocked) return;
+  topDocked = nextTopDocked;
+  if (model) fitModel();
+});
+
+bikunavi.on("companion:open-chat", () => {
+  clearTimeout(chatIdleTimer);
+  clearTimeout(hideBubbleTimer);
+  suppressHoverUntilLeave = false;
+  chatActive = true;
+  lineHistoryActive = false;
+  bikunavi.send("companion:hover", true);
+  setEmote("joy");
+  showChatBubble();
+  requestAnimationFrame(() => {
+    bubble.querySelector(".chat-form input")?.focus();
+  });
+  scheduleChatIdleReset();
+});
+
+bikunavi.on("companion:custom-question", (item) => {
+  const question = normalizeSpeechItem(item);
+  if (!question.text || !question.questionId) return;
+  pendingCharacterCustomization = question;
+  clearTimeout(chatIdleTimer);
+  clearTimeout(hideBubbleTimer);
+  suppressHoverUntilLeave = false;
+  chatActive = true;
+  lineHistoryActive = false;
+  bikunavi.send("companion:hover", true);
+  setEmote("joy");
+  showChatBubble();
+  requestAnimationFrame(() => {
+    bubble.querySelector(".chat-form input")?.focus();
+  });
+  scheduleChatIdleReset();
+});
+
+new MutationObserver(() => {
+  if (model && topDocked) fitModel();
+}).observe(bubble, {
+  attributes: true,
+  attributeFilter: ["class"]
+});
+
 bikunavi.on("companion:speech-ended", (speechId) => {
   if (speechId !== currentSpeechId) return;
   const speechKind = currentSpeechKind;
@@ -1014,6 +1117,18 @@ canvas.addEventListener("pointerup", (event) => {
   if (dragging) bikunavi.send("companion:drag-end");
   pointerDown = undefined;
   dragging = false;
+  if (topDocked) {
+    // 上端へ置いた直後はドラッグ中の吹き出しを閉じ、透明な頭上余白を
+    // 折りたたんだ状態を見せる。再びホバーすれば通常どおり会話欄を開く。
+    isHovered = false;
+    chatActive = false;
+    suppressHoverUntilLeave = true;
+    bubble.classList.remove("is-active");
+    bikunavi.send("companion:hover", false);
+    resumeAmbientState();
+    fitModel();
+    return;
+  }
   if (isHovered) {
     setEmote("joy");
     showChatBubble();

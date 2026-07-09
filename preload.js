@@ -22,7 +22,9 @@ const INVOKE_CHANNELS = new Set([
   "companion:open-url",
   "companion:copy-text",
   "companion:load-history",
-  "companion:settings"
+  "companion:settings",
+  "companion:answer-character-question",
+  "companion:defer-character-question"
 ]);
 
 const ON_CHANNELS = new Set([
@@ -35,7 +37,10 @@ const ON_CHANNELS = new Set([
   "companion:system-sleep",
   "companion:pomodoro",
   "companion:settings-changed",
-  "companion:clear-history"
+  "companion:clear-history",
+  "companion:window-edge",
+  "companion:open-chat",
+  "companion:custom-question"
 ]);
 
 contextBridge.exposeInMainWorld("bikunavi", {

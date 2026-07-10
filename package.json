@@ -9,7 +9,8 @@
     "check": "node --check main.js && node --check renderer.js && node --check preload.js",
     "package": "electron-packager . びくにたん --platform=darwin --out=dist --overwrite --no-asar --ignore='^/dist(/|$)' --ignore='^/docs(/|$)' --ignore='^/launchd(/|$)' --ignore='^/\\.gitignore$' --ignore='\\.log$' && codesign --force --deep --sign - 'dist/びくにたん-darwin-arm64/びくにたん.app' && echo '.app を作成しました: dist/びくにたん-darwin-arm64/'",
     "build-media-helper": "xcrun clang -fblocks -framework Foundation native/now-playing.m -o native/now-playing",
-    "fetch-core": "node scripts/fetch-cubism-core.mjs"
+    "fetch-core": "node scripts/fetch-cubism-core.mjs",
+    "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs"
   },
   "dependencies": {
     "@pixi/unsafe-eval": "^6.5.10",

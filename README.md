@@ -13,19 +13,32 @@ Live2Dキャラクター「びくにたん」をmacOSデスクトップに常駐
 - `⌘⇧B` のグローバルショートカットで、どのアプリからでも会話入力欄を開く
 - サイト版と同じLive2D物理演算、表情、モーション、呼吸、瞬き、視線追従
 - 自由入力のAIコンシェルジュ会話
+- 会話入力欄のマイクボタンによる音声入力
+  - `getUserMedia`で録音し、WAV化してローカルSTTへ渡す構成
+  - `whisper.cpp`互換バイナリとモデルが未設定の場合は録音のみ行い、文字起こしは保留
 - `CHARACTER_SHEET.md` に基づくキャラクター性・口調
 - `CHARACTER_QUESTIONS.json` の問答集から時々質問し、回答を会話・自動セリフの個性へ反映
 - メニューバーの「キャラカスタム」から質問を今すぐ呼び出し可能
+- 「ことば帳」「思い出帳」に教わった表現や一緒の出来事を保存し、後日の会話で時々思い出す
+- `BIKUTAN_GROWTH_QUESTIONS.json`を使い、びくたん自身の好みや考えをユーザーとの問答で育てる
+- 好きな音楽ジャンル・雰囲気を質問として覚え、音楽の話題になった時だけ自然に会話へ混ぜる
+- びくたんがしている小さな作業や勉強を、時々自動セリフとして話す
+- メニューバーから「びくたんの作業メモ」を呼び出し可能
+- メニューバーから「日記セーブ」として今日の要点を3〜5行で保存し、最近の日記を表示可能
 - 会話履歴の簡易表示
 - AIニュースや時事・技術見出しを混ぜた自動セリフ
 - 家事・整理・時短などの生活ハック系見出しを混ぜた自動セリフ
 - 日付ベースの「今日のびくたん占い」（短文に分けて読み上げ）
+- びくたんがたまに今の気分を質問し、答えた内容で心理学風の短いミニ占いを返す
+- メニューバーの「びくたん占い」から、今日の占い／気分でミニ占いを呼び出し可能
+- 占いのおすすめBGMには、雰囲気名でYouTube検索するリンクを表示
 - メニューバーから直近20件の「最近のセリフ」を表示
 - ニュース・会話中に参照した情報のソースURLボタン表示
 - ソース付き・長めの情報共有セリフは、読み上げ後もしばらく吹き出しを残す
 - VOICEVOX「猫使ビィ・ノーマル（speaker 58）」による読み上げ
 - VOICEVOXが使えない場合のmacOS音声フォールバック
 - 音声再生に合わせた口パク
+- 音声入力はローカルSTT前提。`native/stt/<platform>-<arch>/whisper-cli` と `models/ggml-base.bin`、または環境変数 `BIKUNAVI_WHISPER_BIN` / `BIKUNAVI_WHISPER_MODEL` を使います。
 - 音楽アプリやChrome/YouTubeで音声再生中のノリノリ反応
 - ポモドーロ中でも音楽再生中はノリノリ反応を継続
 - macOSスリープ中は自動セリフと読み上げを停止し、復帰後に再開
@@ -54,12 +67,17 @@ Live2Dキャラクター「びくにたん」をmacOSデスクトップに常駐
 - Live2D Cubism Core
   - `npm run fetch-core` で取得します。
   - `vendor/live2dcubismcore.min.js` はgit管理外です。
+- ローカル音声認識（任意）
+  - `whisper.cpp`互換の `whisper-cli`
+  - `npm run fetch-whisper-model` で `models/ggml-base.bin` を取得できます。
+  - 未設定でもアプリは起動しますが、マイク入力の文字起こしは行われません。
 
 ## 起動
 
 ```bash
 npm install
 npm run fetch-core
+npm run fetch-whisper-model # 音声入力を使う場合
 npm start
 ```
 
@@ -86,7 +104,7 @@ npm run package
 
 ## 設定・履歴の保存先
 
-`~/Library/Application Support/bikunavi-desktop/state.json` に、ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）・キャラカスタム回答を保存します。
+`~/Library/Application Support/bikunavi-desktop/state.json` に、ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）・キャラカスタム回答・ことば帳・思い出帳・日記セーブ（最大14日分）を保存します。
 
 ## 手動での起動・再起動
 
@@ -168,13 +186,15 @@ Codex CLIまわりは環境変数で上書きできます。
 | `assets/bikunavi/` | Live2Dモデル一式 |
 | `native/now-playing.m` | macOS再生状態取得ヘルパーのソース |
 | `native/now-playing` | ビルド済み再生状態取得ヘルパー |
+| `native/stt/` | OS/CPU別のローカル音声認識バイナリ置き場 |
 | `scripts/fetch-cubism-core.mjs` | Cubism Core取得 |
+| `scripts/fetch-whisper-model.mjs` | whisper.cpp向けモデル取得 |
 | `scripts/start-bikunavi-desktop.sh` | LaunchAgent起動用スクリプト |
 | `launchd/*.plist.template` | LaunchAgentテンプレート |
 
 ## GitHubへ保存する前のメモ
 
-- `node_modules/`、`vendor/live2dcubismcore.min.js`、ローカル生成した `launchd/*.plist` はgit管理外です。
+- `node_modules/`、`vendor/live2dcubismcore.min.js`、`models/`、ローカルSTTバイナリ、ローカル生成した `launchd/*.plist` はgit管理外です。
 - 実行用コピー先 `~/Library/Application Support/BikunaviDesktop/` はgit管理しません。
 - 素材の権利確認が済むまではprivate repository推奨です。
 - このプロジェクトは、今後Brain Vaultから独立した単独リポジトリとして管理する想定です。

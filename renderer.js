@@ -69,6 +69,184 @@ let displayedLineSources = [];
 let idleIntervalMs = 30000;
 let chatterTimer;
 let historySaveTimer;
+let voiceInputActive = false;
+let voiceInputButton;
+let voiceInputTargetInput;
+let voiceRecorder;
+let voiceRecordingTimer;
+let chatDraft = "";
+const VOICE_INPUT_MAX_MS = 15000;
+
+function showStatusMessage(message, duration = 2600) {
+  status.textContent = message;
+  if (duration > 0) {
+    setTimeout(() => {
+      if (status.textContent === message) status.textContent = "";
+    }, duration);
+  }
+}
+
+function setVoiceInputButtonState(active) {
+  if (!voiceInputButton) return;
+  voiceInputButton.classList.toggle("is-recording", active);
+  voiceInputButton.title = active ? "録音を停止" : "音声を録音して入力";
+  voiceInputButton.setAttribute("aria-pressed", active ? "true" : "false");
+}
+
+function encodeWav(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+  const view = new DataView(buffer);
+  const writeString = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, samples.length * bytesPerSample, true);
+  let offset = 44;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+  return buffer;
+}
+
+function mergeAudioChunks(chunks) {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const samples = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    samples.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return samples;
+}
+
+async function finishVoiceInput() {
+  if (!voiceRecorder) return;
+  const recorder = voiceRecorder;
+  voiceRecorder = undefined;
+  clearTimeout(voiceRecordingTimer);
+  voiceInputActive = false;
+  setVoiceInputButtonState(false);
+
+  try {
+    recorder.processor.disconnect();
+    recorder.source.disconnect();
+  } catch (_error) {
+    // ignore disconnect races
+  }
+  for (const track of recorder.stream.getTracks()) track.stop();
+  await recorder.audioContext.close().catch(() => {});
+
+  const samples = mergeAudioChunks(recorder.chunks);
+  if (!samples.length) {
+    showStatusMessage("声を拾えませんでした");
+    return;
+  }
+
+  showStatusMessage("文字起こし中…", 0);
+  try {
+    const wav = encodeWav(samples, recorder.sampleRate);
+    const result = await bikunavi.invoke("companion:transcribe-audio", {
+      audio: wav,
+      format: "wav",
+      sampleRate: recorder.sampleRate
+    });
+    const text = String(result?.text || "").trim();
+    if (text && voiceInputTargetInput) {
+      const current = voiceInputTargetInput.value.trim();
+      chatDraft = [current, text].filter(Boolean).join(current ? " " : "");
+      voiceInputTargetInput.value = chatDraft;
+      voiceInputTargetInput.dispatchEvent(new Event("input", { bubbles: true }));
+      showStatusMessage("音声入力しました");
+    } else {
+      showStatusMessage(result?.message || "文字起こし結果が空でした");
+    }
+  } catch (error) {
+    console.error("Voice transcription failed:", error);
+    showStatusMessage(error?.message || "文字起こしに失敗しました");
+  } finally {
+    voiceInputTargetInput?.focus();
+    if (status.textContent === "文字起こし中…") status.textContent = "";
+    scheduleChatIdleReset();
+  }
+}
+
+async function startVoiceInput(input, button) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showStatusMessage("この環境では録音できません");
+    return;
+  }
+  voiceInputTargetInput = input;
+  voiceInputButton = button;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true
+      }
+    });
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContextClass();
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    processor.onaudioprocess = (event) => {
+      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    };
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+    voiceRecorder = {
+      stream,
+      audioContext,
+      source,
+      processor,
+      chunks,
+      sampleRate: audioContext.sampleRate
+    };
+    voiceInputActive = true;
+    setVoiceInputButtonState(true);
+    showStatusMessage("録音しています…", 0);
+    voiceRecordingTimer = setTimeout(() => {
+      finishVoiceInput().catch(console.error);
+    }, VOICE_INPUT_MAX_MS);
+    scheduleChatIdleReset();
+  } catch (error) {
+    console.error("Voice recording start failed:", error);
+    showStatusMessage(error?.name === "NotAllowedError"
+      ? "マイク入力が許可されませんでした"
+      : "録音を開始できませんでした");
+  }
+}
+
+function stopVoiceInput() {
+  if (!voiceInputActive) return;
+  finishVoiceInput().catch(console.error);
+}
+
+function toggleVoiceInput(input, button) {
+  if (voiceInputActive) {
+    stopVoiceInput();
+    return;
+  }
+  startVoiceInput(input, button).catch(console.error);
+}
 
 function saveHistorySoon() {
   clearTimeout(historySaveTimer);
@@ -179,8 +357,21 @@ function normalizeSpeechItem(item) {
     text: String(item?.text ?? ""),
     sources: Array.isArray(item?.sources) ? item.sources : [],
     kind: String(item?.kind || ""),
-    questionId: String(item?.questionId || "")
+    questionId: String(item?.questionId || ""),
+    answerKind: String(item?.answerKind || "")
   };
+}
+
+function customQuestionAnswerChannel(question) {
+  if (question?.answerKind === "growth") return "companion:answer-growth-question";
+  if (question?.answerKind === "fortune") return "companion:answer-fortune-question";
+  return "companion:answer-character-question";
+}
+
+function customQuestionDeferChannel(question) {
+  if (question?.answerKind === "growth") return "companion:defer-growth-question";
+  if (question?.answerKind === "fortune") return "companion:defer-fortune-question";
+  return "companion:defer-character-question";
 }
 
 function rememberLine(item, kind = "line") {
@@ -532,19 +723,33 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
       : "びくたんに話しかける…";
   input.maxLength = 4000;
   input.disabled = busy || preparingSpeech;
+  if (!busy && !preparingSpeech) input.value = chatDraft;
   input.setAttribute("aria-label", "びくたんへのメッセージ");
   const send = document.createElement("button");
   send.type = "submit";
   send.textContent = busy ? "…" : preparingSpeech ? "声…" : "送信";
   send.disabled = busy || preparingSpeech;
+  const mic = document.createElement("button");
+  mic.type = "button";
+  mic.className = "voice-input-button";
+  mic.title = navigator.mediaDevices?.getUserMedia
+    ? "音声を録音して入力"
+    : "この環境では録音できません";
+  mic.disabled = busy || preparingSpeech || !navigator.mediaDevices?.getUserMedia;
+  mic.setAttribute("aria-label", "音声で入力");
+  mic.setAttribute("aria-pressed", "false");
+  mic.addEventListener("click", () => {
+    toggleVoiceInput(input, mic);
+  });
   form.append(input);
+  form.append(mic);
   if (pendingCharacterCustomization && !busy && !preparingSpeech) {
     const defer = document.createElement("button");
     defer.type = "button";
     defer.textContent = "あとで";
     defer.addEventListener("click", async () => {
       await bikunavi.invoke(
-        "companion:defer-character-question",
+        customQuestionDeferChannel(pendingCharacterCustomization),
         pendingCharacterCustomization?.questionId
       );
       pendingCharacterCustomization = undefined;
@@ -565,6 +770,9 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
     scheduleChatIdleReset();
   });
   input.addEventListener("input", scheduleChatIdleReset);
+  input.addEventListener("input", () => {
+    chatDraft = input.value;
+  });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeChat();
   });
@@ -575,6 +783,7 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
 
 function closeChat() {
   clearTimeout(chatIdleTimer);
+  stopVoiceInput();
   chatActive = false;
   bikunavi.send("companion:hover", isHovered);
   if (!isHovered) hideBubble();
@@ -582,7 +791,7 @@ function closeChat() {
 
 function scheduleChatIdleReset() {
   clearTimeout(chatIdleTimer);
-  if (!chatActive || isThinking || isPreparingSpeech) return;
+  if (!chatActive || isThinking || isPreparingSpeech || voiceInputActive) return;
   chatIdleTimer = setTimeout(() => {
     chatActive = false;
     isSpeaking = false;
@@ -599,6 +808,8 @@ function scheduleChatIdleReset() {
 async function runChat(rawMessage) {
   const message = rawMessage.trim();
   if (!message || isSpeaking || isThinking || isPreparingSpeech) return;
+  stopVoiceInput();
+  chatDraft = "";
   chatActive = true;
   clearTimeout(chatIdleTimer);
   clearTimeout(responseSpeechTimer);
@@ -613,7 +824,7 @@ async function runChat(rawMessage) {
     const response = normalizeSpeechItem(
       customizationQuestion
         ? await bikunavi.invoke(
-          "companion:answer-character-question",
+          customQuestionAnswerChannel(customizationQuestion),
           customizationQuestion.questionId,
           message
         )
@@ -712,6 +923,7 @@ function enterCharacter() {
   bikunavi.send("companion:hover", true);
   setEmote("joy");
   if (lineHistoryActive) return;
+  if (chatActive && bubble.classList.contains("has-chat")) return;
   if (pomodoroState.active) {
     showPomodoroBubble(pomodoroState, true);
   } else {
@@ -806,10 +1018,10 @@ function scheduleChatter() {
 function startFloating() {
   setTimeout(() => {
     if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
-  }, 1000);
+  }, 20000);
   setInterval(() => {
     if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
-  }, 15000);
+  }, 45000);
 }
 
 async function start() {
@@ -1027,6 +1239,44 @@ bikunavi.on("companion:fortune", (fortune) => {
   showBubble(fortuneItem);
   setEmote("joy");
   hideBubble(25000);
+});
+
+bikunavi.on("companion:ambient-line", async (item) => {
+  const lineItem = normalizeSpeechItem(item);
+  if (!lineItem.text) return;
+  clearTimeout(chatIdleTimer);
+  clearTimeout(hideBubbleTimer);
+  clearTimeout(chatterEndTimer);
+  if (isSpeaking) bikunavi.send("companion:stop-speech");
+  chatActive = false;
+  lineHistoryActive = false;
+  suppressHoverUntilLeave = false;
+  rememberLine(lineItem, "idle");
+  showBubble(lineItem);
+  setEmote("joy");
+
+  let speechId = null;
+  try {
+    speechId = await bikunavi.invoke("companion:speak", lineItem.text, "idle");
+  } catch (speechError) {
+    console.error("Ambient speech failed:", speechError);
+  }
+  isSpeaking = true;
+  currentSpeechHoldMs = getIdleSpeechHoldMs(lineItem);
+  if (speechId) {
+    currentSpeechId = speechId;
+    currentSpeechKind = "idle";
+  }
+  const displayDuration = speechId
+    ? 60000
+    : Math.max(currentSpeechHoldMs, Math.min(30000, Math.max(6500, lineItem.text.length * 180)));
+  chatterEndTimer = setTimeout(() => {
+    currentSpeechKind = undefined;
+    currentSpeechHoldMs = 900;
+    isSpeaking = false;
+    resumeAmbientState();
+    hideBubble();
+  }, displayDuration);
 });
 
 bikunavi.on("companion:settings-changed", (settings) => {

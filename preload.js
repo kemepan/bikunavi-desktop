@@ -24,7 +24,12 @@ const INVOKE_CHANNELS = new Set([
   "companion:load-history",
   "companion:settings",
   "companion:answer-character-question",
-  "companion:defer-character-question"
+  "companion:defer-character-question",
+  "companion:answer-growth-question",
+  "companion:defer-growth-question",
+  "companion:answer-fortune-question",
+  "companion:defer-fortune-question",
+  "companion:transcribe-audio"
 ]);
 
 const ON_CHANNELS = new Set([
@@ -40,7 +45,8 @@ const ON_CHANNELS = new Set([
   "companion:clear-history",
   "companion:window-edge",
   "companion:open-chat",
-  "companion:custom-question"
+  "companion:custom-question",
+  "companion:ambient-line"
 ]);
 
 contextBridge.exposeInMainWorld("bikunavi", {

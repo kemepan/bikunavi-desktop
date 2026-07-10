@@ -4,6 +4,11 @@ dist/
 build/
 release/
 vendor/live2dcubismcore.min.js
+models/
+native/stt/*/whisper-cli
+native/stt/*/whisper-cli.exe
+native/stt/*/main
+native/stt/*/main.exe
 *.log
 *.tmp
 *.wav

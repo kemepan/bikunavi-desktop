@@ -9,6 +9,7 @@ const {
   clipboard,
   shell,
   powerMonitor,
+  session,
   protocol,
   net,
   globalShortcut
@@ -51,7 +52,17 @@ const DEFAULT_STATE = {
   conversationHistory: [],
   characterAnswers: {},
   pendingCharacterQuestionId: undefined,
-  lastCharacterQuestionAt: 0
+  lastCharacterQuestionAt: 0,
+  learnedWords: [],
+  sharedMemories: [],
+  bikutanGrowthAnswers: {},
+  pendingGrowthQuestion: undefined,
+  lastGrowthQuestionAt: 0,
+  growthQuestionTurn: 0,
+  fortuneThemes: [],
+  pendingFortuneQuestion: undefined,
+  lastFortuneQuestionAt: 0,
+  dailyDiaries: []
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
 
@@ -141,6 +152,9 @@ const recentIdleItems = [];
 let fallbackIdleIndex = 0;
 let lastFortuneQueuedDate;
 let latestTopicSources = new Map();
+const BIKUTAN_WORK_INTERVAL_MS = 8 * 60 * 1000;
+let lastBikutanWorkLineAt = 0;
+let bikutanWorkLineIndex = 0;
 
 function idleKey(item) {
   const text = typeof item === "string" ? item : item?.text ?? "";
@@ -209,6 +223,53 @@ function pickFallbackIdleLine() {
   return FALLBACK_IDLE_LINES[fallbackIdleIndex++ % FALLBACK_IDLE_LINES.length];
 }
 
+function makeBikutanWorkLine(force = false) {
+  const now = Date.now();
+  if (!force && now - lastBikutanWorkLineAt < BIKUTAN_WORK_INTERVAL_MS) return undefined;
+  const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
+  const topicCount = latestTopicSources instanceof Map ? latestTopicSources.size : 0;
+  const musicPreference = getMusicGenrePreference();
+  const candidateLines = [
+    "今日の予定を少し整えています。",
+    "ことば帳を読み返しています。",
+    "フォントの用語をひとつ調べています。",
+    "音楽ジャンルの名前を少し覚えています。",
+    "Live2Dまわりの用語をノートにしています。",
+    "気になったことを、少しだけ勉強しています。",
+    "気になる見出しを、あとで読めるように分けています。",
+    "フードの向きを、ちょっと直しています。",
+    "びくたん用の引き出しに、気になることをしまっています。",
+    "いま少しだけ、聞いてみたいことを考えています。",
+    "相棒メモを更新しています。",
+    learnedWords.length
+      ? `教えてもらった言葉を${learnedWords.length}個、ことば帳で整理しています。`
+      : "ことば帳に新しいページを用意しています。",
+    sharedMemories.length
+      ? `思い出帳を${sharedMemories.length}件分、読み返しています。`
+      : "思い出帳に、今日の余白を作っています。",
+    musicPreference
+      ? `教えてもらった音楽の好み（${musicPreference.slice(0, 24)}）を、ちゃんと覚えています。`
+      : "好きな音楽の話も、いつか聞いてみたいです。",
+    Object.keys(growthAnswers).length
+      ? "この前話した好みを、びくたんの中で少し育てています。"
+      : "びくたん自身の好きなものも、少しずつ学んでいます。",
+    topicCount
+      ? `気になる見出しを${topicCount}枚くらい、読み返しています。`
+      : "今日は気になったことを少しメモしています。"
+  ];
+  for (let attempt = 0; attempt < candidateLines.length; attempt += 1) {
+    const text = candidateLines[bikutanWorkLineIndex % candidateLines.length];
+    bikutanWorkLineIndex += 1;
+    const item = { text, sources: [], kind: "bikutan-work" };
+    if (force || !isRecentIdle(item)) {
+      lastBikutanWorkLineAt = now;
+      rememberRecentIdle(item);
+      return item;
+    }
+  }
+  return undefined;
+}
+
 // キューから、最近話していない行を優先して取り出す。
 // 新鮮な行がなければ、溜まった既出行を1つ捨てて予備の一言を返す（既出は返さない）。
 function takeFreshIdleLine() {
@@ -226,10 +287,19 @@ function takeFreshIdleLine() {
 }
 const characterSheetPath = path.join(__dirname, "CHARACTER_SHEET.md");
 const characterQuestionsPath = path.join(__dirname, "CHARACTER_QUESTIONS.json");
+const growthQuestionsPath = path.join(__dirname, "BIKUTAN_GROWTH_QUESTIONS.json");
+const MUSIC_GENRE_QUESTION_ID = "music_genre_preference";
 const CHARACTER_QUESTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const GROWTH_QUESTION_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const FORTUNE_QUESTION_INTERVAL_MS = 20 * 60 * 60 * 1000;
 const characterQuestionAutoEligibleAt = Date.now() + 15 * 60 * 1000;
+const growthQuestionAutoEligibleAt = Date.now() + 30 * 60 * 1000;
+const fortuneQuestionAutoEligibleAt = Date.now() + 60 * 60 * 1000;
 const characterQuestions = loadCharacterQuestions();
+const growthQuestions = loadGrowthQuestions();
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
+const sttBinaryDirectory = path.join(__dirname, "native", "stt", `${process.platform}-${process.arch}`);
+const sttDefaultModelPath = path.join(__dirname, "models", "ggml-base.bin");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
@@ -540,6 +610,20 @@ function getJstDateParts(date = new Date()) {
   };
 }
 
+function getJstDateString(date = new Date()) {
+  const { year, month, day } = getJstDateParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function makeYoutubeSearchSource(query) {
+  const safeQuery = String(query || "").trim();
+  return {
+    title: `${safeQuery} をYouTubeで検索`,
+    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(safeQuery)}`,
+    source: "YouTube検索"
+  };
+}
+
 function makeDailyFortune(date = new Date()) {
   const { year, month, day } = getJstDateParts(date);
   const dateNumber = year * 10000 + month * 100 + day;
@@ -548,6 +632,7 @@ function makeDailyFortune(date = new Date()) {
   const action = FORTUNE_ACTIONS[(dateNumber + month) % FORTUNE_ACTIONS.length];
   const item = FORTUNE_ITEMS[(dateNumber + day) % FORTUNE_ITEMS.length];
   const bgm = element.bgm[(dateNumber + month + day) % element.bgm.length];
+  const bgmSearchSource = makeYoutubeSearchSource(`${bgm} 作業用 BGM`);
   const lines = [
     `今日のびくたん占いです。${element.mood}、${element.color}っぽい一日になりそうですよ。`,
     `テーマは「${stem.keyword}」。${stem.mood}感じでいきましょう。`,
@@ -558,8 +643,108 @@ function makeDailyFortune(date = new Date()) {
   return {
     text: lines.join("\n"),
     lines,
+    lineSources: [[], [], [], [], [bgmSearchSource]],
     sources: []
   };
+}
+
+function sanitizeFortuneTheme(rawTheme) {
+  return String(rawTheme || "")
+    .replace(/\s+/g, " ")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, 80);
+}
+
+function makeThemedFortune(rawTheme, date = new Date()) {
+  const theme = sanitizeFortuneTheme(rawTheme) || "今日のこと";
+  const { year, month, day } = getJstDateParts(date);
+  const themeSeed = [...theme].reduce((sum, char) => sum + char.codePointAt(0), 0);
+  const dateNumber = year * 10000 + month * 100 + day + themeSeed;
+  const stem = FORTUNE_STEMS[dateNumber % FORTUNE_STEMS.length];
+  const element = FORTUNE_ELEMENTS[stem.element];
+  const lowerTheme = theme.toLowerCase();
+  const psychologicalHints = [
+    {
+      match: /迷|悩|決|どうしよ|選|不安|心配/,
+      label: "迷い",
+      action: "選択肢を2つだけ書いて、いま大事にしたい基準をひとつ添える"
+    },
+    {
+      match: /疲|眠|だる|休|しんど|つかれ|無理/,
+      label: "疲れ",
+      action: "まず体の回復を優先して、5分だけ目と肩を休ませる"
+    },
+    {
+      match: /焦|急|遅|間に合|やば|詰|パニック/,
+      label: "焦り",
+      action: "次の一手を小さく切って、最初の3分だけ着手する"
+    },
+    {
+      match: /楽|嬉|わく|好き|楽し|うれし|いい感じ/,
+      label: "前向き",
+      action: "その勢いで、あとから見返せる小さなメモを残す"
+    },
+    {
+      match: /怒|もや|嫌|いや|納得|むか|イラ/,
+      label: "もやもや",
+      action: "事実・気持ち・お願いを一行ずつ分けて書く"
+    },
+    {
+      match: /集中|作業|仕事|制作|勉強|進め|やる/,
+      label: "集中",
+      action: "今やることを一文にして、15分だけ範囲を閉じる"
+    }
+  ];
+  const fallbackHints = [
+    { label: "整える", action: "気になっていることを一つだけ外に書き出す" },
+    { label: "試す", action: "正解探しより、小さな実験として一回やってみる" },
+    { label: "ほどく", action: "頭の中の言葉を、箇条書きで三つに分ける" }
+  ];
+  const matchedHint = psychologicalHints.find((hint) => hint.match.test(lowerTheme));
+  const hint = matchedHint || fallbackHints[dateNumber % fallbackHints.length];
+  const lines = [
+    `「${theme}」ですね。びくたん式ミニ心理占いでは、今の鍵は「${hint.label}」です。`,
+    `おすすめは、${hint.action}こと。占い半分、こころの整理半分です。`,
+    `今日の気配は${element.color}。${stem.keyword}を少し意識すると、動き出しやすそうです。`
+  ];
+  return {
+    text: lines.join("\n"),
+    lines,
+    sources: []
+  };
+}
+
+function getPendingFortuneQuestion() {
+  const pending = persistedState.pendingFortuneQuestion;
+  if (!pending || typeof pending !== "object") return undefined;
+  return pending.id ? pending : undefined;
+}
+
+function fortuneQuestionItem(pending) {
+  return {
+    text: "今の気分を一言でいうと、どんな感じですか？\n例: 迷う、疲れた、焦る、集中したい、わくわく、もやもや",
+    sources: [],
+    kind: "custom-question",
+    questionId: pending.id,
+    answerKind: "fortune"
+  };
+}
+
+function makeFortuneQuestion(force = false) {
+  const existing = getPendingFortuneQuestion();
+  if (existing) return fortuneQuestionItem(existing);
+  if (!force && (
+    Date.now() < fortuneQuestionAutoEligibleAt ||
+    Date.now() - (Number(persistedState.lastFortuneQuestionAt) || 0) <
+      FORTUNE_QUESTION_INTERVAL_MS
+  )) return undefined;
+
+  const pending = { id: `fortune-${Date.now()}` };
+  persistedState.pendingFortuneQuestion = pending;
+  persistedState.lastFortuneQuestionAt = Date.now();
+  saveStateSoon();
+  return fortuneQuestionItem(pending);
 }
 
 function delay(ms) {
@@ -576,7 +761,9 @@ async function showDailyFortune() {
       if (systemSleeping) return;
       companionWindow?.webContents.send("companion:fortune", {
         text: line,
-        sources: [],
+        sources: Array.isArray(fortune.lineSources?.[index])
+          ? fortune.lineSources[index]
+          : [],
         index,
         total: lines.length
       });
@@ -586,6 +773,15 @@ async function showDailyFortune() {
   } catch (error) {
     console.error("Fortune speech failed:", error);
   }
+}
+
+function showFortuneQuestionNow() {
+  const item = makeFortuneQuestion(true);
+  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
+  if (!companionWindow) return;
+  companionWindow.show();
+  companionWindow.focus();
+  companionWindow.webContents.send("companion:custom-question", item);
 }
 
 function formatPomodoroTime(seconds) {
@@ -792,8 +988,19 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "今日のびくたん占い",
-      click: showDailyFortune
+      label: "びくたん占い",
+      submenu: [
+        {
+          label: "今日の占い",
+          click: showDailyFortune
+        },
+        {
+          label: getPendingFortuneQuestion()
+            ? "さっきの気分チェックに答える"
+            : "気分でミニ占い",
+          click: showFortuneQuestionNow
+        }
+      ]
     },
     {
       label: `キャラカスタム（${Object.keys(getCharacterAnswers()).length}/${characterQuestions.length}）`,
@@ -808,6 +1015,64 @@ function buildTrayMenu() {
         },
         {
           label: "回答は会話と自動セリフへ反映されます",
+          enabled: false
+        }
+      ]
+    },
+    {
+      label: `ことば・思い出（${getGrowthData().learnedWords.length}語／${getGrowthData().sharedMemories.length}件）`,
+      submenu: [
+        {
+          label: "ことばを教える",
+          click: () => showGrowthQuestionNow("word")
+        },
+        {
+          label: "一緒の思い出を残す",
+          click: () => showGrowthQuestionNow("memory")
+        },
+        {
+          label: "びくたんと好みの話をする",
+          enabled: Object.keys(getGrowthData().growthAnswers).length < growthQuestions.length,
+          click: () => showGrowthQuestionNow("self")
+        },
+        {
+          label: getMusicGenrePreference()
+            ? "好きな音楽を更新する"
+            : "好きな音楽を教える",
+          click: () => showGrowthQuestionNow("music")
+        },
+        {
+          label: "覚えたことは後日の会話で時々思い出します",
+          enabled: false
+        }
+      ]
+    },
+    {
+      label: "びくたんの作業メモ",
+      click: showBikutanWorkNow
+    },
+    {
+      label: `日記セーブ（${getDailyDiaries().length}日）`,
+      submenu: [
+        {
+          label: "今日の日記を保存",
+          click: () => {
+            saveTodayDiary().catch((error) => {
+              console.error("Diary save failed:", error);
+              showAmbientLine({
+                text: "日記の保存でつまずきました。少し時間を置いて、もう一度試してください。",
+                sources: []
+              });
+            });
+          }
+        },
+        {
+          label: "最近の日記を見る",
+          enabled: getDailyDiaries().length > 0,
+          click: showRecentDiaries
+        },
+        {
+          label: "日記は最大14日分だけ保存します",
           enabled: false
         }
       ]
@@ -1217,6 +1482,22 @@ app.whenReady().then(() => {
     }
     return net.fetch(pathToFileURL(filePath).toString());
   });
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details = {}) => {
+    const pageUrl = webContents?.getURL?.() || "";
+    const isAppPage = pageUrl.startsWith(`${APP_SCHEME}://app/`);
+    const wantsMicrophone = permission === "media" &&
+      Array.isArray(details.mediaTypes) &&
+      details.mediaTypes.includes("audio");
+    callback(Boolean(isAppPage && wantsMicrophone));
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details = {}) => {
+    const pageUrl = webContents?.getURL?.() || "";
+    const isAppPage = pageUrl.startsWith(`${APP_SCHEME}://app/`);
+    const wantsMicrophone = permission === "media" &&
+      Array.isArray(details.mediaTypes) &&
+      details.mediaTypes.includes("audio");
+    return Boolean(isAppPage && wantsMicrophone);
+  });
   app.dock?.hide();
   createWindow();
   if (!globalShortcut.register(CHAT_SHORTCUT, openChatInput)) {
@@ -1271,19 +1552,24 @@ ipcMain.on("companion:auto-move", () => {
 
   const bounds = companionWindow.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
-  const minY = area.y;
-  const maxY = area.y + area.height - bounds.height;
-  const destination = {
-    x: area.x + Math.round(Math.random() * Math.max(0, area.width - bounds.width)),
-    // ときどき上端へぴったり移動する。負の座標でmacOSの上端制限を
-    // 押し切ろうとせず、表示側のtopDockedレイアウトへ任せる。
-    y: Math.random() < 0.25
-      ? minY
-      : minY + Math.round(Math.random() * Math.max(0, maxY - minY))
-  };
+  // 上端ドック中は、吹き出し反転用のレイアウトが入るため自動移動しない。
+  // ここで動かすとキャラが画面内で跳ねたように見える。
+  if (bounds.y <= area.y + 42) return;
+
   const origin = companionWindow.getPosition();
+  const minX = area.x;
+  const maxX = area.x + area.width - bounds.width;
+  // 自動移動ではメニューバー直下へ吸い付かせない。上端へ行きたい時は手動ドラッグだけにする。
+  const maxY = area.y + area.height - bounds.height;
+  const minY = Math.min(area.y + 64, maxY);
+  const stepX = Math.round((Math.random() * 2 - 1) * 160);
+  const stepY = Math.round((Math.random() * 2 - 1) * 110);
+  const destination = {
+    x: Math.max(minX, Math.min(maxX, origin[0] + stepX)),
+    y: Math.max(minY, Math.min(maxY, origin[1] + stepY))
+  };
   const startedAt = Date.now();
-  const duration = 10000;
+  const duration = 14000;
 
   if (!Number.isFinite(destination.x) || !Number.isFinite(destination.y) ||
       !Number.isFinite(origin[0]) || !Number.isFinite(origin[1])) {
@@ -1371,6 +1657,117 @@ function runCodex(prompt) {
   });
 }
 
+function sttExecutableCandidates() {
+  const envPath = process.env.BIKUNAVI_WHISPER_BIN;
+  const executableName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
+  const legacyName = process.platform === "win32" ? "main.exe" : "main";
+  return [
+    envPath,
+    process.platform === "darwin" ? "/opt/homebrew/bin/whisper-cli" : "",
+    process.platform === "darwin" ? "/usr/local/bin/whisper-cli" : "",
+    path.join(sttBinaryDirectory, executableName),
+    path.join(sttBinaryDirectory, legacyName)
+  ].filter(Boolean);
+}
+
+function firstExistingPath(paths) {
+  return paths.find((candidate) => {
+    try {
+      return candidate && fs.existsSync(candidate);
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+function whisperModelPath() {
+  return firstExistingPath([
+    process.env.BIKUNAVI_WHISPER_MODEL,
+    sttDefaultModelPath
+  ].filter(Boolean));
+}
+
+function cleanWhisperOutput(output) {
+  return String(output || "")
+    .split(/\r?\n/)
+    .map((line) => line
+      .replace(/^\s*\[[^\]]+\]\s*/g, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter((line) => (
+      line &&
+      !/^whisper_/i.test(line) &&
+      !/^system_info:/i.test(line) &&
+      !/^main:/i.test(line) &&
+      !/^load_backend:/i.test(line) &&
+      !/^read_audio_data:/i.test(line)
+    ))
+    .join(" ")
+    .trim();
+}
+
+function runWhisperTranscriptionWithExecutable(executable, model, audioPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      executable,
+      ["-m", model, "-f", audioPath, "-l", "ja", "-nt"],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+    let output = "";
+    let errors = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("音声認識がタイムアウトしました。"));
+    }, 60000);
+    child.stdout.on("data", (chunk) => {
+      if (output.length < 100000) output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      if (errors.length < 100000) errors += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      const text = cleanWhisperOutput(output);
+      if (code === 0) {
+        resolve({ text, message: text ? "" : "文字起こし結果が空でした。" });
+      } else {
+        reject(new Error(errors.trim() || "音声認識に失敗しました。"));
+      }
+    });
+  });
+}
+
+async function runWhisperTranscription(audioPath) {
+  const executables = sttExecutableCandidates().filter((candidate, index, list) => (
+    candidate &&
+    list.indexOf(candidate) === index &&
+    fs.existsSync(candidate)
+  ));
+  const model = whisperModelPath();
+  if (!executables.length || !model) {
+    return {
+      text: "",
+      message: "録音はできました。ローカル音声認識エンジンはまだ未設定です。"
+    };
+  }
+
+  let lastError;
+  for (const executable of executables) {
+    try {
+      const result = await runWhisperTranscriptionWithExecutable(executable, model, audioPath);
+      return { ...result, engine: executable };
+    } catch (error) {
+      lastError = error;
+      console.error(`Whisper executable failed (${executable}):`, error);
+    }
+  }
+  throw lastError || new Error("音声認識に失敗しました。");
+}
+
 function readCharacterSheet() {
   try {
     return fs.readFileSync(characterSheetPath, "utf8").trim();
@@ -1388,6 +1785,18 @@ function loadCharacterQuestions() {
       : [];
   } catch (error) {
     console.error("Character questions could not be read:", error);
+    return [];
+  }
+}
+
+function loadGrowthQuestions() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(growthQuestionsPath, "utf8"));
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item?.id && item?.statement && item?.question)
+      : [];
+  } catch (error) {
+    console.error("Growth questions could not be read:", error);
     return [];
   }
 }
@@ -1416,6 +1825,93 @@ function formatCharacterCustomization() {
   ].join("\n");
 }
 
+function getGrowthData() {
+  if (!Array.isArray(persistedState.learnedWords)) persistedState.learnedWords = [];
+  if (!Array.isArray(persistedState.sharedMemories)) persistedState.sharedMemories = [];
+  if (!persistedState.bikutanGrowthAnswers ||
+      typeof persistedState.bikutanGrowthAnswers !== "object" ||
+      Array.isArray(persistedState.bikutanGrowthAnswers)) {
+    persistedState.bikutanGrowthAnswers = {};
+  }
+  return {
+    learnedWords: persistedState.learnedWords,
+    sharedMemories: persistedState.sharedMemories,
+    growthAnswers: persistedState.bikutanGrowthAnswers
+  };
+}
+
+function getMusicGenrePreference() {
+  const { growthAnswers } = getGrowthData();
+  return String(growthAnswers[MUSIC_GENRE_QUESTION_ID]?.answer || "").trim();
+}
+
+function getDailyDiaries() {
+  if (!Array.isArray(persistedState.dailyDiaries)) persistedState.dailyDiaries = [];
+  persistedState.dailyDiaries = persistedState.dailyDiaries
+    .filter((entry) => entry && typeof entry.date === "string" && Array.isArray(entry.lines))
+    .map((entry) => ({
+      date: entry.date,
+      lines: entry.lines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 5),
+      savedAt: Number(entry.savedAt) || Date.now()
+    }))
+    .filter((entry) => entry.lines.length)
+    .slice(-14);
+  return persistedState.dailyDiaries;
+}
+
+function formatDiaryMemory() {
+  const diaries = getDailyDiaries().slice(-7);
+  if (!diaries.length) return "";
+  return [
+    "最近のびくたん日記（セーブデータ）:",
+    ...diaries.flatMap((entry) => [
+      `- ${entry.date}`,
+      ...entry.lines.map((line) => `  - ${line}`)
+    ]),
+    "必要な時だけ自然に思い出してください。日記を読んだと説明したり、毎回持ち出したりしないでください。"
+  ].join("\n");
+}
+
+function formatRelationshipMemory() {
+  const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
+  const sections = [];
+  if (learnedWords.length) {
+    sections.push(
+      "教わったことば・内輪の表現:",
+      ...learnedWords.slice(-12).map((item) => `- ${String(item.text || "").slice(0, 300)}`)
+    );
+  }
+  if (sharedMemories.length) {
+    sections.push(
+      "一緒に覚えておくこと:",
+      ...sharedMemories.slice(-12).map((item) => `- ${String(item.text || "").slice(0, 300)}`)
+    );
+  }
+  const musicPreference = getMusicGenrePreference();
+  if (musicPreference) {
+    sections.push(
+      "ユーザーの音楽の好み:",
+      `- 好きなジャンル・雰囲気: ${musicPreference.slice(0, 300)}`,
+      "- 音楽やBGMの話題になった時だけ自然に反映してください。毎回持ち出したり、好みを決めつけたりしないでください。"
+    );
+  }
+  const growthLines = growthQuestions
+    .filter((question) => question.id !== MUSIC_GENRE_QUESTION_ID && growthAnswers[question.id]?.answer)
+    .map((question) => (
+      `- びくたんの考え: ${question.statement} / ユーザーの答え: ` +
+      String(growthAnswers[question.id].answer).slice(0, 300)
+    ));
+  if (growthLines.length) sections.push("一緒に育った好みや考え:", ...growthLines);
+  const diaryMemory = formatDiaryMemory();
+  if (diaryMemory) sections.push(diaryMemory);
+  if (!sections.length) return "";
+  return [
+    "以下は二人のことば帳・思い出帳です。必要な時だけ自然に思い出し、毎回列挙したり設定として説明したりしないでください。",
+    "ユーザーの答えをそのまま真似るだけでなく、びくたん自身の感想や解釈を少し持ってください。",
+    ...sections
+  ].join("\n");
+}
+
 function getPendingCharacterQuestion() {
   const id = String(persistedState.pendingCharacterQuestionId || "");
   return characterQuestions.find((question) => question.id === id);
@@ -1428,7 +1924,8 @@ function makeCharacterQuestion(force = false) {
       text: `ちょっと聞いてもいいですか？\n${pending.question}`,
       sources: [],
       kind: "custom-question",
-      questionId: pending.id
+      questionId: pending.id,
+      answerKind: "character"
     };
   }
 
@@ -1448,7 +1945,8 @@ function makeCharacterQuestion(force = false) {
     text: `ちょっと聞いてもいいですか？\n${question.question}`,
     sources: [],
     kind: "custom-question",
-    questionId: question.id
+    questionId: question.id,
+    answerKind: "character"
   };
 }
 
@@ -1460,6 +1958,234 @@ function showCharacterQuestionNow() {
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
+}
+
+function getPendingGrowthQuestion() {
+  const pending = persistedState.pendingGrowthQuestion;
+  if (!pending || typeof pending !== "object") return undefined;
+  if (pending.type === "self") {
+    const question = growthQuestions.find((item) => item.id === pending.id);
+    return question ? { ...pending, question } : undefined;
+  }
+  return ["word", "memory"].includes(pending.type) ? pending : undefined;
+}
+
+function growthQuestionItem(pending) {
+  if (pending.type === "word") {
+    return {
+      text: "びくたんに、ひとつ言葉を教えてくれませんか？\n意味や、どんな時に使うかも一緒に知りたいです。",
+      sources: [],
+      kind: "custom-question",
+      questionId: pending.id,
+      answerKind: "growth"
+    };
+  }
+  if (pending.type === "memory") {
+    return {
+      text: "今日のこと、ひとつ一緒に覚えておきたいです。\nあとで思い出してほしい出来事はありますか？",
+      sources: [],
+      kind: "custom-question",
+      questionId: pending.id,
+      answerKind: "growth"
+    };
+  }
+  return {
+    text: `${pending.question.statement}\n${pending.question.question}`,
+    sources: [],
+    kind: "custom-question",
+    questionId: pending.id,
+    answerKind: "growth"
+  };
+}
+
+function makeGrowthQuestion(forceType) {
+  const existing = getPendingGrowthQuestion();
+  if (existing) return growthQuestionItem(existing);
+  if (!forceType && (
+    Date.now() < growthQuestionAutoEligibleAt ||
+    Date.now() - (Number(persistedState.lastGrowthQuestionAt) || 0) <
+      GROWTH_QUESTION_INTERVAL_MS
+  )) return undefined;
+
+  const { growthAnswers } = getGrowthData();
+  const types = ["word", "memory", "self"];
+  let type = forceType || types[(Number(persistedState.growthQuestionTurn) || 0) % types.length];
+  let pending;
+  if (type === "music") {
+    const question = growthQuestions.find((item) => item.id === MUSIC_GENRE_QUESTION_ID);
+    if (question) {
+      type = "self";
+      pending = { type, id: question.id };
+    } else {
+      type = "self";
+    }
+  }
+  if (type === "self") {
+    if (!pending) {
+      const question = growthQuestions.find((item) => !growthAnswers[item.id]?.answer);
+      if (question) pending = { type, id: question.id };
+      else type = "word";
+    }
+  }
+  if (!pending) pending = { type, id: `${type}-${Date.now()}` };
+
+  persistedState.pendingGrowthQuestion = pending;
+  persistedState.lastGrowthQuestionAt = Date.now();
+  persistedState.growthQuestionTurn = (Number(persistedState.growthQuestionTurn) || 0) + 1;
+  saveStateSoon();
+  return growthQuestionItem(getPendingGrowthQuestion());
+}
+
+function showGrowthQuestionNow(type) {
+  const item = makeGrowthQuestion(type);
+  if (!item) return;
+  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
+  if (!companionWindow) return;
+  companionWindow.show();
+  companionWindow.focus();
+  companionWindow.webContents.send("companion:custom-question", item);
+}
+
+function showBikutanWorkNow() {
+  const item = makeBikutanWorkLine(true);
+  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
+  if (!companionWindow) return;
+  companionWindow.show();
+  companionWindow.webContents.send("companion:ambient-line", item);
+}
+
+function showAmbientLine(item) {
+  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
+  if (!companionWindow) return;
+  companionWindow.show();
+  companionWindow.webContents.send("companion:ambient-line", item);
+}
+
+function diaryContextText() {
+  const chatLines = (Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries : [])
+    .slice(-10)
+    .flatMap((entry) => [
+      entry.question ? `ユーザー: ${String(entry.question).slice(0, 1000)}` : "",
+      entry.answer ? `びくたん: ${String(entry.answer).slice(0, 1000)}` : ""
+    ])
+    .filter(Boolean);
+  const conversationLines = conversationHistory
+    .slice(-12)
+    .map((turn) => `${turn.role === "user" ? "ユーザー" : "びくたん"}: ${String(turn.text).slice(0, 1000)}`);
+  const lineLines = (Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory : [])
+    .slice(-20)
+    .map((entry) => `びくたんの最近の発言: ${String(entry.text || "").slice(0, 600)}`)
+    .filter((line) => line.trim());
+  const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
+  const growthLines = growthQuestions
+    .filter((question) => growthAnswers[question.id]?.answer)
+    .map((question) => `好み/成長: ${question.question} -> ${String(growthAnswers[question.id].answer).slice(0, 500)}`);
+  const memoryLines = [
+    ...learnedWords.slice(-8).map((item) => `ことば帳: ${String(item.text || "").slice(0, 300)}`),
+    ...sharedMemories.slice(-8).map((item) => `思い出帳: ${String(item.text || "").slice(0, 300)}`)
+  ];
+  return [
+    chatLines.length ? `会話履歴:\n${chatLines.join("\n")}` : "",
+    conversationLines.length ? `直近の会話:\n${conversationLines.join("\n")}` : "",
+    lineLines.length ? `最近のセリフ:\n${lineLines.join("\n")}` : "",
+    growthLines.length || memoryLines.length
+      ? `覚えていること:\n${[...growthLines, ...memoryLines].join("\n")}`
+      : ""
+  ].filter(Boolean).join("\n\n").slice(0, 16000);
+}
+
+function parseDiaryLines(rawResponse) {
+  const parsed = extractJsonObject(rawResponse);
+  const rawLines = Array.isArray(parsed?.lines)
+    ? parsed.lines
+    : String(rawResponse)
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim());
+  return rawLines
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^["「]|["」]$/g, ""))
+    .filter((line) => line.length >= 4)
+    .slice(0, 5)
+    .map((line) => line.slice(0, 180));
+}
+
+function upsertDailyDiary(lines) {
+  const date = getJstDateString();
+  const diaries = getDailyDiaries().filter((entry) => entry.date !== date);
+  diaries.push({ date, lines, savedAt: Date.now() });
+  persistedState.dailyDiaries = diaries.slice(-14);
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return persistedState.dailyDiaries[persistedState.dailyDiaries.length - 1];
+}
+
+async function saveTodayDiary() {
+  showAmbientLine({ text: "今日の日記をまとめています。大事そうなことだけ、短く残しますね。", sources: [] });
+  const context = diaryContextText();
+  if (!context) {
+    const diary = upsertDailyDiary(["今日はまだ日記に残せる会話が少なめでした。"]);
+    showAmbientLine({
+      text: `今日の日記を保存しました。\n・${diary.lines.join("\n・")}`,
+      sources: []
+    });
+    return diary;
+  }
+
+  const characterSheet = readCharacterSheet();
+  const prompt = [
+    "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
+    "今日の会話や設定変更から、翌日以降に自然に思い出すための短い日記セーブを作ってください。",
+    `<character_sheet>\n${characterSheet}\n</character_sheet>`,
+    "ルール:",
+    "- 3〜5行にまとめる。",
+    "- 1行は80文字以内。",
+    "- 事実・好み・方向性・次回調整に役立つことを優先する。",
+    "- 全会話のログではなく、びくたんが覚えておきたい要点だけにする。",
+    "- 実名、住所、秘密、ファイルパス、APIキーのような個人情報や機密情報は書かない。",
+    "- ユーザーの感情や好みは、断定しすぎず『〜がよさそう』『〜を好む傾向』くらいにする。",
+    "- 出力はJSONだけ。形式は {\"lines\":[\"日記1\",\"日記2\",\"日記3\"]}",
+    `日付: ${getJstDateString()}`,
+    `素材:\n${context}`,
+    "びくたん日記JSON:"
+  ].join("\n\n");
+
+  let lines;
+  try {
+    const rawResponse = await runCodex(prompt);
+    lines = parseDiaryLines(rawResponse);
+  } catch (error) {
+    console.error("Diary generation failed:", error);
+    lines = [];
+  }
+  if (!lines.length) {
+    lines = [
+      "今日は、びくたんとの調整や会話で覚えておきたいことがありました。",
+      "次回も、自然な言い方と一緒に育つ感じを大事にするとよさそうです。"
+    ];
+  }
+  const diary = upsertDailyDiary(lines);
+  showAmbientLine({
+    text: `今日の日記を保存しました。\n・${diary.lines.join("\n・")}`,
+    sources: []
+  });
+  return diary;
+}
+
+function showRecentDiaries() {
+  const diaries = getDailyDiaries().slice(-5);
+  if (!diaries.length) {
+    showAmbientLine({ text: "まだ日記はありません。今日のこと、あとで一緒に残しましょう。", sources: [] });
+    return;
+  }
+  const text = [
+    "最近の日記です。",
+    ...diaries.flatMap((entry) => [
+      `【${entry.date}】`,
+      ...entry.lines.slice(0, 3).map((line) => `・${line}`)
+    ])
+  ].join("\n");
+  showAmbientLine({ text, sources: [] });
 }
 
 function detectMediaRemotePlayback() {
@@ -1788,6 +2514,7 @@ async function generateIdleLines() {
     const latestTopicText = latestTopics.promptText;
     const characterSheet = readCharacterSheet();
     const characterCustomization = formatCharacterCustomization();
+    const relationshipMemory = formatRelationshipMemory();
     const recentLinesForPrompt = recentIdleItems
       .slice(-20)
       .map((item) => `- ${item.text}`)
@@ -1799,6 +2526,9 @@ async function generateIdleLines() {
       characterCustomization
         ? `<character_customization>\n${characterCustomization}\n</character_customization>`
         : "",
+      relationshipMemory
+        ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
+        : "",
       `現在の日本時間は ${now} です。`,
       "ユーザーが作業中に、たまに話すセリフを20個作ってください。",
       "通常のセリフは10〜35文字、情報共有系は50〜120文字の自然な日本語にしてください。各セリフは改行せず、一行に一つだけ出力してください。",
@@ -1807,7 +2537,8 @@ async function generateIdleLines() {
       "自己紹介や『AIナビです』は禁止です。",
       "気の合う作業仲間のような、具体的でくだけた口調にしてください。",
       "重要: あなたはユーザーの画面・手元・作業内容・成果物を見ることはできません。見て言っているかのような発言（例『その配色いいですね』『さっきの手さばき速い』『集中してますね』『机の上が〜』）は絶対にしないでください。見えないことを見たフリするのは禁止です。",
-      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、ふと浮かんだ小ネタ、コーヒーや音楽など身の回りの話、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
+      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知らないことを少し勉強している気配、ふと浮かんだ小ネタ、コーヒーや音楽など身の回りの話、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
+      "勉強熱心さは、知識自慢ではなく『知りたい』『覚えておきたい』『あとで試したい』くらいの素直な温度にしてください。",
       "ポエム、格言、抽象的な励まし、悟った言い回し、仏教・スピリチュアル調は禁止です。",
       latestTopicText
         ? "20個のうち4個はAI関連ニュース、3個はデザイン・制作まわりのニュース、2個は生活ハック・暮らしの小ネタ、1個はその他の時事・技術ネタにしてください。残りは日常や制作の短いセリフにしてください。該当する見出しが無いカテゴリは無理に埋めず、通常セリフに回してください。"
@@ -1829,6 +2560,9 @@ async function generateIdleLines() {
         : "",
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
+      relationshipMemory
+        ? "20個のうち最大1個だけ、ことば帳や思い出帳の内容を自然に思い出すセリフにして構いません。毎回同じ記憶を使わず、知らない事実は補わないでください。"
+        : "",
       recentLinesForPrompt
         ? "以下は直近に話した内容です。同じ文だけでなく、言い換え、同じニュース、同じ助言、同じ質問、同じオチも避け、別の話題を作ってください。"
         : "",
@@ -1892,9 +2626,11 @@ async function generateIdleLines() {
         if (lastFortuneQueuedDate !== dateStr) {
           lastFortuneQueuedDate = dateStr;
           const fortune = makeDailyFortune();
-          const fortuneLines = (fortune.lines || [fortune.text]).map((text) => ({
+          const fortuneLines = (fortune.lines || [fortune.text]).map((text, index) => ({
             text,
-            sources: []
+            sources: Array.isArray(fortune.lineSources?.[index])
+              ? fortune.lineSources[index]
+              : []
           }));
           queuedLines.splice(Math.min(queuedLines.length, 2), 0, ...fortuneLines);
         }
@@ -1930,12 +2666,16 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     .join("\n");
   const characterSheet = readCharacterSheet();
   const characterCustomization = formatCharacterCustomization();
+  const relationshipMemory = formatRelationshipMemory();
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
     "以下のキャラクターシートを一貫して演じてください。例文をそのまま繰り返さず、性格・価値観・口調として反映してください。",
     `<character_sheet>\n${characterSheet}\n</character_sheet>`,
     characterCustomization
       ? `<character_customization>\n${characterCustomization}\n</character_customization>`
+      : "",
+    relationshipMemory
+      ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。",
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
@@ -1973,6 +2713,12 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 ipcMain.handle("companion:idle-line", async () => {
   const characterQuestion = makeCharacterQuestion(false);
   if (characterQuestion) return characterQuestion;
+  const growthQuestion = makeGrowthQuestion();
+  if (growthQuestion) return growthQuestion;
+  const fortuneQuestion = makeFortuneQuestion(false);
+  if (fortuneQuestion) return fortuneQuestion;
+  const workLine = Math.random() < 0.18 ? makeBikutanWorkLine(false) : undefined;
+  if (workLine) return workLine;
   if (!idleLineQueue.length) await generateIdleLines();
   // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
   const allRecent = idleLineQueue.length > 0 &&
@@ -2011,6 +2757,103 @@ ipcMain.handle("companion:defer-character-question", (_event, questionId) => {
     tray?.setContextMenu(buildTrayMenu());
   }
   return true;
+});
+
+ipcMain.handle("companion:answer-growth-question", (_event, questionId, rawAnswer) => {
+  const pending = getPendingGrowthQuestion();
+  const answer = String(rawAnswer || "").trim().slice(0, 1000);
+  if (!pending || pending.id !== String(questionId || "") || !answer) {
+    return { text: "うまく受け取れませんでした。もう一度聞かせてください。", sources: [] };
+  }
+
+  const data = getGrowthData();
+  if (pending.type === "word") {
+    data.learnedWords.push({ text: answer, learnedAt: Date.now() });
+    data.learnedWords.splice(0, Math.max(0, data.learnedWords.length - 30));
+  } else if (pending.type === "memory") {
+    data.sharedMemories.push({ text: answer, createdAt: Date.now() });
+    data.sharedMemories.splice(0, Math.max(0, data.sharedMemories.length - 30));
+  } else if (pending.type === "self") {
+    data.growthAnswers[pending.id] = {
+      answer,
+      updatedAt: Date.now()
+    };
+  }
+  persistedState.pendingGrowthQuestion = undefined;
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+
+  const messages = {
+    word: "覚えました。びくたんのことば帳に入れておきます。いつか自然に使ってみたいです。",
+    memory: "うん、一緒の思い出として覚えておきます。忘れた頃に、ふと思い出すかもしれません。",
+    self: "あなたの答えも覚えておきます。びくたんの考えも、少しずつ育っていきそうです。"
+  };
+  if (pending.id === MUSIC_GENRE_QUESTION_ID) {
+    return {
+      text: "覚えました。音楽の話をする時に、あなたの好きな雰囲気も少し思い出しますね。",
+      sources: []
+    };
+  }
+  return { text: messages[pending.type], sources: [] };
+});
+
+ipcMain.handle("companion:defer-growth-question", (_event, questionId) => {
+  const pending = getPendingGrowthQuestion();
+  if (pending?.id === String(questionId || "")) {
+    persistedState.pendingGrowthQuestion = undefined;
+    saveStateSoon();
+    tray?.setContextMenu(buildTrayMenu());
+  }
+  return true;
+});
+
+ipcMain.handle("companion:answer-fortune-question", (_event, questionId, rawAnswer) => {
+  const pending = getPendingFortuneQuestion();
+  const theme = sanitizeFortuneTheme(rawAnswer);
+  if (!pending || pending.id !== String(questionId || "") || !theme) {
+    return { text: "うまく受け取れませんでした。占いたいテーマをもう一度教えてください。", sources: [] };
+  }
+
+  if (!Array.isArray(persistedState.fortuneThemes)) persistedState.fortuneThemes = [];
+  persistedState.fortuneThemes.push({ theme, createdAt: Date.now() });
+  persistedState.fortuneThemes.splice(0, Math.max(0, persistedState.fortuneThemes.length - 20));
+  persistedState.pendingFortuneQuestion = undefined;
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return makeThemedFortune(theme);
+});
+
+ipcMain.handle("companion:defer-fortune-question", (_event, questionId) => {
+  const pending = getPendingFortuneQuestion();
+  if (pending?.id === String(questionId || "")) {
+    persistedState.pendingFortuneQuestion = undefined;
+    saveStateSoon();
+    tray?.setContextMenu(buildTrayMenu());
+  }
+  return true;
+});
+
+ipcMain.handle("companion:transcribe-audio", async (_event, payload) => {
+  const audio = payload?.audio;
+  const format = String(payload?.format || "wav").replace(/[^a-z0-9]/gi, "").toLowerCase() || "wav";
+  const buffer = Buffer.from(audio instanceof ArrayBuffer ? audio : audio?.buffer || []);
+  if (!buffer.length || buffer.length > 25 * 1024 * 1024) {
+    return { text: "", message: "録音データを受け取れませんでした。" };
+  }
+
+  const audioDir = path.join(app.getPath("temp"), "bikunavi-voice-input");
+  await fs.promises.mkdir(audioDir, { recursive: true });
+  const audioPath = path.join(audioDir, `voice-${Date.now()}.${format}`);
+  await fs.promises.writeFile(audioPath, buffer);
+  const result = await runWhisperTranscription(audioPath);
+  if (result.text) {
+    fs.promises.unlink(audioPath).catch(() => {});
+  }
+  return {
+    ...result,
+    format,
+    sampleRate: Number(payload?.sampleRate) || undefined
+  };
 });
 
 ipcMain.handle("companion:speak", (_event, text, kind = "answer") => {

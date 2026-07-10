@@ -6,7 +6,9 @@ set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$HOME/Library/Application Support/BikunaviDesktop"
-LABEL="jp.a.bikunavi-desktop"
+LABEL="online.bikunitan.bikunavi-desktop"
+OLD_LABEL="jp.a.bikunavi-desktop"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 rsync -a --delete --exclude=/dist --exclude=/.git "$SRC/" "$DEST/"
 chmod +x "$DEST/scripts/start-bikunavi-desktop.sh" "$DEST/native/now-playing"
@@ -26,10 +28,21 @@ for f in "${REQUIRED[@]}"; do
   fi
 done
 
+# 旧ラベル（jp.a.*）からの移行: 読み込まれていれば外し、古いplistも片付ける
+if launchctl print "gui/$(id -u)/$OLD_LABEL" >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/$OLD_LABEL" || true
+fi
+rm -f "$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
+
+# 新ラベルのplistがなければテンプレートから生成する
+if [ ! -f "$PLIST" ]; then
+  sed "s#__HOME__#$HOME#g" "$SRC/launchd/$LABEL.plist.template" > "$PLIST"
+fi
+
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   launchctl kickstart -k "gui/$(id -u)/$LABEL"
 else
-  launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$LABEL.plist"
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
   launchctl kickstart "gui/$(id -u)/$LABEL"
 fi
 echo "反映して再起動しました。ログ: /tmp/bikunavi-desktop.out.log"

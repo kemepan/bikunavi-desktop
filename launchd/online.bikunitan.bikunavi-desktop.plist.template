@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>jp.a.bikunavi-desktop</string>
+  <string>online.bikunitan.bikunavi-desktop</string>
 
   <key>ProgramArguments</key>
   <array>

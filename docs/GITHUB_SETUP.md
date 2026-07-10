@@ -80,16 +80,16 @@ ditto . "$HOME/Library/Application Support/BikunaviDesktop"
 chmod +x "$HOME/Library/Application Support/BikunaviDesktop/scripts/start-bikunavi-desktop.sh"
 chmod +x "$HOME/Library/Application Support/BikunaviDesktop/native/now-playing"
 sed "s#__HOME__#$HOME#g" \
-  launchd/jp.a.bikunavi-desktop.plist.template \
-  > "$HOME/Library/LaunchAgents/jp.a.bikunavi-desktop.plist"
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/jp.a.bikunavi-desktop.plist"
-launchctl kickstart -k "gui/$(id -u)/jp.a.bikunavi-desktop"
+  launchd/online.bikunitan.bikunavi-desktop.plist.template \
+  > "$HOME/Library/LaunchAgents/online.bikunitan.bikunavi-desktop.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/online.bikunitan.bikunavi-desktop.plist"
+launchctl kickstart -k "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ```
 
 停止:
 
 ```bash
-launchctl bootout "gui/$(id -u)/jp.a.bikunavi-desktop"
+launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ```
 
 ## 注意

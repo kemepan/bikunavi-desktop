@@ -18,6 +18,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
+const conversation = require("./conversation-providers");
 
 // file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
 // 特権スキームで index.html と Live2D 素材を配信する。
@@ -62,7 +63,9 @@ const DEFAULT_STATE = {
   fortuneThemes: [],
   pendingFortuneQuestion: undefined,
   lastFortuneQuestionAt: 0,
-  dailyDiaries: []
+  dailyDiaries: [],
+  conversationProvider: "auto",
+  anthropicApiKey: ""
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
 
@@ -88,6 +91,8 @@ function collectState() {
   persistedState.autoMoveEnabled = autoMoveEnabled;
   persistedState.musicReactEnabled = musicReactEnabled;
   persistedState.idleIntervalMs = idleIntervalMs;
+  persistedState.conversationProvider = conversationProvider;
+  persistedState.anthropicApiKey = anthropicApiKey;
   persistedState.conversationHistory = conversationHistory.slice(-12);
   if (companionWindow) persistedState.position = companionWindow.getPosition();
 }
@@ -127,6 +132,13 @@ let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
 let idleIntervalMs = [30000, 60000, 120000].includes(persistedState.idleIntervalMs)
   ? persistedState.idleIntervalMs
   : 30000;
+let conversationProvider = ["auto", "codex", "claude-cli", "gemini-cli", "claude-api"]
+  .includes(persistedState.conversationProvider)
+  ? persistedState.conversationProvider
+  : "auto";
+let anthropicApiKey = typeof persistedState.anthropicApiKey === "string"
+  ? persistedState.anthropicApiKey
+  : "";
 let speechProvider = "voicevox";
 const voicevoxSpeaker = 58;
 const voicevoxVoiceLabel = "猫使ビィ";
@@ -1101,6 +1113,48 @@ function buildTrayMenu() {
     },
     { type: "separator" },
     {
+      label: `会話AI（${conversation.providerLabel(activeProviderId()) || "未設定"}）`,
+      submenu: [
+        {
+          label: "自動（見つかったAIを使う）",
+          type: "radio",
+          checked: conversationProvider === "auto",
+          click: () => {
+            conversationProvider = "auto";
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        ...conversation.detectProviders(conversationConfig()).map((provider) => ({
+          label: provider.available ? provider.label : `${provider.label}（未検出）`,
+          type: "radio",
+          checked: conversationProvider === provider.id,
+          enabled: provider.available,
+          click: () => {
+            conversationProvider = provider.id;
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        })),
+        { type: "separator" },
+        {
+          label: anthropicApiKey ? "Claude APIキーを変更…" : "Claude APIキーを設定…",
+          click: openApiKeyWindow
+        },
+        ...(anthropicApiKey
+          ? [{
+            label: "Claude APIキーを削除",
+            click: () => {
+              anthropicApiKey = "";
+              if (conversationProvider === "claude-api") conversationProvider = "auto";
+              tray.setContextMenu(buildTrayMenu());
+              saveStateSoon();
+            }
+          }]
+          : [])
+      ]
+    },
+    {
       label: "読み上げ",
       submenu: [
         {
@@ -1612,50 +1666,80 @@ ipcMain.on("companion:hover", (_event, hovered) => {
   if (characterHovered) clearInterval(autoMoveTimer);
 });
 
-function runCodex(prompt) {
-  const codexAppPath =
-    process.env.BIKUNAVI_CODEX_PATH ||
-    "/Applications/Codex.app/Contents/Resources/codex";
-  const codexCommand = fs.existsSync(codexAppPath) ? codexAppPath : "codex";
-  const codexWorkingDirectory =
-    process.env.BIKUNAVI_CODEX_CWD ||
-    path.join(app.getPath("home"), "Documents", "Brain");
+function aiWorkingDirectory() {
+  const configured = process.env.BIKUNAVI_AI_CWD || process.env.BIKUNAVI_CODEX_CWD;
+  if (configured) return configured;
+  const brainPath = path.join(app.getPath("home"), "Documents", "Brain");
+  return fs.existsSync(brainPath) ? brainPath : app.getPath("home");
+}
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      codexCommand,
-      [
-        "exec",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--sandbox",
-        "read-only",
-        "--color",
-        "never",
-        "-C",
-        codexWorkingDirectory,
-        "-"
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] }
-    );
-    let output = "";
-    let errors = "";
+function conversationConfig() {
+  return { anthropicApiKey, cwd: aiWorkingDirectory() };
+}
 
-    child.stdout.on("data", (chunk) => {
-      if (output.length < 100000) output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      if (errors.length < 100000) errors += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const result = output.trim();
-      if (code === 0 && result) resolve(result);
-      else reject(new Error(errors.trim() || "Codexから返答を受け取れませんでした。"));
-    });
-    child.stdin.end(prompt);
+function activeProviderId() {
+  return conversation.resolveProviderId(conversationProvider, conversationConfig());
+}
+
+function runAssistant(prompt) {
+  const providerId = activeProviderId();
+  if (!providerId) {
+    return Promise.reject(new Error(
+      "会話に使えるAIが見つかりませんでした。トレイメニューの「会話AI」から設定してください。"
+    ));
+  }
+  return conversation.runProvider(providerId, prompt, conversationConfig());
+}
+
+let apiKeyWindow;
+
+function openApiKeyWindow() {
+  if (apiKeyWindow && !apiKeyWindow.isDestroyed()) {
+    apiKeyWindow.focus();
+    return;
+  }
+  apiKeyWindow = new BrowserWindow({
+    width: 480,
+    height: 260,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    title: "Claude APIキー設定",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+  apiKeyWindow.setMenuBarVisibility?.(false);
+  apiKeyWindow.loadURL(`${APP_SCHEME}://app/apikey.html`);
+  apiKeyWindow.on("closed", () => {
+    apiKeyWindow = undefined;
   });
 }
+
+ipcMain.handle("companion:api-key-status", () => ({
+  hasKey: Boolean(anthropicApiKey),
+  masked: anthropicApiKey
+    ? `${anthropicApiKey.slice(0, 10)}…${anthropicApiKey.slice(-4)}`
+    : ""
+}));
+
+ipcMain.handle("companion:set-api-key", (_event, rawKey) => {
+  anthropicApiKey = String(rawKey ?? "").trim();
+  saveStateSoon();
+  if (tray) tray.setContextMenu(buildTrayMenu());
+  if (apiKeyWindow && !apiKeyWindow.isDestroyed()) apiKeyWindow.close();
+  return { ok: true };
+});
+
+ipcMain.handle("companion:close-api-key", () => {
+  if (apiKeyWindow && !apiKeyWindow.isDestroyed()) apiKeyWindow.close();
+  return { ok: true };
+});
 
 function sttExecutableCandidates() {
   const envPath = process.env.BIKUNAVI_WHISPER_BIN;
@@ -2152,7 +2236,7 @@ async function saveTodayDiary() {
 
   let lines;
   try {
-    const rawResponse = await runCodex(prompt);
+    const rawResponse = await runAssistant(prompt);
     lines = parseDiaryLines(rawResponse);
   } catch (error) {
     console.error("Diary generation failed:", error);
@@ -2571,7 +2655,7 @@ async function generateIdleLines() {
       latestTopicText ? `参考にする最新見出し:\n${latestTopicText}` : ""
     ].join("\n");
     try {
-      const response = await runCodex(prompt);
+      const response = await runAssistant(prompt);
       const lines = response
         .split(/\r?\n/)
         .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim())
@@ -2684,9 +2768,11 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     latestTopics.promptText
       ? "下の最新見出しを使った場合は、元にした見出しIDを sourceIds に入れてください。見出しだけで分からない詳細は補わず、推測は推測と分かるようにしてください。"
       : "外部情報を断定するときは、実在すると確信できる公式ページや記事URLだけ sources に入れてください。URLの推測は禁止です。",
-    "通常は会話だけを行い、ユーザーがBrain内の検索を明示した場合だけファイルを参照してください。",
+    `通常は会話だけを行い、ユーザーが「${path.basename(aiWorkingDirectory())}」内の検索を明示した場合だけファイルを参照してください。`,
     "この実行は読み取り専用です。変更依頼には、実行せず内容と確認事項を返してください。",
-    "プロジェクトのAGENTS.mdとプライバシー範囲を必ず守ってください。",
+    fs.existsSync(path.join(aiWorkingDirectory(), "AGENTS.md"))
+      ? "プロジェクトのAGENTS.mdとプライバシー範囲を必ず守ってください。"
+      : "ファイルを参照する場合も、個人情報や機密らしき内容は答えに含めず、求められていない範囲のファイルは読まないでください。",
     history ? `直近の会話:\n${history}` : "",
     latestTopics.promptText ? `参考にできる最新見出し:\n${latestTopics.promptText}` : "",
     clipboardText ? `現在のクリップボード:\n${clipboardText}` : "",
@@ -2694,7 +2780,16 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     "びくたんJSON:"
   ].filter(Boolean).join("\n\n");
 
-  const rawResponse = await runCodex(prompt);
+  let rawResponse;
+  try {
+    rawResponse = await runAssistant(prompt);
+  } catch (error) {
+    console.error("Chat failed:", error);
+    return {
+      text: "うまく考えられませんでした。トレイメニューの「会話AI」で使うAIと、そのログイン状態（またはAPIキー）を確認してください。",
+      sources: []
+    };
+  }
   const response = parseChatResponse(rawResponse, latestTopics.sources);
   conversationHistory.push(
     { role: "user", text: message },

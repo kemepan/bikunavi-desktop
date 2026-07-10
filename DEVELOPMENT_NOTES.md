@@ -207,7 +207,7 @@
 | `assets/bikunavi/` | サイト稼働版Live2D一式 |
 | `vendor/live2dcubismcore.min.js` | 公式配布先から取得するCubism Core（git管理外） |
 | `scripts/fetch-cubism-core.mjs` | Cubism Core取得 |
-| `launchd/jp.a.bikunavi-desktop.plist.template` | LaunchAgentテンプレート |
+| `launchd/online.bikunitan.bikunavi-desktop.plist.template` | LaunchAgentテンプレート |
 
 ## 起動
 
@@ -219,7 +219,7 @@ npm start
 
 2026-07-06にLaunchAgentを追加。macOSログイン時に自動起動する。
 
-- 原本: `launchd/jp.a.bikunavi-desktop.plist.template`
+- 原本: `launchd/online.bikunitan.bikunavi-desktop.plist.template`
 - 起動: `scripts/start-bikunavi-desktop.sh`
 - 実行用コピー: `~/Library/Application Support/BikunaviDesktop/`
 - `RunAtLoad: true`
@@ -264,6 +264,23 @@ npm start
 
 （見送り）Codex応答のストリーミング表示 — びくたんは常時画面を見ているわけではなく、待ち時間の体感改善よりも他を優先するため、2026-07-08時点で見送り。
 
+## 配布ロードマップ（2026-07-10 決定）
+
+方針: **無料配布＋お茶代（BOOTHブースト / noteサポート）**。びくたんを名刺代わりにして Live2D 制作依頼への導線にする。note 記事＋GitHub Releases で配布。Developer ID 署名・公証は反応が出てから（それまで ad-hoc＋起動手順の案内で運用）。
+
+1. **会話プロバイダの抽象化** ✅ 完了（2026-07-10）
+   - `conversation-providers.js` に抽象化。Codex CLI / Claude Code CLI / Gemini CLI（自動検出）＋ Claude API（BYOK、`@anthropic-ai/sdk`、既定モデル claude-opus-4-8）
+   - トレイメニュー「会話AI」で自動/固定を選択。APIキーは専用小窓（`apikey.html`）から設定し `state.json` に保存
+   - AIなしでも定型セリフ・育成・占いは動き、会話だけ案内メッセージを返す
+   - codex に `--skip-git-repo-check` を追加（配布先ではcwdがgit管理下とは限らないため。sandboxはread-onlyのまま）
+2. **環境決め打ちの汎用化** ✅ 完了（2026-07-10）
+   - 作業ディレクトリ: `BIKUNAVI_AI_CWD`（旧 `BIKUNAVI_CODEX_CWD` も有効）→ `~/Documents/Brain` が無ければホームへフォールバック
+   - チャットプロンプトの「Brain内の検索」を作業フォルダ名で動的生成、「AGENTS.md」参照は存在する場合だけ（無ければ汎用のプライバシー指示）
+   - LaunchAgent ラベルを `jp.a.bikunavi-desktop` → `online.bikunitan.bikunavi-desktop` に変更。`deploy-launchagent.sh` が旧ラベルの bootout・旧plist削除・新plist生成まで自動移行する
+3. **Intel Mac 対応**: darwin-x64（またはユニバーサル）パッケージ、whisper-cli x64、now-playing のユニバーサルビルド。検証機がないため「動作未確認」表記で配布
+4. **note 記事＋GitHub 公開**: リポジトリ public 化（権利クリア済み）、Releases に .app zip、Gatekeeper 起動手順をスクショ付きで記事に、Live2D 制作依頼への導線（bikunitan.online）
+5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
+
 ## やりたい機能（大きめ・要検討）
 
 - **音声入力**: マイクから声で話しかけられるようにする。ローカル音声認識、またはmacOSのディクテーション連携を検討。読み上げ（VOICEVOX）と合わせて音声だけで会話できるのが理想。
@@ -274,6 +291,6 @@ npm start
 
 - `npm audit --omit=dev` は2026-07-05時点で0件。開発依存には警告が残る場合がある。
 - Cubism Coreは `.gitignore` 対象。新環境では `npm run fetch-core` が必要。
-- Live2Dモデルとサイト側素材の権利・配布条件は、`.app` を外部配布する前に再確認する。
+- 素材・依存の権利は 2026-07-10 に確認完了 → `docs/RIGHTS_CHECK.md`。モデルは自作（外部発注なし）で権利クリア。ライセンス表記は `THIRD_PARTY_NOTICES.md` に集約済みで `.app` に同梱される（同日対応）。配布時に残るのは Developer ID 署名＋公証のみ（現状は ad-hoc のまま運用）。
 - GitHubへ置く場合、素材の権利確認が済むまではprivate repository推奨。
 - リモート: `https://github.com/kemepan/bikunavi-desktop`（private）。2026-07-08にセキュリティ改善・永続化・.app化までpush済み。

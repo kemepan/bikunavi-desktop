@@ -58,9 +58,10 @@ Live2Dキャラクター「びくにたん」をmacOSデスクトップに常駐
 
 - macOS
 - Node.js / npm
-- Codex.app
-  - 会話生成と自動セリフ生成にCodex CLIを利用します。
-  - Codexアプリ側のログイン認証を使い、アプリ内にAPIキーは保存しません。
+- 会話AI（いずれか1つ。なくても定型セリフ・占い・ポモドーロ等は動きます）
+  - **Codex CLI**（Codex.app）／ **Claude Code CLI** ／ **Gemini CLI** — 各CLIのログイン認証をそのまま使います。
+  - **Claude API** — トレイメニュー「会話AI」からAPIキー（sk-ant-…）を設定します。キーは `state.json` に平文保存されるため共有マシンでは注意してください。
+  - 既定は「自動」で、見つかったAIを上記の順で使います。トレイメニュー「会話AI」で固定選択もできます。
 - VOICEVOX.app
   - 読み上げに使います。
   - 未起動の場合は、アプリ側からローカルエンジンを起動します。
@@ -111,7 +112,7 @@ npm run package
 メニューバーの🌱から「終了」するとアプリごと終了します（アイコンも消えます）。再び起動するには:
 
 ```bash
-launchctl kickstart -k "gui/$(id -u)/jp.a.bikunavi-desktop"
+launchctl kickstart -k "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ```
 
 または `npm run package` で作った `dist/びくにたん-darwin-arm64/びくにたん.app` をダブルクリックでも起動できます。
@@ -131,10 +132,10 @@ ditto . "$HOME/Library/Application Support/BikunaviDesktop"
 chmod +x "$HOME/Library/Application Support/BikunaviDesktop/scripts/start-bikunavi-desktop.sh"
 chmod +x "$HOME/Library/Application Support/BikunaviDesktop/native/now-playing"
 sed "s#__HOME__#$HOME#g" \
-  launchd/jp.a.bikunavi-desktop.plist.template \
-  > "$HOME/Library/LaunchAgents/jp.a.bikunavi-desktop.plist"
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/jp.a.bikunavi-desktop.plist"
-launchctl kickstart -k "gui/$(id -u)/jp.a.bikunavi-desktop"
+  launchd/online.bikunitan.bikunavi-desktop.plist.template \
+  > "$HOME/Library/LaunchAgents/online.bikunitan.bikunavi-desktop.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/online.bikunitan.bikunavi-desktop.plist"
+launchctl kickstart -k "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ```
 
 ログ:
@@ -145,7 +146,7 @@ launchctl kickstart -k "gui/$(id -u)/jp.a.bikunavi-desktop"
 停止:
 
 ```bash
-launchctl bootout "gui/$(id -u)/jp.a.bikunavi-desktop"
+launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ```
 
 ## AI機能の方針
@@ -158,20 +159,21 @@ launchctl bootout "gui/$(id -u)/jp.a.bikunavi-desktop"
 - 見出しだけで分からない内容は断定しないようにしています。
 - 占いは生年月日を使わず、日付から作る軽い五行風の気分づけです。本格的な四柱推命ではありません。
 
-Codex CLIまわりは環境変数で上書きできます。
+会話AIまわりは環境変数で上書きできます。
 
 | 環境変数 | 既定値 | 用途 |
 |---|---|---|
 | `BIKUNAVI_CODEX_PATH` | `/Applications/Codex.app/Contents/Resources/codex` | Codex CLIのパス |
-| `BIKUNAVI_CODEX_CWD` | `~/Documents/Brain` | Codexに渡す作業ディレクトリ |
+| `BIKUNAVI_CLAUDE_CLI_PATH` | PATH等から自動検出 | Claude Code CLIのパス |
+| `BIKUNAVI_GEMINI_CLI_PATH` | PATH等から自動検出 | Gemini CLIのパス |
+| `BIKUNAVI_AI_CWD`（旧 `BIKUNAVI_CODEX_CWD`） | `~/Documents/Brain`（無ければホーム） | CLIに渡す作業ディレクトリ |
+| `BIKUNAVI_CLAUDE_MODEL` | `claude-opus-4-8` | Claude API使用時のモデル |
 
 ## 素材と権利
 
-- `assets/bikunavi/` に実行用Live2Dモデル一式を置いています。
-- Live2Dモデル、テクスチャ、キャラクター素材の公開・再配布可否は、GitHub公開前に必ず確認してください。
-- VOICEVOXおよび猫使ビィの利用条件は、配布形態に応じて公式の利用規約を確認してください。
-
-迷ったら、まずはprivate repositoryで管理するのが安全です。
+- `assets/bikunavi/` に実行用Live2Dモデル一式を置いています。モデル・キャラクターデザインは制作者の自作で、権利確認済みです（経緯は `docs/RIGHTS_CHECK.md`）。
+- サードパーティのライセンス表記は `THIRD_PARTY_NOTICES.md` に集約しています（Live2D Cubism Core、pixi.js、pixi-live2d-display、Electron、whisper.cpp、Whisperモデル）。このファイルは `npm run package` で `.app` 内にもそのまま同梱されます。
+- 読み上げ音声: **VOICEVOX:猫使ビィ**（エンジンは同梱せず、利用者のVOICEVOX.appを使用）。
 
 ## 主なファイル
 

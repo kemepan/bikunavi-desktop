@@ -867,7 +867,7 @@ async function runChat(rawMessage) {
     console.error(error);
     chatEntries.push({
       question: message,
-      answer: "うまく考えられませんでした。Codexのログイン状態を確認してください。"
+      answer: "うまく考えられませんでした。トレイメニューの「会話AI」設定を確認してください。"
     });
     if (chatEntries.length > 10) chatEntries.shift();
     chatEntryIndex = chatEntries.length - 1;

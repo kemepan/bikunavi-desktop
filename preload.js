@@ -29,7 +29,10 @@ const INVOKE_CHANNELS = new Set([
   "companion:defer-growth-question",
   "companion:answer-fortune-question",
   "companion:defer-fortune-question",
-  "companion:transcribe-audio"
+  "companion:transcribe-audio",
+  "companion:api-key-status",
+  "companion:set-api-key",
+  "companion:close-api-key"
 ]);
 
 const ON_CHANNELS = new Set([

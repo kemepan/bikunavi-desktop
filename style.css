@@ -50,6 +50,11 @@ body {
   transform: translate(-50%, calc(-100% + 7px)) scale(0.97);
   transition: opacity 420ms ease, transform 420ms ease;
   pointer-events: auto;
+  /* 吹き出し専用領域（上部260px）からはみ出さない。長文は内側スクロール */
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: 254px;
 }
 
 #bubble.is-active {
@@ -76,6 +81,9 @@ body {
 
 .bubble-message {
   white-space: pre-wrap;
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .history-message {
@@ -158,6 +166,9 @@ body {
 .chat-message {
   white-space: pre-wrap;
   text-align: left;
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .chat-history,

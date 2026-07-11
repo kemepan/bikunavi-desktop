@@ -6,7 +6,7 @@ import { packager } from "@electron/packager";
 
 await packager({
   dir: fileURLToPath(new URL("..", import.meta.url)),
-  name: "びくにたん",
+  name: "びくたん",
   platform: "darwin",
   arch: "universal",
   out: "dist",
@@ -24,4 +24,4 @@ await packager({
   }
 });
 
-console.log(".app を作成しました: dist/びくにたん-darwin-universal/");
+console.log(".app を作成しました: dist/びくたん-darwin-universal/");

@@ -65,7 +65,8 @@ const DEFAULT_STATE = {
   lastFortuneQuestionAt: 0,
   dailyDiaries: [],
   conversationProvider: "auto",
-  anthropicApiKey: ""
+  anthropicApiKey: "",
+  voicevoxGuideShown: false
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
 
@@ -118,7 +119,7 @@ let tray;
 let dragOrigin;
 let cursorTimer;
 let autoMoveTimer;
-let currentSize = ["small", "medium", "large"].includes(persistedState.size)
+let currentSize = ["tiny", "small", "medium", "large"].includes(persistedState.size)
   ? persistedState.size
   : "small";
 let characterHovered = false;
@@ -235,6 +236,10 @@ function pickFallbackIdleLine() {
   return FALLBACK_IDLE_LINES[fallbackIdleIndex++ % FALLBACK_IDLE_LINES.length];
 }
 
+// 直近に話した「びくたんの作業メモ」。会話で「何してるの？」と聞かれた時に
+// 矛盾しない答えを返せるよう、チャットのプロンプトにも渡す。
+let currentBikutanActivity;
+
 function makeBikutanWorkLine(force = false) {
   const now = Date.now();
   if (!force && now - lastBikutanWorkLineAt < BIKUTAN_WORK_INTERVAL_MS) return undefined;
@@ -275,6 +280,7 @@ function makeBikutanWorkLine(force = false) {
     const item = { text, sources: [], kind: "bikutan-work" };
     if (force || !isRecentIdle(item)) {
       lastBikutanWorkLineAt = now;
+      currentBikutanActivity = text;
       rememberRecentIdle(item);
       return item;
     }
@@ -344,6 +350,7 @@ const FALLBACK_IDLE_LINES = [
 ];
 
 const SIZE_PRESETS = {
+  tiny: { label: "極小", width: 170, height: 455 },
   small: { label: "小", width: 220, height: 513 },
   medium: { label: "中", width: 280, height: 598 },
   large: { label: "大", width: 360, height: 718 }
@@ -646,11 +653,11 @@ function makeDailyFortune(date = new Date()) {
   const bgm = element.bgm[(dateNumber + month + day) % element.bgm.length];
   const bgmSearchSource = makeYoutubeSearchSource(`${bgm} 作業用 BGM`);
   const lines = [
-    `今日のびくたん占いです。${element.mood}、${element.color}っぽい一日になりそうですよ。`,
-    `テーマは「${stem.keyword}」。${stem.mood}感じでいきましょう。`,
-    `${action}と、いい流れになりそうです。`,
-    `ラッキー小物は${item}。手元にあると心強いですよ。`,
-    `今日のおすすめBGMは、${bgm}。作業に馴染むと思いますよ。`
+    `今日のびくたん占いです。今日は「${element.color}」の日。${element.mood}ような一日になりそうですよ。`,
+    `キーワードは「${stem.keyword}」。${stem.mood}、くらいの気持ちがちょうどよさそうです。`,
+    `最初の一手は、${action}のがおすすめです。小さく整えると波に乗れますよ。`,
+    `ラッキー小物は「${item}」。近くに置いておくと、お守りがわりになります。`,
+    `BGMは${bgm}あたりが合いそうです。よかったら流してみてください。`
   ];
   return {
     text: lines.join("\n"),
@@ -1061,14 +1068,10 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "びくたんの作業メモ",
-      click: showBikutanWorkNow
-    },
-    {
-      label: `日記セーブ（${getDailyDiaries().length}日）`,
+      label: `日記をつける（${getDailyDiaries().length}日）`,
       submenu: [
         {
-          label: "今日の日記を保存",
+          label: "今日の日記をつける",
           click: () => {
             saveTodayDiary().catch((error) => {
               console.error("Diary save failed:", error);
@@ -1565,7 +1568,7 @@ app.whenReady().then(() => {
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setTitle("🌱");
-  tray.setToolTip("びくにたん");
+  tray.setToolTip("びくたん");
   tray.setContextMenu(buildTrayMenu());
   startMusicPlaybackMonitor();
   powerMonitor.on("suspend", () => {
@@ -1584,7 +1587,27 @@ app.whenReady().then(() => {
   ensureVoicevoxEngine().catch((error) => {
     console.error("VOICEVOX prewarm failed:", error);
   });
+  maybeShowVoicevoxGuide();
 });
+
+// VOICEVOX未インストールの初回だけ、声の入手先を一度案内する（それまではmacOS音声で代用）
+function maybeShowVoicevoxGuide() {
+  if (persistedState.voicevoxGuideShown) return;
+  if (fs.existsSync("/Applications/VOICEVOX.app")) return;
+  setTimeout(() => {
+    if (fs.existsSync("/Applications/VOICEVOX.app")) return;
+    persistedState.voicevoxGuideShown = true;
+    saveStateSoon();
+    showAmbientLine({
+      text: "びくたんの声は、無料アプリのVOICEVOXを使います。インストールすると「猫使ビィ」の声でおしゃべりできますよ。それまではmacOSの声で代用しますね。",
+      sources: [{
+        title: "VOICEVOXをダウンロード（無料）",
+        url: "https://voicevox.hiroshiba.jp/",
+        source: "voicevox.hiroshiba.jp"
+      }]
+    });
+  }, 15000);
+}
 
 ipcMain.on("companion:drag-start", () => {
   if (!companionWindow) return;
@@ -2141,14 +2164,6 @@ function showGrowthQuestionNow(type) {
   companionWindow.webContents.send("companion:custom-question", item);
 }
 
-function showBikutanWorkNow() {
-  const item = makeBikutanWorkLine(true);
-  if (!companionWindow || companionWindow.isDestroyed()) createWindow();
-  if (!companionWindow) return;
-  companionWindow.show();
-  companionWindow.webContents.send("companion:ambient-line", item);
-}
-
 function showAmbientLine(item) {
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
@@ -2221,7 +2236,7 @@ async function saveTodayDiary() {
   if (!context) {
     const diary = upsertDailyDiary(["今日はまだ日記に残せる会話が少なめでした。"]);
     showAmbientLine({
-      text: `今日の日記を保存しました。\n・${diary.lines.join("\n・")}`,
+      text: `今日の日記をつけました。\n・${diary.lines.join("\n・")}`,
       sources: []
     });
     return diary;
@@ -2230,7 +2245,7 @@ async function saveTodayDiary() {
   const characterSheet = readCharacterSheet();
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
-    "今日の会話や設定変更から、翌日以降に自然に思い出すための短い日記セーブを作ってください。",
+    "今日の会話や設定変更から、翌日以降に自然に思い出すための短い日記を作ってください。",
     `<character_sheet>\n${characterSheet}\n</character_sheet>`,
     "ルール:",
     "- 3〜5行にまとめる。",
@@ -2261,7 +2276,7 @@ async function saveTodayDiary() {
   }
   const diary = upsertDailyDiary(lines);
   showAmbientLine({
-    text: `今日の日記を保存しました。\n・${diary.lines.join("\n・")}`,
+    text: `今日の日記をつけました。\n・${diary.lines.join("\n・")}`,
     sources: []
   });
   return diary;
@@ -2655,6 +2670,7 @@ async function generateIdleLines() {
         : "",
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
+      "『何してますか？』のようにユーザーへ質問するセリフは、いきなり聞かず『びくたんは◯◯していました。あなたは何してますか？』のように、自分のささやかな様子をひとこと添えてから聞いてください。",
       relationshipMemory
         ? "20個のうち最大1個だけ、ことば帳や思い出帳の内容を自然に思い出すセリフにして構いません。毎回同じ記憶を使わず、知らない事実は補わないでください。"
         : "",
@@ -2773,6 +2789,9 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
       ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。",
+    currentBikutanActivity
+      ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
+      : "「何してるの？」のように今の様子を聞かれたら、ことば帳の整理や小さな調べ物など、びくたんらしいささやかな作業をひとつ挙げて答えてください。",
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",

@@ -284,10 +284,19 @@ npm start
      - この Mac は CLT の C++ ヘッダが欠けているため `-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path) -DCMAKE_CXX_FLAGS="-isystem $SDK/usr/include/c++/v1"` の回避策が必要だった
    - 検証: Rosetta（x86_64）でユニバーサル.appをフル起動し、Live2D描画・ニュース取得・セリフ生成まで動作確認。x64 whisper-cli も日本語文字起こし成功。実Intel機での確認は未実施（Rosetta検証のみ）
    - 番外（2026-07-11）: 質問の選択肢ボタン（占い気分・キャラカスタム7問・成長質問5問）、画面ロック中の読み上げ停止（lock-screen/unlock-screen検知）も実装
-4. **note 記事＋GitHub 公開**: リポジトリ public 化（権利クリア済み）、Releases に .app zip、Gatekeeper 起動手順をスクショ付きで記事に、Live2D 制作依頼への導線（bikunitan.online）
+4. **note 記事＋GitHub 公開** 🔶 準備完了（2026-07-11）— 公開実行はユーザーが行う
+   - 履歴の安全監査済み（個人パス・実キー・個人メールなし）
+   - 配布zip `dist/bikunitan-mac-universal-v0.1.0.zip`（336MB、展開・署名検証済み）
+   - ライセンス方針: OSSライセンスは付与せず全権利保持。READMEに利用条件（個人利用無料・再配布/素材抽出禁止）を明記
+   - note記事下書き: `docs/note記事下書き.md`（〔〕とスクショを差し替えて公開）
+   - 公開手順とリリースノート: `docs/公開手順-v0.1.0.md` / `docs/リリースノート-v0.1.0.md`（gh CLI認証済み、コマンドを順に実行するだけ）
 5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
 
 ## やりたい機能（大きめ・要検討）
+
+- **自分の声で喋らせる**: COEIROINK の MYCOEIROINK（自分の声を録音して無料でローカル音声合成モデルを作れる公式機能）が有力ルート。アプリ側は speechProvider に COEIROINK エンジン対応（ポート50032・APIがVOICEVOXと別形式）を足す中規模タスク。録音コーパスの読み上げ（数十分〜）と学習の手間が必要。
+  - 案2: Style-Bert-VITS2 系（品質高いがライセンス・導入難度は要確認）
+  - VOICEVOX 自体には自分の声を追加する仕組みはない
 
 - **音声入力**: マイクから声で話しかけられるようにする。ローカル音声認識、またはmacOSのディクテーション連携を検討。読み上げ（VOICEVOX）と合わせて音声だけで会話できるのが理想。
 - **Spotify連携**: 占いの「今日のおすすめBGM」を、雰囲気の提案ではなく実在のプレイリスト/曲にする。五行 → 実プレイリストの対応づけ。Spotify Web APIのOAuth認証が必要な中規模タスク。

@@ -1,6 +1,12 @@
 # GitHub保存メモ
 
-`bikunavi-desktop` をBrain Vaultから独立した単独プロジェクトとしてGitHubへ保存するためのメモ。
+`bikunavi-desktop` をBrain Vaultから独立した単独プロジェクトとしてGitHubへ保存・管理するためのメモ。
+
+現在のリモート:
+
+```text
+https://github.com/kemepan/bikunavi-desktop.git
+```
 
 ## 推奨方針
 
@@ -19,6 +25,9 @@ git status --short
 
 - `node_modules/`
 - `vendor/live2dcubismcore.min.js`
+- `models/`
+- `native/stt/*/whisper-cli`
+- `native/stt/*/whisper-cli.exe`
 - `launchd/*.plist`
 - `dist/`
 - `build/`
@@ -69,6 +78,7 @@ git push -u origin main
 ```bash
 npm install
 npm run fetch-core
+npm run fetch-whisper-model # 音声入力を使う場合
 npm run check
 npm start
 ```
@@ -94,7 +104,8 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 
 ## 注意
 
-- `main.js` は既定で `~/Documents/Brain` をCodexの作業ディレクトリにする。
-- 別のVaultや作業場所を使う場合は `BIKUNAVI_CODEX_CWD` を設定する。
+- `main.js` は既定で `~/Documents/Brain` を会話AIの作業ディレクトリにする。
+- 別のVaultや作業場所を使う場合は `BIKUNAVI_AI_CWD` を設定する。旧名 `BIKUNAVI_CODEX_CWD` も互換のため有効。
 - Codex CLIの場所が違う場合は `BIKUNAVI_CODEX_PATH` を設定する。
 - `native/now-playing` はmacOS向けのビルド済みバイナリ。必要なら `npm run build-media-helper` で作り直す。
+- ローカルSTTバイナリとWhisperモデルは大きく、環境依存もあるためgit管理しない。詳しくは `native/stt/README.md`。

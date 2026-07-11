@@ -1,10 +1,23 @@
-# びくにたん Desktop
+# びくたん Desktop
 
-Live2Dキャラクター「びくにたん」をmacOSデスクトップに常駐させる、Electron製のAIコンシェルジュアプリです。
+Live2Dキャラクター「びくたん」をmacOSデスクトップに常駐させる、Electron製のAIコンシェルジュアプリです。
 
 ビルド済みアプリは [Releases](https://github.com/kemepan/bikunavi-desktop/releases) からダウンロードできます（Apple Silicon / Intel 両対応）。初回起動の手順は下記「利用条件・配布版について」を見てください。
 
 サイト上で動いていたLive2Dモデルの挙動をベースに、デスクトップ常駐、会話、読み上げ、自動セリフ、音楽再生への反応を追加しています。
+
+## 資料ナビ
+
+詳しい仕様・開発手順・今後の課題は `docs/` に整理しています。
+
+| 目的 | 資料 |
+|---|---|
+| 資料全体の目次 | [`docs/README.md`](docs/README.md) |
+| 今の機能・構成 | [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) |
+| 開発・検証・実行版への反映手順 | [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md) |
+| UI改善や配布準備などの課題 | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| 実装履歴・引き継ぎ | [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md) |
+| びくたんの性格・話し方 | [`CHARACTER_SHEET.md`](CHARACTER_SHEET.md) |
 
 ## 現在できること
 
@@ -208,5 +221,4 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 
 - `node_modules/`、`vendor/live2dcubismcore.min.js`、`models/`、ローカルSTTバイナリ、ローカル生成した `launchd/*.plist` はgit管理外です。
 - 実行用コピー先 `~/Library/Application Support/BikunaviDesktop/` はgit管理しません。
-- 素材の権利確認が済むまではprivate repository推奨です。
-- このプロジェクトは、今後Brain Vaultから独立した単独リポジトリとして管理する想定です。
+- GitHub保存・公開の詳しい手順は [`docs/GITHUB_SETUP.md`](docs/GITHUB_SETUP.md) と [`docs/公開手順-v0.1.0.md`](docs/公開手順-v0.1.0.md) に整理しています。

@@ -1,10 +1,29 @@
-# びくにたん Desktop — 開発履歴・引き継ぎ
+# びくたん Desktop — 開発履歴・引き継ぎ
 
-最終更新: 2026-07-08
+最終更新: 2026-07-11
 
 ## 目的
 
-サイト `bikunitan.online` で動いているLive2Dキャラクター「びくにたん」を、macOSデスクトップに常駐するAIコンシェルジュへ発展させる。
+サイト `bikunitan.online` で動いているLive2Dキャラクター「びくたん」を、macOSデスクトップに常駐するAIコンシェルジュへ発展させる。
+
+## 資料整理
+
+2026-07-11 に資料の入口を `docs/README.md` へ整理した。
+
+- 現状把握: `docs/PROJECT_STATUS.md`
+- 開発・検証・実行版への反映: `docs/DEVELOPMENT_WORKFLOW.md`
+- 今後の課題: `docs/ROADMAP.md`
+- 公開・権利確認: `docs/GITHUB_SETUP.md` / `docs/RIGHTS_CHECK.md` / `docs/公開手順-v0.1.0.md`
+
+README は初見向けの概要、`DEVELOPMENT_NOTES.md` は実装履歴、`docs/` は運用・仕様・課題の分冊として使う。
+
+同日に別作業で進んでいた以下も、資料へ反映対象として拾った。
+
+- note記事下書きを「導入秘話編」「導入と使い方編」の2本へ分割
+- Live2Dモデルを `assets/bikunavi_desktop/` の2048pxテクスチャ版へ差し替え
+- 回答JSONに `emote` を追加し、AI回答に合わせて `joy` / `wink` / `proud` / `surprised` / `normal` の表情へ連動
+- 自動セリフ・ニュース・占い表示中にホバーしても本文とソースを残し、入力欄だけ追加する吹き出しUXへ改善
+- コピーボタンをアイコン化し、マイクアイコンを拡大
 
 ## 参照したサイト版
 
@@ -288,7 +307,7 @@ npm start
    - 履歴の安全監査済み（個人パス・実キー・個人メールなし）
    - 配布zip `dist/bikunitan-mac-universal-v0.1.0.zip`（336MB、展開・署名検証済み）
    - ライセンス方針: OSSライセンスは付与せず全権利保持。READMEに利用条件（個人利用無料・再配布/素材抽出禁止）を明記
-   - note記事下書き: `docs/note記事下書き.md`（〔〕とスクショを差し替えて公開）
+   - note記事下書き: `docs/note記事下書き-1-導入秘話編.md` / `docs/note記事下書き-2-導入と使い方編.md`（〔〕とスクショを差し替えて公開）
    - 公開手順とリリースノート: `docs/公開手順-v0.1.0.md` / `docs/リリースノート-v0.1.0.md`（gh CLI認証済み、コマンドを順に実行するだけ）
 5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
 

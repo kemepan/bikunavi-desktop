@@ -37,3 +37,10 @@ BIKUNAVI_WHISPER_MODEL=/path/to/ggml-base.bin
 ```
 
 `models/` and local STT binaries are intentionally gitignored because they are large and platform-specific.
+
+## Notes
+
+- `ggml-base.bin` is the current default because it is light enough for quick local tests.
+- If transcription quality is too rough, try `small` or `medium` models and compare latency.
+- For packaged distribution, do not rely on Homebrew paths. Bundle platform-specific binaries here, preferably static builds or builds whose dylib dependencies are also included.
+- The app tries multiple candidates and falls back to the next one if a binary exists but fails to run.

@@ -6,7 +6,7 @@
 
 | 対象 | 場所 | ライセンス / 状況 |
 |------|------|------------------|
-| びくにたん Live2Dモデル一式 | `assets/bikunavi/` | 自作（確認済み・下記） |
+| びくにたん Live2Dモデル一式 | `assets/bikunavi_desktop/` | 自作（確認済み・下記） |
 | Live2D Cubism Core | `vendor/live2dcubismcore.min.js` | Live2D Proprietary Software License。再配布は出版許諾（下記） |
 | whisper.cpp バイナリ | `native/stt/darwin-arm64/whisper-cli` | MIT（whisper.cpp）。配布時にライセンス文同梱 |
 | Whisper モデル | `models/ggml-base.bin` | MIT（OpenAI Whisper）。配布時にライセンス文同梱 |

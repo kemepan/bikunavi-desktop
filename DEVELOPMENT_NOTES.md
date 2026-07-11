@@ -277,7 +277,13 @@ npm start
    - 作業ディレクトリ: `BIKUNAVI_AI_CWD`（旧 `BIKUNAVI_CODEX_CWD` も有効）→ `~/Documents/Brain` が無ければホームへフォールバック
    - チャットプロンプトの「Brain内の検索」を作業フォルダ名で動的生成、「AGENTS.md」参照は存在する場合だけ（無ければ汎用のプライバシー指示）
    - LaunchAgent ラベルを `jp.a.bikunavi-desktop` → `online.bikunitan.bikunavi-desktop` に変更。`deploy-launchagent.sh` が旧ラベルの bootout・旧plist削除・新plist生成まで自動移行する
-3. **Intel Mac 対応**: darwin-x64（またはユニバーサル）パッケージ、whisper-cli x64、now-playing のユニバーサルビルド。検証機がないため「動作未確認」表記で配布
+3. **Intel Mac 対応** ✅ 完了（2026-07-11）
+   - `npm run package:universal`（`scripts/package-universal.mjs`）でユニバーサル.app生成。stt配下のアーキ別バイナリはlipo合成から除外（`osxUniversal.x64ArchFiles`）
+   - `native/now-playing` をユニバーサルビルド化（`build-media-helper` スクリプトも両アーキ指定に）
+   - `native/stt/darwin-x64/whisper-cli` を追加（git管理外）。whisper.cpp を `cmake -DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=OFF -DBUILD_SHARED_LIBS=OFF` でスタティックビルド。依存はシステムdylibのみで配布可能
+     - この Mac は CLT の C++ ヘッダが欠けているため `-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path) -DCMAKE_CXX_FLAGS="-isystem $SDK/usr/include/c++/v1"` の回避策が必要だった
+   - 検証: Rosetta（x86_64）でユニバーサル.appをフル起動し、Live2D描画・ニュース取得・セリフ生成まで動作確認。x64 whisper-cli も日本語文字起こし成功。実Intel機での確認は未実施（Rosetta検証のみ）
+   - 番外（2026-07-11）: 質問の選択肢ボタン（占い気分・キャラカスタム7問・成長質問5問）、画面ロック中の読み上げ停止（lock-screen/unlock-screen検知）も実装
 4. **note 記事＋GitHub 公開**: リポジトリ public 化（権利クリア済み）、Releases に .app zip、Gatekeeper 起動手順をスクショ付きで記事に、Live2D 制作依頼への導線（bikunitan.online）
 5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
 

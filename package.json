@@ -8,9 +8,10 @@
     "start": "electron .",
     "check": "node --check main.js && node --check renderer.js && node --check preload.js && node --check conversation-providers.js && node --check apikey.js",
     "package": "electron-packager . びくにたん --platform=darwin --out=dist --overwrite --no-asar --ignore='^/dist(/|$)' --ignore='^/docs(/|$)' --ignore='^/launchd(/|$)' --ignore='^/\\.gitignore$' --ignore='\\.log$' && codesign --force --deep --sign - 'dist/びくにたん-darwin-arm64/びくにたん.app' && echo '.app を作成しました: dist/びくにたん-darwin-arm64/'",
-    "build-media-helper": "xcrun clang -fblocks -framework Foundation native/now-playing.m -o native/now-playing",
+    "build-media-helper": "xcrun clang -fblocks -framework Foundation native/now-playing.m -o native/now-playing -arch arm64 -arch x86_64",
     "fetch-core": "node scripts/fetch-cubism-core.mjs",
-    "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs"
+    "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs",
+    "package:universal": "node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくにたん-darwin-universal/びくにたん.app'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

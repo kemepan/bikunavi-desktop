@@ -91,10 +91,13 @@ npm run check
 ## .app の作成（ダブルクリック起動）
 
 ```bash
-npm run package
+npm run package            # Apple Silicon 用（開発時の確認向け・速い）
+npm run package:universal  # Intel + Apple Silicon 両対応（配布向け）
 ```
 
-`dist/びくにたん-darwin-arm64/びくにたん.app` が生成されます。ad-hoc署名済みなので、この Mac 上ではダブルクリックで起動できます（他の Mac に配布する場合は正式な署名・公証が必要）。
+`dist/びくにたん-darwin-arm64/`（または `-universal/`）に `びくにたん.app` が生成されます。ad-hoc署名済みなので、この Mac 上ではダブルクリックで起動できます（他の Mac に配布する場合は正式な署名・公証が必要）。
+
+Intel 向けの音声認識バイナリ `native/stt/darwin-x64/whisper-cli` はgit管理外です。無い場合、Intel Mac では音声入力だけ無効になります（`brew install whisper-cpp` でも代替可）。ビルド手順は `DEVELOPMENT_NOTES.md` の配布ロードマップ参照。
 
 ## セキュリティ構成
 

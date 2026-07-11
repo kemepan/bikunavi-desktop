@@ -71,6 +71,8 @@ let pomodoroHideTimer;
 // いま素の吹き出しに出しているソース。ニュース吹き出しにホバーして会話欄へ
 // 切り替わっても、このソースボタンを引き継いで消さないために覚えておく。
 let displayedLineSources = [];
+// 表示中の自動セリフ・ニュース等。ホバーで会話欄を開いても読み続けられるよう保持する
+let displayedLineItem;
 let idleIntervalMs = 30000;
 let chatterTimer;
 let historySaveTimer;
@@ -473,6 +475,7 @@ function showBubble(item) {
   const validSources = (speechItem.sources || [])
     .filter((source) => /^https?:\/\//.test(source?.url || ""));
   displayedLineSources = validSources;
+  displayedLineItem = speechItem;
   const sourceList = createSourceLinks(validSources);
   if (sourceList) bubble.append(sourceList);
   const choiceButtons = createChoiceButtons(speechItem);
@@ -485,6 +488,7 @@ function showLineHistory(index = lineHistoryIndex) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   displayedLineSources = [];
+  displayedLineItem = undefined;
   bubble.replaceChildren();
   bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
   bubble.classList.add("has-history", "is-active");
@@ -551,9 +555,9 @@ function showLineHistory(index = lineHistoryIndex) {
 
   const copy = document.createElement("button");
   copy.type = "button";
-  copy.className = "is-wide";
-  copy.textContent = "コピー";
+  copy.className = "icon-copy";
   copy.title = "このセリフをコピー";
+  copy.setAttribute("aria-label", "このセリフをコピー");
   copy.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -681,10 +685,12 @@ function shortenForBubble(text, limit) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
 }
 
-function showChatBubble(busy = false, carriedSources = [], preparingSpeech = false) {
+function showChatBubble(busy = false, carriedSources = [], preparingSpeech = false, carriedLine = undefined) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
+  // 通常の会話表示に切り替えたら、持ち越し中のセリフは役目を終える
+  displayedLineItem = carriedLine;
   bubble.replaceChildren();
   const message = document.createElement("div");
   message.className = "chat-message";
@@ -693,6 +699,9 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
     message.textContent = `あなた：${shortenForBubble(pendingQuestion, 80)}\n\nびくたん：考え中です…`;
   } else if (pendingCharacterCustomization) {
     message.textContent = pendingCharacterCustomization.text;
+  } else if (carriedLine?.text) {
+    // 表示中だったセリフ・記事をそのまま読み続けられるようにする
+    message.textContent = carriedLine.text;
   } else if (entry) {
     message.textContent =
       `あなた：${shortenForBubble(entry.question, 80)}\n\n` +
@@ -706,8 +715,9 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   const sourceList = busy
     ? undefined
     : createSourceLinks(carriedSources.length ? carriedSources : entry?.sources);
-  displayedLineSources = [];
-  if (!busy && !pendingCharacterCustomization && chatEntries.length) {
+  displayedLineSources = carriedLine ? carriedSources : [];
+  // セリフ・記事を読んでいる最中は、過去の会話ナビより本文を優先する
+  if (!busy && !pendingCharacterCustomization && !carriedLine && chatEntries.length) {
     const history = document.createElement("div");
     history.className = "chat-history";
     const previous = document.createElement("button");
@@ -734,8 +744,9 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
     });
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.textContent = "コピー";
+    copy.className = "icon-copy";
     copy.title = "この回答をコピー";
+    copy.setAttribute("aria-label", "この回答をコピー");
     copy.addEventListener("click", () => {
       const current = chatEntries[chatEntryIndex];
       if (current) {
@@ -933,6 +944,7 @@ function hideBubble(delay = 0) {
     if (!isSpeaking && !isHovered && !dragging && !chatActive && !lineHistoryActive && !pomodoroState.active) {
       bubble.classList.remove("is-active");
       displayedLineSources = [];
+      displayedLineItem = undefined;
     }
   }, delay);
 }
@@ -972,7 +984,14 @@ function enterCharacter() {
   if (pomodoroState.active) {
     showPomodoroBubble(pomodoroState, true);
   } else {
-    showChatBubble(false, displayedLineSources);
+    // 自動セリフ・ニュース・占いを表示中なら、その本文を残したまま入力欄を足す
+    const readingLine = bubble.classList.contains("is-active") &&
+      !bubble.classList.contains("has-chat") &&
+      !bubble.classList.contains("has-timer") &&
+      !bubble.classList.contains("has-history")
+      ? displayedLineItem
+      : undefined;
+    showChatBubble(false, displayedLineSources, false, readingLine);
     model?.motion("Wave", 0);
   }
 }

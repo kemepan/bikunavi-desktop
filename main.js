@@ -735,11 +735,12 @@ function getPendingFortuneQuestion() {
 
 function fortuneQuestionItem(pending) {
   return {
-    text: "今の気分を一言でいうと、どんな感じですか？\n例: 迷う、疲れた、焦る、集中したい、わくわく、もやもや",
+    text: "今の気分を一言でいうと、どんな感じですか？",
     sources: [],
     kind: "custom-question",
     questionId: pending.id,
-    answerKind: "fortune"
+    answerKind: "fortune",
+    choices: ["集中したい", "わくわく", "迷う", "疲れた", "焦る", "もやもや"]
   };
 }
 
@@ -1573,6 +1574,13 @@ app.whenReady().then(() => {
   powerMonitor.on("resume", () => {
     setSystemSleeping(false);
   });
+  // 画面ロック（ディスプレイスリープ含む）中も、暗い画面に向かって話し続けない
+  powerMonitor.on("lock-screen", () => {
+    setSystemSleeping(true);
+  });
+  powerMonitor.on("unlock-screen", () => {
+    setSystemSleeping(false);
+  });
   ensureVoicevoxEngine().catch((error) => {
     console.error("VOICEVOX prewarm failed:", error);
   });
@@ -2009,7 +2017,8 @@ function makeCharacterQuestion(force = false) {
       sources: [],
       kind: "custom-question",
       questionId: pending.id,
-      answerKind: "character"
+      answerKind: "character",
+      choices: Array.isArray(pending.choices) ? pending.choices : []
     };
   }
 
@@ -2030,7 +2039,8 @@ function makeCharacterQuestion(force = false) {
     sources: [],
     kind: "custom-question",
     questionId: question.id,
-    answerKind: "character"
+    answerKind: "character",
+    choices: Array.isArray(question.choices) ? question.choices : []
   };
 }
 
@@ -2078,7 +2088,8 @@ function growthQuestionItem(pending) {
     sources: [],
     kind: "custom-question",
     questionId: pending.id,
-    answerKind: "growth"
+    answerKind: "growth",
+    choices: Array.isArray(pending.question.choices) ? pending.question.choices : []
   };
 }
 

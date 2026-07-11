@@ -352,14 +352,46 @@ function isPointInActiveBubble(point) {
 }
 
 function normalizeSpeechItem(item) {
-  if (typeof item === "string") return { text: item, sources: [] };
+  if (typeof item === "string") return { text: item, sources: [], choices: [] };
   return {
     text: String(item?.text ?? ""),
     sources: Array.isArray(item?.sources) ? item.sources : [],
     kind: String(item?.kind || ""),
     questionId: String(item?.questionId || ""),
-    answerKind: String(item?.answerKind || "")
+    answerKind: String(item?.answerKind || ""),
+    choices: Array.isArray(item?.choices)
+      ? item.choices.map((choice) => String(choice).trim()).filter(Boolean).slice(0, 6)
+      : []
   };
+}
+
+function createChoiceButtons(question) {
+  if (!question?.choices?.length || question.kind !== "custom-question") return undefined;
+  const container = document.createElement("div");
+  container.className = "choice-buttons";
+  for (const choice of question.choices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = choice;
+    button.addEventListener("click", () => {
+      answerWithChoice(choice);
+    });
+    container.append(button);
+  }
+  return container;
+}
+
+function answerWithChoice(choice) {
+  // 読み上げ途中でも選択肢で即答できるよう、進行中の状態を畳んでから回答する
+  clearTimeout(chatterEndTimer);
+  clearTimeout(hideBubbleTimer);
+  if (currentSpeechId) bikunavi.send("companion:stop-speech");
+  currentSpeechId = undefined;
+  currentSpeechKind = undefined;
+  isSpeaking = false;
+  chatActive = true;
+  bikunavi.send("companion:hover", true);
+  runChat(choice);
 }
 
 function customQuestionAnswerChannel(question) {
@@ -437,6 +469,8 @@ function showBubble(item) {
   displayedLineSources = validSources;
   const sourceList = createSourceLinks(validSources);
   if (sourceList) bubble.append(sourceList);
+  const choiceButtons = createChoiceButtons(speechItem);
+  if (choiceButtons) bubble.append(choiceButtons);
   bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
   bubble.classList.add("is-active");
 }
@@ -710,6 +744,11 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   } else {
     bubble.append(message);
     if (sourceList) bubble.append(sourceList);
+  }
+
+  if (pendingCharacterCustomization && !busy && !preparingSpeech) {
+    const choiceButtons = createChoiceButtons(pendingCharacterCustomization);
+    if (choiceButtons) bubble.append(choiceButtons);
   }
 
   const form = document.createElement("form");

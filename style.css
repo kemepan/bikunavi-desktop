@@ -195,6 +195,28 @@ body {
   cursor: default;
 }
 
+.choice-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.choice-buttons button {
+  appearance: none;
+  padding: 5px 9px;
+  border: 1px solid rgb(80 55 100 / 28%);
+  border-radius: 12px;
+  color: #33263d;
+  background: #f5eff9;
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  cursor: pointer;
+}
+
+.choice-buttons button:hover {
+  background: #eadcf2;
+}
+
 .chat-form {
   display: flex;
   gap: 5px;

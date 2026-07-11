@@ -204,7 +204,7 @@
 | `renderer.js` | Live2D描画、表情、物理、会話UI、履歴、ドラッグ判定 |
 | `style.css` | 透明画面、吹き出し、会話欄 |
 | `index.html` | Canvas・吹き出し・Cubism Core読込 |
-| `assets/bikunavi/` | サイト稼働版Live2D一式 |
+| `assets/bikunavi_desktop/` | サイト稼働版Live2D一式 |
 | `vendor/live2dcubismcore.min.js` | 公式配布先から取得するCubism Core（git管理外） |
 | `scripts/fetch-cubism-core.mjs` | Cubism Core取得 |
 | `launchd/online.bikunitan.bikunavi-desktop.plist.template` | LaunchAgentテンプレート |

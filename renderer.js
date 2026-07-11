@@ -19,14 +19,19 @@ const EMOTES = {
   joy: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 },
   surprised: { eyeOpen: 1.2, eyeSmile: 0, mouthForm: 0, mouthOpen: 0.8 },
   thinking: { eyeOpen: 0.08, eyeSmile: 0, mouthForm: -0.15, mouthOpen: 0 },
-  wink: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 }
+  wink: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 },
+  proud: { eyeOpen: 1, eyeSmile: 0, mouthForm: 0.4, mouthOpen: 0 }
 };
 const EXPRESSION_NAMES = {
   joy: "f02",
   surprised: "f03",
   thinking: "f04",
-  wink: "f05"
+  wink: "f05",
+  proud: "f06"
 };
+// AI回答が指定できる表情。"normal" はEMOTES/EXPRESSION_NAMES未定義のため
+// setEmoteで自然にデフォルト顔（表情リセット）へ落ちる。
+const ANSWER_EMOTES = new Set(["joy", "wink", "proud", "surprised", "normal"]);
 let model;
 let originalModelWidth;
 let originalModelHeight;
@@ -361,7 +366,8 @@ function normalizeSpeechItem(item) {
     answerKind: String(item?.answerKind || ""),
     choices: Array.isArray(item?.choices)
       ? item.choices.map((choice) => String(choice).trim()).filter(Boolean).slice(0, 6)
-      : []
+      : [],
+    emote: ANSWER_EMOTES.has(item?.emote) ? item.emote : ""
   };
 }
 
@@ -880,7 +886,7 @@ async function runChat(rawMessage) {
     // VOICEVOX の音声合成は回答生成後にも時間がかかるため、合成完了を待たず
     // テキストを先に表示する。口パクは実際に再生が始まってから有効にする。
     showChatBubble(false, [], true);
-    setEmote("joy");
+    setEmote(response.emote || "joy");
 
     let speechId = null;
     try {
@@ -1065,7 +1071,7 @@ function startFloating() {
 
 async function start() {
   try {
-    model = await Live2DModel.from("assets/bikunavi/bikunavi.model3.json", {
+    model = await Live2DModel.from("assets/bikunavi_desktop/bikunavi_desktop.model3.json", {
       autoInteract: false
     });
     originalModelWidth = model.width;

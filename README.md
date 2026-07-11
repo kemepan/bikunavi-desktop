@@ -181,7 +181,7 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 
 ## 素材と権利
 
-- `assets/bikunavi/` に実行用Live2Dモデル一式を置いています。モデル・キャラクターデザインは制作者の自作で、権利確認済みです（経緯は `docs/RIGHTS_CHECK.md`）。
+- `assets/bikunavi_desktop/` に実行用Live2Dモデル一式を置いています。モデル・キャラクターデザインは制作者の自作で、権利確認済みです（経緯は `docs/RIGHTS_CHECK.md`）。
 - サードパーティのライセンス表記は `THIRD_PARTY_NOTICES.md` に集約しています（Live2D Cubism Core、pixi.js、pixi-live2d-display、Electron、whisper.cpp、Whisperモデル）。このファイルは `npm run package` で `.app` 内にもそのまま同梱されます。
 - 読み上げ音声: **VOICEVOX:猫使ビィ**（エンジンは同梱せず、利用者のVOICEVOX.appを使用）。
 
@@ -195,7 +195,7 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 | `style.css` | 透明画面、吹き出し、入力欄、ソースボタン |
 | `index.html` | Canvas、吹き出し、Cubism Core読込 |
 | `CHARACTER_SHEET.md` | びくたんの性格・話し方設定 |
-| `assets/bikunavi/` | Live2Dモデル一式 |
+| `assets/bikunavi_desktop/` | Live2Dモデル一式 |
 | `native/now-playing.m` | macOS再生状態取得ヘルパーのソース |
 | `native/now-playing` | ビルド済み再生状態取得ヘルパー |
 | `native/stt/` | OS/CPU別のローカル音声認識バイナリ置き場 |

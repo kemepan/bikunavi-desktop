@@ -2474,8 +2474,12 @@ function parseChatResponse(rawResponse, sourceMap) {
     .map((id) => sourceMap.get(id))
     .filter(Boolean);
   const explicitSources = Array.isArray(parsed.sources) ? parsed.sources : [];
+  const emote = ["joy", "wink", "proud", "surprised", "normal"].includes(parsed.emote)
+    ? parsed.emote
+    : "";
   return {
     text,
+    emote,
     sources: uniqueSources([
       ...idSources,
       ...explicitSources,
@@ -2793,7 +2797,8 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
       ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
       : "「何してるの？」のように今の様子を聞かれたら、ことば帳の整理や小さな調べ物など、びくたんらしいささやかな作業をひとつ挙げて答えてください。",
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
-    "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
+    "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
+    "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・基本）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、normal（落ち着いた説明・注意点を伝える時）。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",
     latestTopics.promptText
       ? "下の最新見出しを使った場合は、元にした見出しIDを sourceIds に入れてください。見出しだけで分からない詳細は補わず、推測は推測と分かるようにしてください。"

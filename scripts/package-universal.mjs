@@ -26,15 +26,17 @@ function plistPaths(root) {
 
 function removeUnusedCameraPermission(appPath) {
   for (const plistPath of plistPaths(appPath)) {
-    try {
-      execFileSync("/usr/bin/plutil", ["-extract", "NSCameraUsageDescription", "raw", plistPath], {
-        stdio: "ignore"
-      });
-    } catch {
-      // Helperによっては元からキーが無い。存在しない場合はそのままでよい。
-      continue;
+    const plist = fs.readFileSync(plistPath, "utf8");
+    if (!plist.includes("<key>NSCameraUsageDescription</key>")) continue;
+
+    const updated = plist.replace(
+      /\s*<key>NSCameraUsageDescription<\/key>\s*<string>[\s\S]*?<\/string>/g,
+      ""
+    );
+    if (updated.includes("<key>NSCameraUsageDescription</key>")) {
+      throw new Error(`カメラ権限の削除に失敗しました: ${plistPath}`);
     }
-    execFileSync("/usr/bin/plutil", ["-remove", "NSCameraUsageDescription", plistPath]);
+    fs.writeFileSync(plistPath, updated);
   }
 }
 

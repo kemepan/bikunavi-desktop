@@ -7,11 +7,12 @@
   "scripts": {
     "start": "BIKUNAVI_DATA_CHANNEL=dev electron .",
     "check": "node --check main.js && node --check renderer.js && node --check preload.js && node --check conversation-providers.js && node --check apikey.js",
-    "package": "node scripts/package-universal.mjs --arm64 && codesign --force --deep --sign - 'dist/びくたん-darwin-arm64/びくたん.app'",
+    "build-app-icon": "node scripts/build-app-icon.mjs",
+    "package": "npm run build-app-icon && node scripts/package-universal.mjs --arm64 && codesign --force --deep --sign - 'dist/びくたん-darwin-arm64/びくたん.app'",
     "build-media-helper": "xcrun clang -fblocks -framework Foundation native/now-playing.m -o native/now-playing -arch arm64 -arch x86_64",
     "fetch-core": "node scripts/fetch-cubism-core.mjs",
     "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs",
-    "package:universal": "node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'"
+    "package:universal": "npm run build-app-icon && node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

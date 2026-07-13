@@ -122,7 +122,9 @@ Intel 向けの音声認識バイナリ `native/stt/darwin-x64/whisper-cli` はg
 
 ## 設定・履歴の保存先
 
-`~/Library/Application Support/bikunavi-desktop/state.json` に、ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）・キャラカスタム回答・ことば帳・思い出帳・日記（最大14日分）を保存します。
+配布版は `~/Library/Application Support/bikunavi-desktop/state.json`、開発版（`npm start` とLaunchAgent常駐版）は `~/Library/Application Support/bikunavi-desktop-dev/state.json` に保存します。ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）・キャラカスタム回答・ことば帳・思い出帳・日記（最大14日分）が含まれます。
+
+開発版を初めて反映するときは `deploy-launchagent.sh` が配布版の既存データを開発用保存先へ一度だけ複製します。その後は別々に更新されるため、両方を起動してもデータを上書きし合いません。
 
 ## 手動での起動・再起動
 

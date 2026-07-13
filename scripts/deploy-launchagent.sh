@@ -6,12 +6,22 @@ set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$HOME/Library/Application Support/BikunaviDesktop"
+RELEASE_DATA="$HOME/Library/Application Support/bikunavi-desktop"
+DEV_DATA="$HOME/Library/Application Support/bikunavi-desktop-dev"
 LABEL="online.bikunitan.bikunavi-desktop"
 OLD_LABEL="jp.a.bikunavi-desktop"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 rsync -a --delete --exclude=/dist --exclude=/.git "$SRC/" "$DEST/"
 chmod +x "$DEST/scripts/start-bikunavi-desktop.sh" "$DEST/native/now-playing"
+
+# 初回だけ従来の利用データを開発用へ複製する。以後は互いに独立して保存する。
+if [ ! -f "$DEV_DATA/state.json" ] && [ -f "$RELEASE_DATA/state.json" ]; then
+  mkdir -p "$DEV_DATA"
+  cp -p "$RELEASE_DATA/state.json" "$DEV_DATA/state.json"
+  chmod 600 "$DEV_DATA/state.json"
+  echo "既存データを開発用保存先へ複製しました: $DEV_DATA/state.json"
+fi
 
 # 必須ファイルの存在チェック（欠けたまま起動すると透明なまま何も描画されない）
 REQUIRED=(

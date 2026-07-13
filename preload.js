@@ -44,6 +44,7 @@ const ON_CHANNELS = new Set([
   "companion:show-line-history",
   "companion:system-sleep",
   "companion:pomodoro",
+  "companion:pomodoro-chime",
   "companion:settings-changed",
   "companion:clear-history",
   "companion:window-edge",

@@ -20,6 +20,17 @@ const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
 const conversation = require("./conversation-providers");
 
+// ポモドーロ通知はトレイメニューやタイマーから鳴るため、ユーザー操作直後でなくても
+// RendererのWeb Audioを再生できるようにする。
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
+// 配布版と開発版が同じ state.json を同時に書かないよう、開発起動時だけ
+// userData を分離する。配布した .app は環境変数なしで従来の保存先を使う。
+const dataChannel = process.env.BIKUNAVI_DATA_CHANNEL === "dev" ? "dev" : "release";
+if (dataChannel === "dev") {
+  app.setPath("userData", path.join(app.getPath("appData"), "bikunavi-desktop-dev"));
+}
+
 // file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
 // 特権スキームで index.html と Live2D 素材を配信する。
 const APP_SCHEME = "bikunavi";
@@ -322,6 +333,7 @@ let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
 let systemSleeping = false;
+let pomodoroPausedBySystem = false;
 let fortuneAutoEnabled = Boolean(persistedState.fortuneAutoEnabled);
 let pomodoroTimer;
 let pomodoroState = {
@@ -341,7 +353,8 @@ const FALLBACK_IDLE_LINES = [
   "Live2Dの物理、盛るとつい元気になりすぎるんですよね。",
   "変な思いつきほど、あとで化けたりするんですよね。",
   "名前づけって、未来の自分への手紙だと思うんです。",
-  "いま、何を作ってるところですか？",
+  "びくたんは気になる用語をひとつ調べていました。いま何してますか？",
+  "びくたん、少し眠くなってきました。お昼寝してもいいですか？",
   "そろそろ何か飲みたい気分になってきました。",
   "リギング、うまくハマると気持ちいいんですよね。",
   "小さい自動化、地味だけど好きなんです。",
@@ -827,6 +840,11 @@ function refreshPomodoroUi(reason = "tick") {
   companionWindow?.webContents.send("companion:pomodoro", getPomodoroSnapshot(reason));
 }
 
+function playPomodoroChime(kind) {
+  if (systemSleeping) return;
+  companionWindow?.webContents.send("companion:pomodoro-chime", kind);
+}
+
 function clearPomodoroTimer() {
   if (pomodoroTimer) {
     clearInterval(pomodoroTimer);
@@ -837,11 +855,13 @@ function clearPomodoroTimer() {
 function completePomodoro() {
   const preset = POMODORO_PRESETS[pomodoroState.phase];
   clearPomodoroTimer();
+  playPomodoroChime("finish");
 
   if (preset?.nextPhase) {
     startPomodoro(preset.nextPhase, {
       reason: preset.nextReason || "autoFocusStarted",
-      message: preset.nextMessage
+      message: preset.nextMessage,
+      chime: false
     });
     return;
   }
@@ -890,6 +910,7 @@ function startPomodoro(phase, options = {}) {
   };
   pomodoroTimer = setInterval(tickPomodoro, 1000);
   refreshPomodoroUi(options.reason || "started");
+  if (options.chime !== false) playPomodoroChime("start");
   const message = options.message ?? preset.startMessage;
   if (options.speak !== false && message) {
     speakFromMain(message, "answer").catch((error) => {
@@ -934,6 +955,7 @@ const POMODORO_FINISH_MESSAGES = [
 function finishPomodoro() {
   if (!pomodoroState.active) return;
   clearPomodoroTimer();
+  playPomodoroChime("finish");
   const message = POMODORO_FINISH_MESSAGES[
     Math.floor(Math.random() * POMODORO_FINISH_MESSAGES.length)
   ];
@@ -1004,6 +1026,15 @@ function buildTrayMenu() {
           label: "完了",
           enabled: pomodoroState.active,
           click: finishPomodoro
+        },
+        { type: "separator" },
+        {
+          label: "開始チャイムを試す",
+          click: () => playPomodoroChime("start")
+        },
+        {
+          label: "終了チャイムを試す",
+          click: () => playPomodoroChime("finish")
         }
       ]
     },
@@ -1351,7 +1382,14 @@ function stopSpeech() {
 function setSystemSleeping(sleeping) {
   if (systemSleeping === sleeping) return;
   systemSleeping = sleeping;
-  if (systemSleeping) stopSpeech();
+  if (systemSleeping) {
+    stopSpeech();
+    pomodoroPausedBySystem = pomodoroState.active && pomodoroState.running;
+    if (pomodoroPausedBySystem) pausePomodoro();
+  } else if (pomodoroPausedBySystem) {
+    pomodoroPausedBySystem = false;
+    resumePomodoro();
+  }
   companionWindow?.webContents.send("companion:system-sleep", systemSleeping);
 }
 
@@ -1923,6 +1961,11 @@ function getCharacterAnswers() {
     persistedState.characterAnswers = {};
   }
   return persistedState.characterAnswers;
+}
+
+function getPreferredUserName() {
+  const raw = String(getCharacterAnswers().user_address?.answer || "").trim();
+  return raw.replace(/[「」『』]/g, "").slice(0, 30);
 }
 
 function formatCharacterCustomization() {
@@ -2628,6 +2671,7 @@ async function generateIdleLines() {
     const latestTopicText = latestTopics.promptText;
     const characterSheet = readCharacterSheet();
     const characterCustomization = formatCharacterCustomization();
+    const preferredUserName = getPreferredUserName();
     const relationshipMemory = formatRelationshipMemory();
     const recentLinesForPrompt = recentIdleItems
       .slice(-20)
@@ -2674,7 +2718,11 @@ async function generateIdleLines() {
         : "",
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
-      "『何してますか？』のようにユーザーへ質問するセリフは、いきなり聞かず『びくたんは◯◯していました。あなたは何してますか？』のように、自分のささやかな様子をひとこと添えてから聞いてください。",
+      `『何してますか？』のようにユーザーへ質問するセリフは、いきなり聞かず『びくたんは◯◯していました。${preferredUserName ? `${preferredUserName}は` : "今は"}何してますか？』の順で、自分のささやかな様子を先に添えてください。`,
+      preferredUserName
+        ? `ユーザーの呼び名は「${preferredUserName}」です。毎回ではなく、ときどき自然に名前を呼んでください。`
+        : "ユーザーの呼び名が未登録の間は、『あなた』を連呼せず自然に主語を省いてください。",
+      "ユーザーへ問いかけるセリフも混ぜて構いません。『お昼寝してもいいですか？』のような、びくたん自身の希望を尋ねる軽い質問も候補にしてください。",
       relationshipMemory
         ? "20個のうち最大1個だけ、ことば帳や思い出帳の内容を自然に思い出すセリフにして構いません。毎回同じ記憶を使わず、知らない事実は補わないでください。"
         : "",
@@ -2781,6 +2829,7 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     .join("\n");
   const characterSheet = readCharacterSheet();
   const characterCustomization = formatCharacterCustomization();
+  const preferredUserName = getPreferredUserName();
   const relationshipMemory = formatRelationshipMemory();
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
@@ -2793,6 +2842,9 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
       ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。",
+    preferredUserName
+      ? `ユーザーの呼び名は「${preferredUserName}」です。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で呼んでください。`
+      : "ユーザーの呼び名はまだ決まっていません。『あなた』を連呼せず、自然に主語を省いてください。",
     currentBikutanActivity
       ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
       : "「何してるの？」のように今の様子を聞かれたら、ことば帳の整理や小さな調べ物など、びくたんらしいささやかな作業をひとつ挙げて答えてください。",

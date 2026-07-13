@@ -6,6 +6,7 @@
 
 - 原本はリポジトリ直下。
 - ログイン時自動起動・常駐で使う実行版は `~/Library/Application Support/BikunaviDesktop/` にコピーする。
+- 開発版の利用データは `~/Library/Application Support/bikunavi-desktop-dev/state.json`、配布版は `~/Library/Application Support/bikunavi-desktop/state.json` に分離する。
 - 変更後は構文確認をしてから実行版へ反映する。
 - 大きいモデル、ローカルSTTバイナリ、Cubism Core、`node_modules/`、`dist/` はgit管理しない。
 

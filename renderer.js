@@ -414,6 +414,39 @@ function customQuestionDeferChannel(question) {
   return "companion:defer-character-question";
 }
 
+async function playPomodoroChime(kind) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass || systemSleeping) return;
+  const context = new AudioContextClass();
+  if (context.state === "suspended") await context.resume();
+  const now = context.currentTime;
+  const notes = kind === "start"
+    ? [{ frequency: 660, at: 0 }, { frequency: 880, at: 0.16 }]
+    : [{ frequency: 880, at: 0 }, { frequency: 660, at: 0.18 }, { frequency: 523, at: 0.36 }];
+  for (const note of notes) {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const startsAt = now + note.at;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(note.frequency, startsAt);
+    gain.gain.setValueAtTime(0.0001, startsAt);
+    gain.gain.exponentialRampToValueAtTime(0.24, startsAt + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startsAt + 0.22);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(startsAt);
+    oscillator.stop(startsAt + 0.23);
+  }
+  setTimeout(() => context.close().catch(() => {}), 1000);
+}
+
+async function deferUnansweredQuestion(question) {
+  if (!question?.questionId || pendingCharacterCustomization?.questionId !== question.questionId) return;
+  await bikunavi.invoke(customQuestionDeferChannel(question), question.questionId);
+  if (pendingCharacterCustomization?.questionId === question.questionId) {
+    pendingCharacterCustomization = undefined;
+  }
+}
+
 function rememberLine(item, kind = "line") {
   const speechItem = normalizeSpeechItem(item);
   if (!speechItem.text.trim()) return;
@@ -893,31 +926,22 @@ async function runChat(rawMessage) {
     saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
-    isPreparingSpeech = true;
-    // VOICEVOX の音声合成は回答生成後にも時間がかかるため、合成完了を待たず
-    // テキストを先に表示する。口パクは実際に再生が始まってから有効にする。
-    showChatBubble(false, [], true);
-    setEmote(response.emote || "joy");
-
-    let speechId = null;
-    try {
-      speechId = await bikunavi.invoke("companion:speak", response.text, "answer");
-    } catch (speechError) {
-      console.error("Speech failed:", speechError);
-    }
+    // 回答テキストと入力欄を先に表示する。VOICEVOXの音声生成は数秒かかる場合が
+    // あるため、ここでは待たず、次の会話操作を塞がない。
     isPreparingSpeech = false;
     showChatBubble();
-    if (speechId) {
-      currentSpeechId = speechId;
-      currentSpeechKind = "answer";
-      isSpeaking = true;
-    } else {
-      isSpeaking = true;
-      const speakingDuration = Math.min(6000, Math.max(1800, response.text.length * 35));
-      responseSpeechTimer = setTimeout(() => {
-        isSpeaking = false;
-      }, speakingDuration);
-    }
+    setEmote(response.emote || "joy");
+
+    bikunavi.invoke("companion:speak", response.text, "answer")
+      .then((speechId) => {
+        if (!speechId) return;
+        currentSpeechId = speechId;
+        currentSpeechKind = "answer";
+        isSpeaking = true;
+      })
+      .catch((speechError) => {
+        console.error("Speech failed:", speechError);
+      });
     scheduleChatIdleReset();
   } catch (error) {
     console.error(error);
@@ -1065,6 +1089,7 @@ function scheduleChatter() {
           Math.min(30000, Math.max(6500, lineItem.text.length * 180))
         );
       chatterEndTimer = setTimeout(() => {
+        deferUnansweredQuestion(lineItem).catch(console.error);
         currentSpeechKind = undefined;
         currentSpeechHoldMs = 900;
         isSpeaking = false;
@@ -1281,6 +1306,12 @@ bikunavi.on("companion:speech-ended", (speechId) => {
     const holdMs = currentSpeechHoldMs;
     currentSpeechHoldMs = 900;
     clearTimeout(chatterEndTimer);
+    const unansweredQuestion = pendingCharacterCustomization;
+    if (unansweredQuestion) {
+      setTimeout(() => {
+        if (!chatActive && !isHovered) deferUnansweredQuestion(unansweredQuestion).catch(console.error);
+      }, Math.max(holdMs, 9000));
+    }
     resumeAmbientState();
     hideBubble(holdMs);
   }
@@ -1398,6 +1429,10 @@ bikunavi.on("companion:pomodoro", (state) => {
     showPomodoroBubble(pomodoroState);
   }
   if (!pomodoroState.active && reason !== "completed") resumeAmbientState();
+});
+
+bikunavi.on("companion:pomodoro-chime", (kind) => {
+  playPomodoroChime(kind === "finish" ? "finish" : "start").catch(console.error);
 });
 
 canvas.addEventListener("pointerdown", (event) => {

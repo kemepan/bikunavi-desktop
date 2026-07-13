@@ -46,7 +46,8 @@ function augmentedPath() {
 function codexExecutable() {
   return findExecutable("codex", [
     process.env.BIKUNAVI_CODEX_PATH,
-    "/Applications/Codex.app/Contents/Resources/codex"
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex"
   ]);
 }
 

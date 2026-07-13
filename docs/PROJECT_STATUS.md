@@ -85,7 +85,8 @@ online.bikunitan.bikunavi-desktop
 保存先:
 
 ```text
-~/Library/Application Support/bikunavi-desktop/state.json
+配布版: ~/Library/Application Support/bikunavi-desktop/state.json
+開発版: ~/Library/Application Support/bikunavi-desktop-dev/state.json
 ```
 
 主な保存内容:

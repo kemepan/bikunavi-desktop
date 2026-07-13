@@ -3,6 +3,8 @@ node_modules/
 dist/
 build/
 release/
+# 公開リポジトリへ含めないnote下書き・個人用メモ。
+docs/private/
 vendor/live2dcubismcore.min.js
 models/
 native/stt/*/whisper-cli

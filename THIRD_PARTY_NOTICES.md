@@ -1,6 +1,6 @@
 # サードパーティライセンス表記
 
-本アプリ「びくにたん」（bikunavi-desktop）が使用・同梱しているサードパーティ製ソフトウェア・素材の権利表記です。
+本アプリ「びくたん」（bikunavi-desktop）が使用・同梱しているサードパーティ製ソフトウェア・素材の権利表記です。
 
 ## Live2D Cubism Core
 
@@ -20,7 +20,7 @@
 
 ## whisper.cpp
 
-- ファイル: `native/stt/darwin-arm64/whisper-cli`
+- ファイル: `native/stt/darwin-arm64/whisper-cli`、`native/stt/darwin-x64/whisper-cli`
 - Copyright (c) 2023-2024 The ggml authors
 - MIT License（下記全文）
 - https://github.com/ggml-org/whisper.cpp
@@ -62,7 +62,7 @@
 - Copyright (c) 2013-2020 GitHub Inc.
 - MIT License（下記全文）
 - https://github.com/electron/electron
-- Electron に含まれる Chromium・Node.js 等のライセンスは、パッケージ生成時に `dist/` 内へ出力される `LICENSE` および `LICENSES.chromium.html` を参照してください。
+- Electron に含まれる Chromium・Node.js 等のライセンスは、配布物内の `ELECTRON_LICENSE` および `LICENSES.chromium.html` を参照してください。
 
 ---
 

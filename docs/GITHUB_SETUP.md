@@ -8,11 +8,13 @@
 https://github.com/kemepan/bikunavi-desktop.git
 ```
 
-## 推奨方針
+## 当初の保存方針
 
 - まずはprivate repositoryで保存する。
-- Live2Dモデル、テクスチャ、キャラクター素材の公開・再配布可否を確認してからpublic化を検討する。
+- Live2Dモデル、テクスチャ、キャラクター素材の公開・再配布可否を確認してからpublic化する。
 - `node_modules/`、Cubism Core、ローカル生成plist、実行用コピー先はgit管理しない。
+
+権利確認後の公開手順は `docs/公開手順-v0.1.0.md` を参照。
 
 ## 事前確認
 

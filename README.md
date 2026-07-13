@@ -70,10 +70,10 @@ Live2Dキャラクター「びくたん」をmacOSデスクトップに常駐さ
 
 ## 必要なもの
 
-- macOS
+- macOS 11以降
 - Node.js / npm
 - 会話AI（いずれか1つ。なくても定型セリフ・占い・ポモドーロ等は動きます）
-  - **Codex CLI**（Codex.app）／ **Claude Code CLI** ／ **Gemini CLI** — 各CLIのログイン認証をそのまま使います。
+  - **Codex CLI**（ChatGPT.app／旧Codex.appに同梱）／ **Claude Code CLI** ／ **Gemini CLI** — 各CLIのログイン認証をそのまま使います。
   - **Claude API** — トレイメニュー「会話AI」からAPIキー（sk-ant-…）を設定します。キーは `state.json` に平文保存されるため共有マシンでは注意してください。
   - 既定は「自動」で、見つかったAIを上記の順で使います。トレイメニュー「会話AI」で固定選択もできます。
 - VOICEVOX.app
@@ -111,7 +111,7 @@ npm run package:universal  # Intel + Apple Silicon 両対応（配布向け）
 
 `dist/びくたん-darwin-arm64/`（または `-universal/`）に `びくたん.app` が生成されます。ad-hoc署名済みなので、この Mac 上ではダブルクリックで起動できます（他の Mac に配布する場合は正式な署名・公証が必要）。
 
-Intel 向けの音声認識バイナリ `native/stt/darwin-x64/whisper-cli` はgit管理外です。無い場合、Intel Mac では音声入力だけ無効になります（`brew install whisper-cpp` でも代替可）。ビルド手順は `DEVELOPMENT_NOTES.md` の配布ロードマップ参照。
+配布ZIPにはApple Silicon／Intel両方の音声認識バイナリを同梱します。ソースから自分でビルドする場合、`native/stt/<platform>-<arch>/whisper-cli` が無ければ音声入力だけ無効になります（`brew install whisper-cpp` でも代替可）。
 
 ## セキュリティ構成
 
@@ -125,6 +125,16 @@ Intel 向けの音声認識バイナリ `native/stt/darwin-x64/whisper-cli` はg
 配布版は `~/Library/Application Support/bikunavi-desktop/state.json`、開発版（`npm start` とLaunchAgent常駐版）は `~/Library/Application Support/bikunavi-desktop-dev/state.json` に保存します。ウィンドウ位置・サイズ・メニュー設定・セリフ履歴（20件）・会話履歴（10件）・キャラカスタム回答・ことば帳・思い出帳・日記（最大14日分）が含まれます。
 
 開発版を初めて反映するときは `deploy-launchagent.sh` が配布版の既存データを開発用保存先へ一度だけ複製します。その後は別々に更新されるため、両方を起動してもデータを上書きし合いません。
+
+## 保存データと外部通信
+
+- 音声入力は同梱のWhisperでローカル処理し、録音音声を外部へ送信しません。
+- AI会話や自動セリフを利用すると、直近の会話、キャラクター設定への回答、ことば帳・思い出帳・日記、取得済みニュース見出し等が、選択したAIサービスへプロンプトとして送られる場合があります。
+- クリップボード内容は、クリップボードについて明示的に質問した場合だけAIへ渡します。
+- Claude APIキーは `state.json` に平文保存し、Anthropic APIの認証以外には使用しません。
+- Claude APIキーはメニューバーの「会話AI」→「Claude APIキーを削除」で消去できます。保存データをすべて初期化する場合は、びくたんを終了してから上記の `state.json` を削除します。
+- 自動セリフ用の公開見出し取得ではGoogle News RSSとHacker News APIへ接続します。
+- 本アプリ独自の収集サーバーや広告・解析SDKはありません。
 
 ## 手動での起動・再起動
 
@@ -182,7 +192,7 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 
 | 環境変数 | 既定値 | 用途 |
 |---|---|---|
-| `BIKUNAVI_CODEX_PATH` | `/Applications/Codex.app/Contents/Resources/codex` | Codex CLIのパス |
+| `BIKUNAVI_CODEX_PATH` | ChatGPT.app／旧Codex.app／PATHから自動検出 | Codex CLIのパス |
 | `BIKUNAVI_CLAUDE_CLI_PATH` | PATH等から自動検出 | Claude Code CLIのパス |
 | `BIKUNAVI_GEMINI_CLI_PATH` | PATH等から自動検出 | Gemini CLIのパス |
 | `BIKUNAVI_AI_CWD`（旧 `BIKUNAVI_CODEX_CWD`） | `~/Documents/Brain`（無ければホーム） | CLIに渡す作業ディレクトリ |
@@ -191,8 +201,8 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ## 利用条件・配布版について
 
 - アプリの個人利用は無料です。スクリーンショットや配信画面への映り込みも自由です。
-- 本リポジトリのソースコード、Live2Dモデル、キャラクター「びくにたん」の権利は制作者（びくに / bikunitan.online）が保持します。アプリ・モデルの再配布、モデルデータの抽出・流用、コードの転用はお控えください（オープンソースライセンスは付与していません）。
-- 配布版はAppleの公証を通していないため、初回起動時に「壊れているため開けません」と表示されます。ターミナルで `xattr -cr /Applications/びくたん.app` を実行してから開いてください。
+- 本リポジトリのソースコード、Live2Dモデル、キャラクター「びくにたん」の権利は制作者（びくに / bikunitan.online）が保持します。アプリ・モデルの再配布、モデルデータの抽出・流用、コードの転用は許可していません。詳細は [`LICENSE.md`](LICENSE.md) を確認してください。
+- 配布版はAppleのDeveloper ID署名・公証を受けていません。まず「システム設定」→「プライバシーとセキュリティ」→「このまま開く」を利用してください。`xattr -cr` は、公式Releaseから取得してSHA-256を確認したアプリが、それでも開けない場合の代替手順です。
 
 ## 素材と権利
 

@@ -84,6 +84,11 @@ const stateFilePath = path.join(app.getPath("userData"), "state.json");
 function loadPersistedState() {
   try {
     const parsed = JSON.parse(fs.readFileSync(stateFilePath, "utf8"));
+    try {
+      fs.chmodSync(stateFilePath, 0o600);
+    } catch (error) {
+      console.warn("State permission update failed:", error);
+    }
     return { ...DEFAULT_STATE, ...parsed };
   } catch (_error) {
     return { ...DEFAULT_STATE };
@@ -114,7 +119,8 @@ function saveStateNow() {
   stateSaveTimer = undefined;
   collectState();
   try {
-    fs.writeFileSync(stateFilePath, JSON.stringify(persistedState, null, 2));
+    fs.writeFileSync(stateFilePath, JSON.stringify(persistedState, null, 2), { mode: 0o600 });
+    fs.chmodSync(stateFilePath, 0o600);
   } catch (error) {
     console.error("State save failed:", error);
   }
@@ -979,7 +985,7 @@ function finishPomodoro() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
-      label: "びくにたんを表示",
+      label: "びくたんを表示",
       type: "checkbox",
       checked: companionWindow?.isVisible() ?? false,
       click: (item) => {

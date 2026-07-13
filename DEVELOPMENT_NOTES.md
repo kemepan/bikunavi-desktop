@@ -271,7 +271,7 @@ npm start
 
 ### .app 化（完了）
 
-- `npm run package` で `@electron/packager` により `dist/びくにたん-darwin-arm64/びくにたん.app` を生成し、ad-hoc署名
+- `npm run package` で `@electron/packager` により `dist/びくたん-darwin-arm64/びくたん.app` を生成し、ad-hoc署名
 - `native/now-playing` を spawn するため asar は無効（`--no-asar`）
 
 ## 次回以降の調整候補（UI・細かい改善）
@@ -303,11 +303,11 @@ npm start
      - この Mac は CLT の C++ ヘッダが欠けているため `-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path) -DCMAKE_CXX_FLAGS="-isystem $SDK/usr/include/c++/v1"` の回避策が必要だった
    - 検証: Rosetta（x86_64）でユニバーサル.appをフル起動し、Live2D描画・ニュース取得・セリフ生成まで動作確認。x64 whisper-cli も日本語文字起こし成功。実Intel機での確認は未実施（Rosetta検証のみ）
    - 番外（2026-07-11）: 質問の選択肢ボタン（占い気分・キャラカスタム7問・成長質問5問）、画面ロック中の読み上げ停止（lock-screen/unlock-screen検知）も実装
-4. **note 記事＋GitHub 公開** 🔶 準備完了（2026-07-11）— 公開実行はユーザーが行う
+4. **note 記事＋GitHub 公開** 🔶 最終準備中（2026-07-13）— 公開実行はユーザーが行う
    - 履歴の安全監査済み（個人パス・実キー・個人メールなし）
-   - 配布zip `dist/bikunitan-mac-universal-v0.1.0.zip`（336MB、展開・署名検証済み）
+   - 配布zip `dist/bikutan-mac-universal-v0.1.0.zip`（356,757,515 bytes、SHA-256 `1858872eeacbcc37130873b37a166f312ac14d78c2624099ec73b55717d0afae`、展開・署名・arm64/x86_64検証済み）
    - ライセンス方針: OSSライセンスは付与せず全権利保持。READMEに利用条件（個人利用無料・再配布/素材抽出禁止）を明記
-   - note記事下書き: `docs/note記事下書き-1-導入秘話編.md` / `docs/note記事下書き-2-導入と使い方編.md`（〔〕とスクショを差し替えて公開）
+   - note記事下書きはGit管理外の `docs/private/note/` に保存（〔〕とスクショを差し替えて公開）
    - 公開手順とリリースノート: `docs/公開手順-v0.1.0.md` / `docs/リリースノート-v0.1.0.md`（gh CLI認証済み、コマンドを順に実行するだけ）
 5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
 
@@ -326,5 +326,4 @@ npm start
 - `npm audit --omit=dev` は2026-07-05時点で0件。開発依存には警告が残る場合がある。
 - Cubism Coreは `.gitignore` 対象。新環境では `npm run fetch-core` が必要。
 - 素材・依存の権利は 2026-07-10 に確認完了 → `docs/RIGHTS_CHECK.md`。モデルは自作（外部発注なし）で権利クリア。ライセンス表記は `THIRD_PARTY_NOTICES.md` に集約済みで `.app` に同梱される（同日対応）。配布時に残るのは Developer ID 署名＋公証のみ（現状は ad-hoc のまま運用）。
-- GitHubへ置く場合、素材の権利確認が済むまではprivate repository推奨。
-- リモート: `https://github.com/kemepan/bikunavi-desktop`（private）。2026-07-08にセキュリティ改善・永続化・.app化までpush済み。
+- リモート: `https://github.com/kemepan/bikunavi-desktop`。公開前に `docs/公開手順-v0.1.0.md` の最終確認を行う。

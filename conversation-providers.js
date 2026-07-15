@@ -177,7 +177,23 @@ function runClaudeCli(prompt, config) {
 function runGeminiCli(prompt, config) {
   const executable = geminiCliExecutable();
   if (!executable) return Promise.reject(new Error("Gemini CLIが見つかりませんでした。"));
-  return runCli(executable, ["-p", prompt], { cwd: config.cwd });
+  // 会話生成にプロジェクトの読み書きは不要。Gemini CLIのツールからBrain内の
+  // ファイルへ触れないよう、空の専用ディレクトリ＋読み取り専用Planモードで動かす。
+  const cwd = path.join(os.tmpdir(), "bikunavi-gemini");
+  fs.mkdirSync(cwd, { recursive: true });
+  return runCli(
+    executable,
+    [
+      "--skip-trust",
+      "--approval-mode",
+      "plan",
+      "--output-format",
+      "text",
+      "-p",
+      prompt
+    ],
+    { cwd }
+  );
 }
 
 async function runClaudeApi(prompt, config) {

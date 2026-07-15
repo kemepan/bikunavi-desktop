@@ -1756,14 +1756,30 @@ function activeProviderId() {
   return conversation.resolveProviderId(conversationProvider, conversationConfig());
 }
 
-function runAssistant(prompt) {
-  const providerId = activeProviderId();
-  if (!providerId) {
-    return Promise.reject(new Error(
-      "会話に使えるAIが見つかりませんでした。トレイメニューの「会話AI」から設定してください。"
-    ));
+async function runAssistant(prompt) {
+  const config = conversationConfig();
+  if (conversationProvider !== "auto") {
+    const providerId = conversation.resolveProviderId(conversationProvider, config);
+    if (!providerId) {
+      throw new Error("選択中の会話AIが使えません。トレイメニューの「会話AI」を確認してください。");
+    }
+    return conversation.runProvider(providerId, prompt, config);
   }
-  return conversation.runProvider(providerId, prompt, conversationConfig());
+  // 自動モードは、失敗（未ログイン・タイムアウト等）したら次の候補へフォールバックする
+  const available = conversation.detectProviders(config).filter((provider) => provider.available);
+  if (!available.length) {
+    throw new Error("会話に使えるAIが見つかりませんでした。トレイメニューの「会話AI」から設定してください。");
+  }
+  let lastError;
+  for (const provider of available) {
+    try {
+      return await conversation.runProvider(provider.id, prompt, config);
+    } catch (error) {
+      console.error(`Conversation provider ${provider.id} failed:`, error?.message || error);
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 let apiKeyWindow;
@@ -2724,7 +2740,7 @@ async function generateIdleLines() {
         : "",
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
-      `『何してますか？』のようにユーザーへ質問するセリフは、いきなり聞かず『びくたんは◯◯していました。${preferredUserName ? `${preferredUserName}は` : "今は"}何してますか？』の順で、自分のささやかな様子を先に添えてください。`,
+      `『何してますか？』のようにユーザーへ質問するセリフは、『${preferredUserName ? `${preferredUserName}は` : ""}今何してますか？びくたんは◯◯していました』のように、先に問いかけてから自分のささやかな様子をひとこと添えてください。`,
       preferredUserName
         ? `ユーザーの呼び名は「${preferredUserName}」です。毎回ではなく、ときどき自然に名前を呼んでください。`
         : "ユーザーの呼び名が未登録の間は、『あなた』を連呼せず自然に主語を省いてください。",
@@ -2815,9 +2831,10 @@ async function generateIdleLines() {
   return idleLineGeneration;
 }
 
-ipcMain.handle("companion:chat", async (_event, rawMessage) => {
+ipcMain.handle("companion:chat", async (_event, rawMessage, rawContextLine) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
+  const contextLine = String(rawContextLine ?? "").trim().slice(0, 600);
 
   const wantsClipboard = /クリップボード|コピーした|コピーしている/.test(message);
   const clipboardText = wantsClipboard ? clipboard.readText().trim().slice(0, 12000) : "";
@@ -2866,6 +2883,9 @@ ipcMain.handle("companion:chat", async (_event, rawMessage) => {
     fs.existsSync(path.join(aiWorkingDirectory(), "AGENTS.md"))
       ? "プロジェクトのAGENTS.mdとプライバシー範囲を必ず守ってください。"
       : "ファイルを参照する場合も、個人情報や機密らしき内容は答えに含めず、求められていない範囲のファイルは読まないでください。",
+    contextLine
+      ? `直前にびくたんが話していた自動セリフ:\n「${contextLine}」\nユーザーの発言がこのセリフへの返答・質問・ツッコミに見える場合は、この文脈を踏まえて答えてください。無関係な話題なら、このセリフには触れないでください。`
+      : "",
     history ? `直近の会話:\n${history}` : "",
     latestTopics.promptText ? `参考にできる最新見出し:\n${latestTopics.promptText}` : "",
     clipboardText ? `現在のクリップボード:\n${clipboardText}` : "",

@@ -910,6 +910,11 @@ async function runChat(rawMessage) {
   showChatBubble(true);
   try {
     const customizationQuestion = pendingCharacterCustomization;
+    // 表示中（または直前90秒以内）の自動セリフを文脈として渡し、
+    // つぶやきへの「それどういうこと？」のような返答を成立させる
+    const lastLine = lineHistory[lineHistory.length - 1];
+    const contextLine = displayedLineItem?.text ||
+      (lastLine && Date.now() - lastLine.time < 90000 ? lastLine.text : "");
     const response = normalizeSpeechItem(
       customizationQuestion
         ? await bikunavi.invoke(
@@ -917,7 +922,7 @@ async function runChat(rawMessage) {
           customizationQuestion.questionId,
           message
         )
-        : await bikunavi.invoke("companion:chat", message)
+        : await bikunavi.invoke("companion:chat", message, contextLine)
     );
     if (customizationQuestion) pendingCharacterCustomization = undefined;
     chatEntries.push({ question: message, answer: response.text, sources: response.sources });

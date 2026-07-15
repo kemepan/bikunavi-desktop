@@ -7,7 +7,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { Anthropic } = require("@anthropic-ai/sdk");
 
-const CLI_TIMEOUT_MS = 180000;
+const CLI_TIMEOUT_MS = 90000;
 const HOME = os.homedir();
 // LaunchAgent 起動時は PATH が最小構成のため、CLI の実体は既知の場所から探す。
 const COMMON_BIN_DIRS = [

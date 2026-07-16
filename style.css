@@ -72,11 +72,13 @@ body {
 }
 
 #bubble.has-chat {
-  min-width: min(204px, calc(100% - 16px));
+  width: min(320px, calc(100% - 16px));
+  min-width: min(260px, calc(100% - 16px));
 }
 
 #bubble.has-history {
-  min-width: min(188px, calc(100% - 16px));
+  width: min(320px, calc(100% - 16px));
+  min-width: min(250px, calc(100% - 16px));
 }
 
 .bubble-message {
@@ -87,7 +89,7 @@ body {
 }
 
 .history-message {
-  max-width: 240px;
+  max-width: 320px;
   text-align: left;
 }
 
@@ -171,8 +173,39 @@ body {
   overscroll-behavior: contain;
 }
 
+.bubble-message,
+.chat-message {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(91 68 108 / 32%) transparent;
+}
+
+.bubble-message::-webkit-scrollbar,
+.chat-message::-webkit-scrollbar {
+  width: 5px;
+}
+
+.bubble-message::-webkit-scrollbar-track,
+.chat-message::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bubble-message::-webkit-scrollbar-thumb,
+.chat-message::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgb(91 68 108 / 32%);
+  background-clip: padding-box;
+}
+
+.bubble-message::-webkit-scrollbar-thumb:hover,
+.chat-message::-webkit-scrollbar-thumb:hover {
+  background: rgb(91 68 108 / 50%);
+  background-clip: padding-box;
+}
+
 .chat-history,
-.line-history {
+.line-history,
+.bubble-actions {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -183,7 +216,8 @@ body {
 }
 
 .chat-history button,
-.line-history button {
+.line-history button,
+.bubble-actions button {
   width: 28px;
   height: 26px;
   padding: 0;
@@ -194,14 +228,17 @@ body {
   cursor: pointer;
 }
 
-.line-history button.is-wide {
+.chat-history button.is-wide,
+.line-history button.is-wide,
+.bubble-actions button.is-wide {
   width: auto;
   min-width: 44px;
   padding: 0 9px;
 }
 
 .chat-history button:disabled,
-.line-history button:disabled {
+.line-history button:disabled,
+.bubble-actions button:disabled {
   opacity: 0.3;
   cursor: default;
 }

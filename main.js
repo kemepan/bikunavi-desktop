@@ -19,6 +19,26 @@ const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
 const conversation = require("./conversation-providers");
+const {
+  isSafeIdleUserNameUsage,
+  repairBikutanSelfReferences
+} = require("./identity-utils");
+const {
+  isIdleCapabilitySafeLine,
+  sanitizeCapabilityResponse
+} = require("./capability-utils");
+const {
+  parseGeneratedIdleLine,
+  sanitizeSpokenSourceIds
+} = require("./source-utils");
+
+const CAPABILITY_BOUNDARY_PROMPT = [
+  "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
+  "ユーザーの画面、手元、部屋、机、表情、周囲の音・匂い・味は分かりません。見聞きしたふりをしないでください。",
+  "Mac、アプリ、ファイル、メール、予約・注文サービスを操作できません。実行していない保存・送信・予約・購入などを『しました』『しておきます』と言わないでください。",
+  "受け取れるのは、この依頼へ明示的に含まれた会話、アプリ内の記憶、最新見出し、必要な場合のクリップボードだけです。ファイルや外部情報を自分で見た・調べたとは言わないでください。",
+  "できないことを申し出ず、実際にできる会話へ言い換えてください。例: 『コーヒーを淹れましょうか？』ではなく『コーヒー休憩にしますか？』。"
+].join("\n");
 
 // ポモドーロ通知はトレイメニューやタイマーから鳴るため、ユーザー操作直後でなくても
 // RendererのWeb Audioを再生できるようにする。
@@ -96,6 +116,18 @@ function loadPersistedState() {
 }
 
 const persistedState = loadPersistedState();
+persistedState.lineHistory = (Array.isArray(persistedState.lineHistory)
+  ? persistedState.lineHistory
+  : []).map((entry) => ({
+  ...entry,
+  text: sanitizeSpokenSourceIds(entry?.text)
+}));
+persistedState.chatEntries = (Array.isArray(persistedState.chatEntries)
+  ? persistedState.chatEntries
+  : []).map((entry) => ({
+  ...entry,
+  answer: sanitizeSpokenSourceIds(entry?.answer)
+}));
 let stateSaveTimer;
 
 function collectState() {
@@ -150,7 +182,7 @@ let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
 let idleIntervalMs = [30000, 60000, 120000].includes(persistedState.idleIntervalMs)
   ? persistedState.idleIntervalMs
   : 30000;
-let conversationProvider = ["auto", "codex", "claude-cli", "gemini-cli", "claude-api"]
+let conversationProvider = ["auto", "codex", "claude-cli", "gemini-api", "gemini-cli", "claude-api"]
   .includes(persistedState.conversationProvider)
   ? persistedState.conversationProvider
   : "auto";
@@ -266,7 +298,7 @@ function makeBikutanWorkLine(force = false) {
   const candidateLines = [
     "今日の予定を少し整えています。",
     "ことば帳を読み返しています。",
-    "フォントの用語をひとつ調べています。",
+    "フォントの用語をひとつ覚え直しています。",
     "音楽ジャンルの名前を少し覚えています。",
     "Live2Dまわりの用語をノートにしています。",
     "気になったことを、少しだけ勉強しています。",
@@ -355,11 +387,11 @@ let pomodoroState = {
 
 // びくたんは画面や作業内容を見られない。見たフリの観察は入れず、自分の独り言に留める。
 const FALLBACK_IDLE_LINES = [
-  "コーヒー、そろそろ淹れたてが恋しくないですか？",
+  "コーヒー休憩、そろそろどうですか？",
   "Live2Dの物理、盛るとつい元気になりすぎるんですよね。",
   "変な思いつきほど、あとで化けたりするんですよね。",
   "名前づけって、未来の自分への手紙だと思うんです。",
-  "びくたんは気になる用語をひとつ調べていました。いま何してますか？",
+  "今何してますか？びくたんは気になる言葉を思い出していました。",
   "びくたん、少し眠くなってきました。お昼寝してもいいですか？",
   "そろそろ何か飲みたい気分になってきました。",
   "リギング、うまくハマると気持ちいいんですよね。",
@@ -369,10 +401,10 @@ const FALLBACK_IDLE_LINES = [
 ];
 
 const SIZE_PRESETS = {
-  tiny: { label: "極小", width: 170, height: 455 },
-  small: { label: "小", width: 220, height: 513 },
-  medium: { label: "中", width: 280, height: 598 },
-  large: { label: "大", width: 360, height: 718 }
+  tiny: { label: "極小", width: 240, height: 455 },
+  small: { label: "小", width: 290, height: 513 },
+  medium: { label: "中", width: 350, height: 598 },
+  large: { label: "大", width: 430, height: 718 }
 };
 
 const POMODORO_PRESETS = {
@@ -1179,8 +1211,26 @@ function buildTrayMenu() {
         })),
         { type: "separator" },
         {
+          label: conversation.getGeminiApiKey(conversationConfig())
+            ? "Gemini APIキーを変更…"
+            : "Gemini APIキーを設定…",
+          click: () => openApiKeyWindow("gemini")
+        },
+        ...(conversation.getGeminiApiKey(conversationConfig())
+          ? [{
+            label: "Gemini APIキーを削除",
+            click: () => {
+              writeGeminiApiKey("");
+              if (conversationProvider === "gemini-api") conversationProvider = "auto";
+              tray.setContextMenu(buildTrayMenu());
+              saveStateSoon();
+            }
+          }]
+          : []),
+        { type: "separator" },
+        {
           label: anthropicApiKey ? "Claude APIキーを変更…" : "Claude APIキーを設定…",
-          click: openApiKeyWindow
+          click: () => openApiKeyWindow("claude")
         },
         ...(anthropicApiKey
           ? [{
@@ -1783,12 +1833,18 @@ async function runAssistant(prompt) {
 }
 
 let apiKeyWindow;
+let apiKeyWindowProvider = "claude";
 
-function openApiKeyWindow() {
+function openApiKeyWindow(provider = "claude") {
+  const requestedProvider = provider === "gemini" ? "gemini" : "claude";
   if (apiKeyWindow && !apiKeyWindow.isDestroyed()) {
-    apiKeyWindow.focus();
-    return;
+    if (apiKeyWindowProvider === requestedProvider) {
+      apiKeyWindow.focus();
+      return;
+    }
+    apiKeyWindow.close();
   }
+  apiKeyWindowProvider = requestedProvider;
   apiKeyWindow = new BrowserWindow({
     width: 480,
     height: 260,
@@ -1797,7 +1853,7 @@ function openApiKeyWindow() {
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
-    title: "Claude APIキー設定",
+    title: apiKeyWindowProvider === "gemini" ? "Gemini APIキー設定" : "Claude APIキー設定",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -1806,21 +1862,61 @@ function openApiKeyWindow() {
     }
   });
   apiKeyWindow.setMenuBarVisibility?.(false);
-  apiKeyWindow.loadURL(`${APP_SCHEME}://app/apikey.html`);
+  apiKeyWindow.loadURL(`${APP_SCHEME}://app/apikey.html?provider=${apiKeyWindowProvider}`);
   apiKeyWindow.on("closed", () => {
     apiKeyWindow = undefined;
   });
 }
 
-ipcMain.handle("companion:api-key-status", () => ({
-  hasKey: Boolean(anthropicApiKey),
-  masked: anthropicApiKey
-    ? `${anthropicApiKey.slice(0, 10)}…${anthropicApiKey.slice(-4)}`
-    : ""
-}));
+function writeGeminiApiKey(rawKey) {
+  const key = String(rawKey ?? "").trim();
+  const directory = path.join(app.getPath("home"), ".gemini");
+  const envPath = path.join(directory, ".env");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  let lines = [];
+  try {
+    lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  } catch (_error) {
+    // 初回設定では新規作成する。
+  }
+  lines = lines.filter((line) => !/^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(line));
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (key) lines.push(`GEMINI_API_KEY=${key}`);
+  const content = lines.length ? `${lines.join("\n")}\n` : "";
+  const temporaryPath = path.join(directory, `.env.bikunavi-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(temporaryPath, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporaryPath, envPath);
+    fs.chmodSync(envPath, 0o600);
+  } finally {
+    fs.promises.unlink(temporaryPath).catch(() => {});
+  }
+}
 
-ipcMain.handle("companion:set-api-key", (_event, rawKey) => {
-  anthropicApiKey = String(rawKey ?? "").trim();
+ipcMain.handle("companion:api-key-status", (_event, requestedProvider) => {
+  const provider = requestedProvider === "gemini" ? "gemini" : "claude";
+  const key = provider === "gemini"
+    ? conversation.getGeminiApiKey(conversationConfig())
+    : anthropicApiKey;
+  return {
+    provider,
+    hasKey: Boolean(key),
+    masked: key ? `${key.slice(0, 10)}…${key.slice(-4)}` : ""
+  };
+});
+
+ipcMain.handle("companion:set-api-key", (_event, requestedProvider, rawKey) => {
+  const provider = requestedProvider === "gemini" ? "gemini" : "claude";
+  const key = String(rawKey ?? "").trim();
+  if (provider === "gemini") {
+    writeGeminiApiKey(key);
+    if (key) conversationProvider = "gemini-api";
+    else if (conversationProvider === "gemini-api") conversationProvider = "auto";
+  } else {
+    anthropicApiKey = key;
+    if (key) conversationProvider = "claude-api";
+    else if (conversationProvider === "claude-api") conversationProvider = "auto";
+  }
   saveStateSoon();
   if (tray) tray.setContextMenu(buildTrayMenu());
   if (apiKeyWindow && !apiKeyWindow.isDestroyed()) apiKeyWindow.close();
@@ -1987,16 +2083,20 @@ function getCharacterAnswers() {
 
 function getPreferredUserName() {
   const raw = String(getCharacterAnswers().user_address?.answer || "").trim();
-  return raw.replace(/[「」『』]/g, "").slice(0, 30);
+  return raw.replace(/[「」『』]/g, "").replace(/[\r\n]+/g, " ").slice(0, 30);
 }
 
 function formatCharacterCustomization() {
   const answers = getCharacterAnswers();
   const lines = characterQuestions
     .filter((question) => answers[question.id]?.answer)
-    .map((question) => (
-      `- ${question.topic}: ${String(answers[question.id].answer).slice(0, 1000)}`
-    ));
+    .map((question) => {
+      const answer = String(answers[question.id].answer).slice(0, 1000);
+      if (question.id === "user_address") {
+        return `- ユーザーへの呼びかけ方: ${answer}（ユーザーだけの呼び名。びくたん自身の名前・一人称ではない）`;
+      }
+      return `- ${question.topic}: ${answer}`;
+    });
   if (!lines.length) return "";
   return [
     "以下はユーザーと会話しながら決めた追加設定です。キャラクターシートと両立させ、ユーザーの好みとして自然に反映してください。",
@@ -2527,12 +2627,24 @@ function extractJsonObject(text) {
 function parseChatResponse(rawResponse, sourceMap) {
   const parsed = extractJsonObject(rawResponse);
   if (!parsed || typeof parsed.answer !== "string") {
-    const text = String(rawResponse).trim();
+    const text = sanitizeCapabilityResponse(
+      sanitizeSpokenSourceIds(
+        repairBikutanSelfReferences(rawResponse, getPreferredUserName()),
+        [],
+        sourceMap
+      )
+    ).trim();
     return { text, sources: uniqueSources(extractUrlsFromText(text)) };
   }
 
-  const text = parsed.answer.trim();
   const sourceIds = Array.isArray(parsed.sourceIds) ? parsed.sourceIds : [];
+  const text = sanitizeCapabilityResponse(
+    sanitizeSpokenSourceIds(
+      repairBikutanSelfReferences(parsed.answer, getPreferredUserName()),
+      sourceIds,
+      sourceMap
+    )
+  ).trim();
   const idSources = sourceIds
     .map((id) => String(id).replace(/[\[\]]/g, "").trim())
     .filter(Boolean)
@@ -2710,14 +2822,22 @@ async function generateIdleLines() {
         ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
         : "",
       `現在の日本時間は ${now} です。`,
+      preferredUserName
+        ? `名前の区別は厳守してください。「${preferredUserName}」はユーザーだけの呼び名です。びくたん自身を「${preferredUserName}」と呼ぶのは禁止です。びくたんの一人称は「びくたん」または主語省略だけです。`
+        : "びくたんの一人称は「びくたん」または自然な主語省略だけです。",
+      preferredUserName
+        ? `禁止例: 「${preferredUserName}は雨の日の音が好きなんです」のように、びくたん自身の好み・行動・気持ちの主語へユーザー名を置かないでください。正しくは「びくたんは雨の日の音が好きなんです」です。`
+        : "",
       "ユーザーが作業中に、たまに話すセリフを20個作ってください。",
       "通常のセリフは10〜35文字、情報共有系は50〜120文字の自然な日本語にしてください。各セリフは改行せず、一行に一つだけ出力してください。",
       "出力形式は必ず `種別|参照ID|セリフ` にしてください。通常セリフは `normal||セリフ`、ニュース系（AI・デザイン・その他）は `news|A3|セリフ` や `news|D3|セリフ`、生活ハック系は `life|L3|セリフ` のように、元にした見出しのIDを1〜2個入れてください。",
+      "参照IDは2列目の管理欄だけに入れてください。セリフ本文や末尾にはA3・G7のようなIDを絶対に書かず、話す必要がある場合は参考見出しに書かれた媒体名を使ってください。存在しないIDを作らないでください。",
       "番号、箇条書き記号、引用符、説明は付けないでください。",
       "自己紹介や『AIナビです』は禁止です。",
       "気の合う作業仲間のような、具体的でくだけた口調にしてください。",
+      CAPABILITY_BOUNDARY_PROMPT,
       "重要: あなたはユーザーの画面・手元・作業内容・成果物を見ることはできません。見て言っているかのような発言（例『その配色いいですね』『さっきの手さばき速い』『集中してますね』『机の上が〜』）は絶対にしないでください。見えないことを見たフリするのは禁止です。",
-      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知らないことを少し勉強している気配、ふと浮かんだ小ネタ、コーヒーや音楽など身の回りの話、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
+      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知りたいことを考える様子、ふと浮かんだ小ネタ、コーヒー休憩や音楽の好み、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
       "勉強熱心さは、知識自慢ではなく『知りたい』『覚えておきたい』『あとで試したい』くらいの素直な温度にしてください。",
       "ポエム、格言、抽象的な励まし、悟った言い回し、仏教・スピリチュアル調は禁止です。",
       latestTopicText
@@ -2761,30 +2881,14 @@ async function generateIdleLines() {
         .split(/\r?\n/)
         .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim())
         .map((line) => line.replace(/^["「]|["」]$/g, ""))
-        .map((line) => {
-          const parts = line.split("|").map((part) => part.trim());
-          if (parts.length >= 3 && /^(?:normal|news|life)$/i.test(parts[0])) {
-            const text = parts.slice(2).join("|").trim();
-            const sourceIds = parts[1]
-              .split(",")
-              .map((id) => id.replace(/[\[\]]/g, "").trim())
-              .filter(Boolean)
-              .slice(0, 2);
-            const kind = parts[0].toLowerCase();
-            const sources = ["news", "life"].includes(kind)
-              ? sourceIds
-                .map((id) => latestTopics.sources.get(id))
-                .filter(Boolean)
-                .map((source) => ({
-                  title: source.title,
-                  url: source.url,
-                  source: source.source
-                }))
-              : [];
-            return { text, sources };
-          }
-          return { text: line, sources: [] };
-        })
+        .map((line) => parseGeneratedIdleLine(line, latestTopics.sources))
+        .filter((item) => !item.invalidSourceIds.length)
+        .map((item) => ({
+          ...item,
+          text: repairBikutanSelfReferences(item.text, preferredUserName)
+        }))
+        .filter((item) => isSafeIdleUserNameUsage(item.text, preferredUserName))
+        .filter((item) => isIdleCapabilitySafeLine(item.text))
         .filter((item) => item.text.length >= 4 && item.text.length <= 160);
       if (lines.length < 5) throw new Error("セリフの生成数が不足しました");
       console.log(
@@ -2866,23 +2970,24 @@ ipcMain.handle("companion:chat", async (_event, rawMessage, rawContextLine) => {
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。",
     preferredUserName
-      ? `ユーザーの呼び名は「${preferredUserName}」です。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で呼んでください。`
+      ? `名前の区別は厳守してください。「${preferredUserName}」は会話相手であるユーザーだけの呼び名です。相手を呼ぶ時にだけ使い、びくたん自身を「${preferredUserName}」と呼ぶのは禁止です。びくたんの一人称は「びくたん」または主語省略だけです。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で相手を呼んでください。`
       : "ユーザーの呼び名はまだ決まっていません。『あなた』を連呼せず、自然に主語を省いてください。",
+    preferredUserName
+      ? `禁止例: 「${preferredUserName}は雨音が好きです」のように、びくたん自身の好み・行動・気持ちの主語へユーザー名を置かないでください。その場合は「びくたんは雨音が好きです」と書いてください。`
+      : "",
     currentBikutanActivity
       ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
-      : "「何してるの？」のように今の様子を聞かれたら、ことば帳の整理や小さな調べ物など、びくたんらしいささやかな作業をひとつ挙げて答えてください。",
+      : "「何してるの？」のように今の様子を聞かれたら、ことば帳を読み返す、聞いてみたいことを考えるなど、アプリ内で完結するささやかな様子をひとつ挙げて答えてください。",
+    CAPABILITY_BOUNDARY_PROMPT,
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
-    "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・基本）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、normal（落ち着いた説明・注意点を伝える時）。",
+    "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・普段の会話・質問・挨拶）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、normal（注意・謝罪・深刻な話だけ）。迷った時はjoyにし、普段の説明をnormalにしないでください。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",
+    "A1・G3のような参照IDは内部管理用です。answer本文には絶対に書かず、情報源へ触れる場合は媒体名を自然に書いてください。存在しないIDを作らないでください。",
     latestTopics.promptText
       ? "下の最新見出しを使った場合は、元にした見出しIDを sourceIds に入れてください。見出しだけで分からない詳細は補わず、推測は推測と分かるようにしてください。"
       : "外部情報を断定するときは、実在すると確信できる公式ページや記事URLだけ sources に入れてください。URLの推測は禁止です。",
-    `通常は会話だけを行い、ユーザーが「${path.basename(aiWorkingDirectory())}」内の検索を明示した場合だけファイルを参照してください。`,
-    "この実行は読み取り専用です。変更依頼には、実行せず内容と確認事項を返してください。",
-    fs.existsSync(path.join(aiWorkingDirectory(), "AGENTS.md"))
-      ? "プロジェクトのAGENTS.mdとプライバシー範囲を必ず守ってください。"
-      : "ファイルを参照する場合も、個人情報や機密らしき内容は答えに含めず、求められていない範囲のファイルは読まないでください。",
+    "変更・操作の依頼には、実行したふりをせず、びくたん単体では操作できないことと手順の案内を返してください。",
     contextLine
       ? `直前にびくたんが話していた自動セリフ:\n「${contextLine}」\nユーザーの発言がこのセリフへの返答・質問・ツッコミに見える場合は、この文脈を踏まえて答えてください。無関係な話題なら、このセリフには触れないでください。`
       : "",

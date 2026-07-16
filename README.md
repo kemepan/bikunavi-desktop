@@ -74,6 +74,7 @@ Live2Dキャラクター「びくたん」をmacOSデスクトップに常駐さ
 - Node.js / npm
 - 会話AI（いずれか1つ。なくても定型セリフ・占い・ポモドーロ等は動きます）
   - **Codex CLI**（ChatGPT.app／旧Codex.appに同梱）／ **Claude Code CLI** ／ **Gemini CLI** — 各CLIのログイン認証をそのまま使います。
+  - **Gemini API（高速）** — トレイメニュー「会話AI」からAPIキーを設定します。キーは `~/.gemini/.env` に権限 `600` で保存されます。無料枠では入力・出力がGoogleの製品改善に利用される場合があります。
   - **Claude API** — トレイメニュー「会話AI」からAPIキー（sk-ant-…）を設定します。キーは `state.json` に平文保存されるため共有マシンでは注意してください。
   - 既定は「自動」で、見つかったAIを上記の順で使います。トレイメニュー「会話AI」で固定選択もできます。
 - VOICEVOX.app
@@ -195,6 +196,7 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 | `BIKUNAVI_CODEX_PATH` | ChatGPT.app／旧Codex.app／PATHから自動検出 | Codex CLIのパス |
 | `BIKUNAVI_CLAUDE_CLI_PATH` | PATH等から自動検出 | Claude Code CLIのパス |
 | `BIKUNAVI_GEMINI_CLI_PATH` | PATH等から自動検出 | Gemini CLIのパス |
+| `BIKUNAVI_GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini API使用時のモデル |
 | `BIKUNAVI_AI_CWD`（旧 `BIKUNAVI_CODEX_CWD`） | `~/Documents/Brain`（無ければホーム） | CLIに渡す作業ディレクトリ |
 | `BIKUNAVI_CLAUDE_MODEL` | `claude-opus-4-8` | Claude API使用時のモデル |
 

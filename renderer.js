@@ -52,6 +52,7 @@ const lineHistory = [];
 let lineHistoryIndex = -1;
 let lineHistoryActive = false;
 let currentEmote = { ...EMOTES.default };
+let motionSequence = 0;
 let blinkTimer = 0;
 let hideBubbleTimer;
 let chatterEndTimer;
@@ -73,6 +74,8 @@ let pomodoroHideTimer;
 let displayedLineSources = [];
 // 表示中の自動セリフ・ニュース等。ホバーで会話欄を開いても読み続けられるよう保持する
 let displayedLineItem;
+// 吹き出しが閉じた後も、次のホバーでは過去の会話より直前の独り言・ニュースを優先する。
+let latestAmbientLineItem;
 let idleIntervalMs = 30000;
 let chatterTimer;
 let historySaveTimer;
@@ -452,12 +455,16 @@ function rememberLine(item, kind = "line") {
   if (!speechItem.text.trim()) return;
   const previous = lineHistory[lineHistory.length - 1];
   if (previous?.text === speechItem.text) return;
-  lineHistory.push({
+  const remembered = {
     text: speechItem.text,
     sources: speechItem.sources,
     kind,
     time: Date.now()
-  });
+  };
+  lineHistory.push(remembered);
+  if (["idle", "fortune"].includes(kind)) {
+    latestAmbientLineItem = normalizeSpeechItem(remembered);
+  }
   if (lineHistory.length > 20) lineHistory.shift();
   if (!lineHistoryActive) lineHistoryIndex = lineHistory.length - 1;
   saveHistorySoon();
@@ -495,6 +502,53 @@ function createSourceLinks(sources) {
   return sourceList;
 }
 
+async function replaySpeech(text) {
+  const replayText = String(text || "").trim();
+  if (!replayText) return;
+  clearTimeout(chatterEndTimer);
+  clearTimeout(hideBubbleTimer);
+  if (currentSpeechId) bikunavi.send("companion:stop-speech");
+  currentSpeechId = undefined;
+  currentSpeechKind = undefined;
+  isSpeaking = false;
+  try {
+    const speechId = await bikunavi.invoke("companion:speak", replayText, "answer");
+    if (!speechId) return;
+    currentSpeechId = speechId;
+    currentSpeechKind = "answer";
+    isSpeaking = true;
+    setEmote("joy");
+    playMotionOnce("Happy");
+  } catch (error) {
+    console.error("Replay speech failed:", error);
+  }
+}
+
+function createReplayButton(text) {
+  if (!String(text || "").trim()) return undefined;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "is-wide";
+  button.textContent = "↻ もう一度聞く";
+  button.title = "この内容を先頭から読み上げ";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    replaySpeech(text).catch(console.error);
+    scheduleChatIdleReset();
+  });
+  return button;
+}
+
+function appendReplayAction(text) {
+  const replay = createReplayButton(text);
+  if (!replay) return;
+  const actions = document.createElement("div");
+  actions.className = "bubble-actions";
+  actions.append(replay);
+  bubble.append(actions);
+}
+
 function showBubble(item) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
@@ -511,6 +565,7 @@ function showBubble(item) {
   displayedLineItem = speechItem;
   const sourceList = createSourceLinks(validSources);
   if (sourceList) bubble.append(sourceList);
+  appendReplayAction(speechItem.text);
   const choiceButtons = createChoiceButtons(speechItem);
   if (choiceButtons) bubble.append(choiceButtons);
   bubble.classList.remove("has-actions", "has-chat", "has-timer", "has-history");
@@ -796,6 +851,11 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
     if (sourceList) bubble.append(sourceList);
   }
 
+  if (!busy) {
+    const replayText = pendingCharacterCustomization?.text || carriedLine?.text || entry?.answer;
+    appendReplayAction(replayText);
+  }
+
   if (pendingCharacterCustomization && !busy && !preparingSpeech) {
     const choiceButtons = createChoiceButtons(pendingCharacterCustomization);
     if (choiceButtons) bubble.append(choiceButtons);
@@ -936,6 +996,9 @@ async function runChat(rawMessage) {
     isPreparingSpeech = false;
     showChatBubble();
     setEmote(response.emote || "joy");
+    if (["joy", "wink", "proud", "surprised"].includes(response.emote || "joy")) {
+      playMotionOnce("Happy");
+    }
 
     bikunavi.invoke("companion:speak", response.text, "answer")
       .then((speechId) => {
@@ -989,7 +1052,18 @@ function setEmote(name) {
 }
 
 function stopMotions() {
+  motionSequence += 1;
   model?.internalModel.motionManager.stopAllMotions();
+}
+
+function playMotionOnce(group, duration = 2950) {
+  if (!model) return;
+  const sequence = ++motionSequence;
+  model.motion(group, 0);
+  setTimeout(() => {
+    if (sequence !== motionSequence) return;
+    stopMotions();
+  }, duration);
 }
 
 function resumeAmbientState() {
@@ -1013,14 +1087,16 @@ function enterCharacter() {
   if (pomodoroState.active) {
     showPomodoroBubble(pomodoroState, true);
   } else {
-    // 自動セリフ・ニュース・占いを表示中なら、その本文を残したまま入力欄を足す
-    const readingLine = bubble.classList.contains("is-active") &&
+    // 表示中、または直前の自動セリフ・ニュースを残したまま入力欄を足す。
+    // 会話履歴はホバーの初期表示にせず、直前にびくたんが話した内容を優先する。
+    const visibleLine = bubble.classList.contains("is-active") &&
       !bubble.classList.contains("has-chat") &&
       !bubble.classList.contains("has-timer") &&
       !bubble.classList.contains("has-history")
       ? displayedLineItem
       : undefined;
-    showChatBubble(false, displayedLineSources, false, readingLine);
+    const readingLine = visibleLine || latestAmbientLineItem;
+    showChatBubble(false, readingLine?.sources || [], false, readingLine);
     model?.motion("Wave", 0);
   }
 }
@@ -1085,6 +1161,7 @@ function scheduleChatter() {
       rememberLine(lineItem, "idle");
       showBubble(lineItem);
       setEmote("joy");
+      playMotionOnce(lineItem.kind === "custom-question" ? "Wave" : "Happy");
 
       clearTimeout(chatterEndTimer);
       const displayDuration = speechId
@@ -1176,6 +1253,25 @@ async function start() {
           musicDanceWeight
         );
       }
+      if (!danceActive && !dragging) {
+        if (isThinking) {
+          // 考え中は少し首を傾け、話している時とは違う静かな動きにする。
+          core.addParameterValueById("ParamAngleZ", Math.sin(seconds * 1.7) * 1.6);
+          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.2) * 0.8);
+        } else if (isSpeaking) {
+          // 発話中は口だけでなく、声に合わせて上体も小さく弾ませる。
+          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 4.2) * 2.2);
+          core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 2.1) * 1.4);
+        } else if (chatActive || isHovered) {
+          // 聞いている間はユーザー側へ軽く首を傾ける。
+          core.addParameterValueById("ParamAngleZ", 1.1 + Math.sin(seconds * 1.1) * 0.6);
+          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.3) * 0.7);
+        } else {
+          // 待機中も完全停止にせず、呼吸より長い周期でごく小さく揺らす。
+          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 0.9) * 0.75);
+          core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 0.55) * 0.55);
+        }
+      }
       blinkTimer -= pixiApp.ticker.deltaMS;
       if (blinkTimer <= 0) blinkTimer = Math.random() * 3000 + 2000;
       const smilingEyes = currentEmote.eyeSmile > 0.5;
@@ -1205,11 +1301,15 @@ async function start() {
       const saved = await bikunavi.invoke("companion:load-history");
       for (const entry of saved?.lineHistory ?? []) {
         if (!entry?.text) continue;
-        lineHistory.push({
+        const restored = {
           ...normalizeSpeechItem(entry),
           kind: entry.kind || "line",
           time: entry.time || Date.now()
-        });
+        };
+        lineHistory.push(restored);
+        if (["idle", "fortune"].includes(restored.kind)) {
+          latestAmbientLineItem = normalizeSpeechItem(restored);
+        }
       }
       lineHistory.splice(0, Math.max(0, lineHistory.length - 20));
       lineHistoryIndex = lineHistory.length - 1;
@@ -1269,6 +1369,7 @@ bikunavi.on("companion:open-chat", () => {
   lineHistoryActive = false;
   bikunavi.send("companion:hover", true);
   setEmote("joy");
+  playMotionOnce("Wave", 2850);
   showChatBubble();
   requestAnimationFrame(() => {
     bubble.querySelector(".chat-form input")?.focus();
@@ -1287,6 +1388,7 @@ bikunavi.on("companion:custom-question", (item) => {
   lineHistoryActive = false;
   bikunavi.send("companion:hover", true);
   setEmote("joy");
+  playMotionOnce("Wave", 2850);
   showChatBubble();
   requestAnimationFrame(() => {
     bubble.querySelector(".chat-form input")?.focus();
@@ -1338,6 +1440,7 @@ bikunavi.on("companion:fortune", (fortune) => {
   rememberLine(fortuneItem, "fortune");
   showBubble(fortuneItem);
   setEmote("joy");
+  playMotionOnce("Happy");
   hideBubble(25000);
 });
 
@@ -1354,6 +1457,7 @@ bikunavi.on("companion:ambient-line", async (item) => {
   rememberLine(lineItem, "idle");
   showBubble(lineItem);
   setEmote("joy");
+  playMotionOnce(lineItem.kind === "custom-question" ? "Wave" : "Happy");
 
   let speechId = null;
   try {
@@ -1389,6 +1493,7 @@ bikunavi.on("companion:settings-changed", (settings) => {
 bikunavi.on("companion:clear-history", () => {
   lineHistory.length = 0;
   chatEntries.length = 0;
+  latestAmbientLineItem = undefined;
   lineHistoryIndex = -1;
   chatEntryIndex = -1;
   if (lineHistoryActive) showLineHistory(0);

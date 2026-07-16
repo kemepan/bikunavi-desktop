@@ -1,6 +1,6 @@
 // 会話AIプロバイダの抽象化。
 // 「プロンプト文字列を渡すとテキストが返る」契約で、Codex CLI / Claude Code CLI /
-// Gemini CLI / Claude API（APIキー）を切り替えられるようにする。
+// Gemini API / Gemini CLI / Claude API（APIキー）を切り替えられるようにする。
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -8,6 +8,7 @@ const { spawn } = require("child_process");
 const { Anthropic } = require("@anthropic-ai/sdk");
 
 const CLI_TIMEOUT_MS = 90000;
+const API_TIMEOUT_MS = 30000;
 const HOME = os.homedir();
 // LaunchAgent 起動時は PATH が最小構成のため、CLI の実体は既知の場所から探す。
 const COMMON_BIN_DIRS = [
@@ -62,6 +63,38 @@ function geminiCliExecutable() {
   return findExecutable("gemini", [process.env.BIKUNAVI_GEMINI_CLI_PATH]);
 }
 
+function unquoteEnvValue(value) {
+  const trimmed = String(value || "").trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function geminiApiKey(config) {
+  if (config?.geminiApiKey) return config.geminiApiKey;
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+
+  // Gemini CLIと同じ保存場所を使う。キーを公開リポジトリやstate.jsonへ保存しない。
+  const envPath = path.join(HOME, ".gemini", ".env");
+  try {
+    const mode = fs.statSync(envPath).mode & 0o777;
+    if (mode & 0o077) return "";
+    const line = fs
+      .readFileSync(envPath, "utf8")
+      .split(/\r?\n/)
+      .find((candidate) => /^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(candidate));
+    if (!line) return "";
+    return unquoteEnvValue(line.replace(/^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*/, ""));
+  } catch (_error) {
+    return "";
+  }
+}
+
 const PROVIDERS = [
   {
     id: "codex",
@@ -72,6 +105,11 @@ const PROVIDERS = [
     id: "claude-cli",
     label: "Claude Code CLI",
     isAvailable: () => Boolean(claudeCliExecutable())
+  },
+  {
+    id: "gemini-api",
+    label: "Gemini API（高速）",
+    isAvailable: (config) => Boolean(geminiApiKey(config))
   },
   {
     id: "gemini-cli",
@@ -196,6 +234,61 @@ function runGeminiCli(prompt, config) {
   );
 }
 
+async function runGeminiApi(prompt, config) {
+  const apiKey = geminiApiKey(config);
+  if (!apiKey) {
+    throw new Error("Gemini APIキーが設定されていないか、~/.gemini/.env の権限が安全ではありません。");
+  }
+  const model = process.env.BIKUNAVI_GEMINI_MODEL || "gemini-3.1-flash-lite";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey
+        },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: 4096,
+            thinkingConfig: { thinkingLevel: "minimal" }
+          }
+        }),
+        signal: controller.signal
+      }
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Gemini APIが時間内に応答しませんでした。");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (_error) {
+    throw new Error(`Gemini APIから読み取れない応答が返りました（HTTP ${response.status}）。`);
+  }
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `Gemini APIでエラーが発生しました（HTTP ${response.status}）。`);
+  }
+  const text = (data.candidates?.[0]?.content?.parts || [])
+    .filter((part) => !part.thought)
+    .map((part) => part.text || "")
+    .join("")
+    .trim();
+  if (!text) throw new Error("Gemini APIから返答を受け取れませんでした。");
+  return text;
+}
+
 async function runClaudeApi(prompt, config) {
   const apiKey = config?.anthropicApiKey;
   if (!apiKey) throw new Error("Claude APIキーが設定されていません。");
@@ -224,6 +317,7 @@ async function runClaudeApi(prompt, config) {
 const RUNNERS = {
   codex: runCodex,
   "claude-cli": runClaudeCli,
+  "gemini-api": runGeminiApi,
   "gemini-cli": runGeminiCli,
   "claude-api": runClaudeApi
 };
@@ -236,6 +330,7 @@ function runProvider(providerId, prompt, config) {
 
 module.exports = {
   detectProviders,
+  getGeminiApiKey: geminiApiKey,
   resolveProviderId,
   providerLabel,
   runProvider

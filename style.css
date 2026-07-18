@@ -171,10 +171,15 @@ body {
 /* assets/ui/sound-on.png / sound-off.png が存在する場合は、絵文字の代わりに
    びくたんアイコンを表示する（renderer側が読み込み可否を判定してクラス付与） */
 #sound-toggle.has-image {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background-color: transparent;
   background-image: url("assets/ui/sound-on.png");
-  background-size: 78%;
+  background-size: 100%;
   background-position: center;
   background-repeat: no-repeat;
+  box-shadow: 0 3px 9px rgb(44 27 57 / 22%);
 }
 
 #sound-toggle.has-image.is-muted {

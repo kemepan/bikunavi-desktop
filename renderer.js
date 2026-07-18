@@ -411,19 +411,19 @@ function updatePomodoroQuickVisibility() {
 
 let soundToggleMutedRendered;
 // びくたんアイコン（assets/ui/sound-on.png / sound-off.png）が用意されていれば
-// 絵文字の代わりに使う。存在しない環境では従来の🔊/🔇のまま。
-let soundToggleUseImages = false;
+// 絵文字の代わりに使う。片方だけ置いた場合はその状態のみ画像、残りは🔊/🔇のまま。
+const soundToggleImageReady = { on: false, off: false };
 (function probeSoundToggleImages() {
-  let loadedCount = 0;
-  for (const src of ["assets/ui/sound-on.png", "assets/ui/sound-off.png"]) {
+  const targets = [
+    ["on", "assets/ui/sound-on.png"],
+    ["off", "assets/ui/sound-off.png"]
+  ];
+  for (const [state, src] of targets) {
     const probe = new Image();
     probe.onload = () => {
-      loadedCount += 1;
-      if (loadedCount === 2) {
-        soundToggleUseImages = true;
-        soundToggleMutedRendered = undefined;
-        updateSoundToggle();
-      }
+      soundToggleImageReady[state] = true;
+      soundToggleMutedRendered = undefined;
+      updateSoundToggle();
     };
     probe.src = src;
   }
@@ -439,9 +439,10 @@ function updateSoundToggle() {
   // 毎フレーム呼ばれるため、ミュート表示は値が変わった時だけDOMを触る
   if (soundMuted === soundToggleMutedRendered) return;
   soundToggleMutedRendered = soundMuted;
+  const useImage = soundMuted ? soundToggleImageReady.off : soundToggleImageReady.on;
   soundToggle?.classList.toggle("is-muted", soundMuted);
-  soundToggle?.classList.toggle("has-image", soundToggleUseImages);
-  soundToggle.textContent = soundToggleUseImages ? "" : (soundMuted ? "🔇" : "🔊");
+  soundToggle?.classList.toggle("has-image", useImage);
+  soundToggle.textContent = useImage ? "" : (soundMuted ? "🔇" : "🔊");
   soundToggle?.setAttribute("aria-pressed", soundMuted ? "true" : "false");
   soundToggle?.setAttribute(
     "aria-label",

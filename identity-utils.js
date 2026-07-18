@@ -21,6 +21,24 @@ function repairBikutanSelfReferences(rawText, rawUserName) {
   });
 }
 
+// 2026-07-16の開発途中版で「びくにたん」を一律「びくたん」へ変換した履歴だけを修復する。
+// 自分について述べる「びくたんは〜」は残し、ユーザーへ尋ねる呼びかけだけを戻す。
+function restoreLegacyUserVocatives(rawText, rawUserName) {
+  const text = String(rawText || "");
+  const userName = String(rawUserName || "").trim();
+  if (!text || userName !== "びくにたん") return text;
+
+  return text
+    .replace(
+      /(^|[\n。！？!?]\s*)びくたん([、,])(?=[^\n。！？!?]{0,120}(?:ますか|ですか|ましょうか|どう|どっち|何|一緒))/g,
+      `$1${userName}$2`
+    )
+    .replace(
+      /(^|[\n。！？!?]\s*)びくたん(は|も)([^\n。！？!?]{0,120}(?:ますか|ですか|でしょうか|みますか|みます|どうしますか)[？?])/g,
+      `$1${userName}$2$3`
+    );
+}
+
 function isSafeIdleUserNameUsage(rawText, rawUserName) {
   const text = String(rawText || "");
   const userName = String(rawUserName || "").trim();
@@ -37,5 +55,6 @@ function isSafeIdleUserNameUsage(rawText, rawUserName) {
 
 module.exports = {
   isSafeIdleUserNameUsage,
-  repairBikutanSelfReferences
+  repairBikutanSelfReferences,
+  restoreLegacyUserVocatives
 };

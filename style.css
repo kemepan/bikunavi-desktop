@@ -71,6 +71,103 @@ body {
   transform: translate(-50%, 0) scale(1);
 }
 
+#pomodoro-quick {
+  position: absolute;
+  z-index: 2;
+  bottom: 13px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border: 1px solid rgb(121 72 64 / 14%);
+  border-radius: 999px;
+  background: rgb(255 250 247 / 72%);
+  box-shadow: 0 5px 16px rgb(73 40 37 / 12%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px) scale(0.94);
+  transition: opacity 280ms ease, transform 340ms cubic-bezier(.2, .8, .2, 1), background 180ms ease;
+}
+
+#pomodoro-quick.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.pomodoro-quick-label {
+  margin: 0 2px 0 3px;
+  color: rgb(89 59 59 / 78%);
+  font: 10px/1 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  white-space: nowrap;
+}
+
+#pomodoro-quick button {
+  appearance: none;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 1px solid rgb(142 83 73 / 20%);
+  border-radius: 50%;
+  color: #643f39;
+  background: rgb(255 244 238 / 92%);
+  box-shadow: 0 1px 2px rgb(82 43 39 / 9%);
+  font: 650 11px/1 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  cursor: pointer;
+  transition: transform 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+#pomodoro-quick button:hover,
+#pomodoro-quick button:focus-visible {
+  outline: none;
+  background: #f8ded3;
+  box-shadow: 0 3px 8px rgb(112 57 49 / 20%);
+  transform: translateY(-2px) scale(1.06);
+}
+
+#pomodoro-quick button:active {
+  transform: translateY(0) scale(0.96);
+}
+
+#sound-toggle {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgb(75 54 91 / 14%);
+  border-radius: 50%;
+  color: #513d60;
+  background: rgb(255 255 255 / 76%);
+  box-shadow: 0 3px 11px rgb(44 27 57 / 13%);
+  cursor: pointer;
+  opacity: 0;
+  place-items: center;
+  pointer-events: none;
+  transform: scale(0.86);
+  transition: opacity 220ms ease, transform 260ms cubic-bezier(.2, .8, .2, 1), background 150ms ease;
+}
+
+#sound-toggle.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+#sound-toggle:hover,
+#sound-toggle:focus-visible {
+  outline: none;
+  background: #efe6f4;
+  transform: scale(1.08);
+}
+
+#sound-toggle.is-muted {
+  color: #80515d;
+  background: rgb(252 237 240 / 88%);
+}
+
 #bubble.has-chat {
   width: min(320px, calc(100% - 16px));
   min-width: min(260px, calc(100% - 16px));
@@ -146,6 +243,12 @@ body {
   margin-top: 8px;
 }
 
+.source-link-item {
+  display: flex;
+  min-width: 0;
+  max-width: 190px;
+}
+
 .source-links button {
   appearance: none;
   max-width: 160px;
@@ -161,8 +264,27 @@ body {
   cursor: pointer;
 }
 
+.source-link-item > button:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.source-links button.source-save {
+  flex: none;
+  width: 27px;
+  padding: 0;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  color: #89611f;
+  background: #f8f0dc;
+  font-size: 13px;
+}
+
 .source-links button:hover {
   background: #eadcf2;
+}
+
+.source-links button.source-save:hover {
+  background: #efe0b9;
 }
 
 .chat-message {

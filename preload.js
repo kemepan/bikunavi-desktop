@@ -7,6 +7,8 @@ const SEND_CHANNELS = new Set([
   "companion:drag-end",
   "companion:auto-move",
   "companion:stop-speech",
+  "companion:thinking-sound-start",
+  "companion:thinking-sound-stop",
   "companion:save-history"
 ]);
 
@@ -19,12 +21,17 @@ const INVOKE_CHANNELS = new Set([
   "companion:system-sleeping",
   "companion:pomodoro-state",
   "companion:pomodoro-action",
+  "companion:toggle-sound-mute",
   "companion:open-url",
   "companion:copy-text",
+  "companion:save-link",
+  "companion:saved-links",
+  "companion:remove-saved-link",
   "companion:load-history",
   "companion:settings",
   "companion:answer-character-question",
   "companion:defer-character-question",
+  "companion:skip-character-question",
   "companion:answer-growth-question",
   "companion:defer-growth-question",
   "companion:answer-fortune-question",

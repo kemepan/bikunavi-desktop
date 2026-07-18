@@ -209,7 +209,7 @@ launchctl bootout "gui/$(id -u)/online.bikunitan.bikunavi-desktop"
 ## 素材と権利
 
 - `assets/bikunavi_desktop/` に実行用Live2Dモデル一式を置いています。モデル・キャラクターデザインは制作者の自作で、権利確認済みです（経緯は `docs/RIGHTS_CHECK.md`）。
-- サードパーティのライセンス表記は `THIRD_PARTY_NOTICES.md` に集約しています（Live2D Cubism Core、pixi.js、pixi-live2d-display、Electron、whisper.cpp、Whisperモデル）。このファイルは `npm run package` で `.app` 内にもそのまま同梱されます。
+- サードパーティのライセンス表記は `THIRD_PARTY_NOTICES.md` に集約しています（Live2D Cubism Core、pixi.js、pixi-live2d-display、Electron、whisper.cpp、Whisperモデル、OtoLogicポモドーロジングル）。このファイルは `npm run package` で `.app` 内にもそのまま同梱されます。
 - 読み上げ音声: **VOICEVOX:猫使ビィ**（エンジンは同梱せず、利用者のVOICEVOX.appを使用）。
 
 ## 主なファイル

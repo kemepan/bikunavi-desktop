@@ -425,7 +425,7 @@ const FALLBACK_IDLE_LINES = [
   "変な思いつきほど、あとで化けたりするんですよね。",
   "名前づけって、未来の自分への手紙だと思うんです。",
   "今何してますか？びくたんは気になる言葉を思い出していました。",
-  "びくたん、少し眠くなってきました。お昼寝してもいいですか？",
+  "びくたん、ちょっとひと息入れてもいいですか？",
   "そろそろ何か飲みたい気分になってきました。",
   "リギング、うまくハマると気持ちいいんですよね。",
   "小さい自動化、地味だけど好きなんです。",
@@ -722,6 +722,28 @@ function getJstDateParts(date = new Date()) {
     month: Number(values.month),
     day: Number(values.day)
   };
+}
+
+// 会話・自動セリフに「今がいつか」の感覚を与えるための時間帯情報。
+// 時刻の実況には使わず、話題選び（昼寝は昼だけ等）の前提として渡す。
+function getJstTimeContext(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    hour12: false,
+    weekday: "short"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = Number(values.hour) % 24;
+  const slot = hour < 5 ? "深夜"
+    : hour < 8 ? "早朝"
+    : hour < 11 ? "朝"
+    : hour < 14 ? "昼"
+    : hour < 17 ? "午後"
+    : hour < 19 ? "夕方"
+    : hour < 23 ? "夜"
+    : "深夜";
+  return { hour, weekday: values.weekday, slot };
 }
 
 function getJstDateString(date = new Date()) {
@@ -3359,13 +3381,17 @@ async function generateIdleLines() {
       latestTopicText
         ? "事故、災害、戦争、犯罪、訃報、政争、健康不安など、デスクトップで突然話すのに重い話題は使わないでください。"
         : "",
+      (() => {
+        const t = getJstTimeContext();
+        return `今は${t.weekday}曜日の${t.slot}です。セリフはこの時間帯の空気に合わせてください（深夜・早朝は静かめの話題、朝は軽やか、夜はねぎらい寄り。昼寝の話題は昼〜午後だけ）。`;
+      })(),
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
       `『何してますか？』のようにユーザーへ質問するセリフは、『${preferredUserName ? `${preferredUserName}は` : ""}今何してますか？びくたんは◯◯していました』のように、先に問いかけてから自分のささやかな様子をひとこと添えてください。`,
       preferredUserName
         ? `ユーザーの呼び名は「${preferredUserName}」です。毎回ではなく、ときどき自然に名前を呼んでください。`
         : "ユーザーの呼び名が未登録の間は、『あなた』を連呼せず自然に主語を省いてください。",
-      "ユーザーへ問いかけるセリフも混ぜて構いません。『お昼寝してもいいですか？』のような、びくたん自身の希望を尋ねる軽い質問も候補にしてください。",
+      "ユーザーへ問いかけるセリフも混ぜて構いません。びくたん自身の希望を尋ねる軽い質問（昼〜午後なら『お昼寝してもいいですか？』、夕方〜夜なら『そろそろお茶にしません？』など）も、今の時間帯に合うものだけ候補にしてください。",
       relationshipMemory
         ? "20個のうち最大1個だけ、ことば帳や思い出帳の内容を自然に思い出すセリフにして構いません。毎回同じ記憶を使わず、知らない事実は補わないでください。"
         : "",
@@ -3501,6 +3527,10 @@ ipcMain.handle("companion:chat", async (
     preferredUserName
       ? `禁止例: 「${preferredUserName}は雨音が好きです」のように、びくたん自身の好み・行動・気持ちの主語へユーザー名を置かないでください。その場合は「びくたんは雨音が好きです」と書いてください。`
       : "",
+    (() => {
+      const t = getJstTimeContext();
+      return `今は${t.weekday}曜日の${t.slot}（${t.hour}時ごろ）です。この時間感覚を会話の前提にしてください。ただし時刻の実況はせず、深夜に元気すぎる提案、朝夕がずれた挨拶、昼以外の時間帯での昼寝の話はしないでください。`;
+    })(),
     currentBikutanActivity
       ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
       : "「何してるの？」のように今の様子を聞かれたら、ことば帳を読み返す、聞いてみたいことを考えるなど、アプリ内で完結するささやかな様子をひとつ挙げて答えてください。",

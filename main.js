@@ -34,6 +34,7 @@ const {
   sanitizeSpokenSourceIds
 } = require("./source-utils");
 const { selectChatEmote } = require("./emote-utils");
+const { splitIntoSpeechChunks } = require("./speech-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -1856,6 +1857,71 @@ function playSpeechAudio(output, speechId) {
   startSpeechProcess(child, speechId, output);
 }
 
+function playSpeechChunk(output, speechId) {
+  // 文と文の間で stopSpeech された直後に、次の文を再生し始めない
+  if (activeSpeechId !== speechId) {
+    fs.promises.unlink(output).catch(() => {});
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+    const child = spawn("/usr/bin/afplay", ["-v", volumeScale, output], { stdio: "ignore" });
+    speechProcess = child;
+    speechFile = output;
+    const finish = (ok) => {
+      if (speechProcess === child) speechProcess = undefined;
+      if (speechFile === output) speechFile = undefined;
+      fs.promises.unlink(output).catch(() => {});
+      resolve(ok);
+    };
+    child.on("close", (code) => {
+      finish(activeSpeechId === speechId && code === 0);
+    });
+    child.on("error", (error) => {
+      console.error("Speech failed:", error);
+      finish(false);
+    });
+  });
+}
+
+async function speakVoicevoxSentences(text, speechId) {
+  const chunks = splitIntoSpeechChunks(text);
+  if (!chunks.length) return false;
+  // 1文目の合成だけ待つ。失敗はそのまま投げて呼び出し側でmacOS音声へフォールバック。
+  const firstOutput = await createVoicevoxAudio(chunks[0], `${speechId}-0`);
+  if (activeSpeechId !== speechId) {
+    fs.promises.unlink(firstOutput).catch(() => {});
+    return false;
+  }
+
+  (async () => {
+    let currentOutput = firstOutput;
+    for (let index = 0; index < chunks.length; index += 1) {
+      const prefetch = index + 1 < chunks.length
+        ? createVoicevoxAudio(chunks[index + 1], `${speechId}-${index + 1}`).catch((error) => {
+            console.error("VOICEVOX sentence synthesis failed:", error?.message || error);
+            return undefined;
+          })
+        : undefined;
+      const finished = await playSpeechChunk(currentOutput, speechId);
+      const nextOutput = prefetch ? await prefetch : undefined;
+      if (!finished || activeSpeechId !== speechId) {
+        // 中断時の終了イベントは stopSpeech 側が送っている
+        if (nextOutput) fs.promises.unlink(nextOutput).catch(() => {});
+        return;
+      }
+      if (index + 1 < chunks.length && !nextOutput) break;
+      currentOutput = nextOutput;
+    }
+    if (activeSpeechId === speechId) {
+      activeSpeechId = undefined;
+      companionWindow?.webContents.send("companion:speech-ended", speechId);
+      resolveSpeechWaiter(speechId);
+    }
+  })();
+  return true;
+}
+
 function startSpeechProcess(child, speechId, file) {
   speechProcess = child;
   speechFile = file;
@@ -1901,13 +1967,9 @@ async function speakText(rawText, kind) {
 
   if (speechProvider === "voicevox") {
     try {
-      const output = await createVoicevoxAudio(text, speechId);
-      if (activeSpeechId !== speechId) {
-        fs.promises.unlink(output).catch(() => {});
-        return undefined;
-      }
-      playSpeechAudio(output, speechId);
-      return speechId;
+      // 文単位に区切って合成し、1文目ができた時点で話し始める
+      const started = await speakVoicevoxSentences(text, speechId);
+      return started ? speechId : undefined;
     } catch (error) {
       console.error(`VOICEVOX (${voicevoxVoiceLabel}) failed; using macOS voice:`, error);
     }

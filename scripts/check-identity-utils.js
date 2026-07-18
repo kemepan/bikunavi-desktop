@@ -17,6 +17,15 @@ assert.equal(
   repairBikutanSelfReferences("けいこは雨音が好きです。", "けいこ"),
   "びくたんは雨音が好きです。"
 );
+// ユーザーへの相槌（〜ですね/ますね等）は主語を書き換えない（2026-07-18修正の回帰テスト）
+assert.equal(
+  repairBikutanSelfReferences("けいこは猫が好きなんですね。", "けいこ"),
+  "けいこは猫が好きなんですね。"
+);
+assert.equal(
+  repairBikutanSelfReferences("けいこは絵が得意なんですね。すごいです。", "けいこ"),
+  "けいこは絵が得意なんですね。すごいです。"
+);
 assert.equal(
   restoreLegacyUserVocatives(
     "びくたんは、この前の設定を調べてみようかな。びくたんは何から始めますか？",

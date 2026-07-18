@@ -43,7 +43,14 @@ function sanitizeCapabilityResponse(rawText) {
     /(コーヒー|珈琲|お茶|紅茶|飲み物)(?:を)?(?:淹れ|入れ|用意し|作っ|持ってき)(?:て)?(?:ましょうか|ますか)([？?。！!]*)/g,
     "$1休憩にしますか$2"
   );
-  return isCapabilitySafeLine(rewritten) ? rewritten : SAFE_CAPABILITY_FALLBACK;
+  if (isCapabilitySafeLine(rewritten)) return rewritten;
+
+  // 回答全体を捨てず、問題のある文だけを取り除く。
+  // （例:「紅茶の入れ方」の説明中の一文が代行表現に一致しても、残りの説明は届ける）
+  const sentences = rewritten.match(/[^。！？!?\n]+[。！？!?]?\n?/g) || [rewritten];
+  const safeSentences = sentences.filter((sentence) => isCapabilitySafeLine(sentence));
+  const salvaged = safeSentences.join("").replace(/\s+$/g, "").trim();
+  return salvaged || SAFE_CAPABILITY_FALLBACK;
 }
 
 module.exports = {

@@ -83,7 +83,17 @@ function geminiApiKey(config) {
   const envPath = path.join(HOME, ".gemini", ".env");
   try {
     const mode = fs.statSync(envPath).mode & 0o777;
-    if (mode & 0o077) return "";
+    if (mode & 0o077) {
+      // 手動やCLIが0644で作ったファイルを黙って無視しない。
+      // 権限を600へ締めてから読む（締められない場合のみ安全側で不使用）。
+      try {
+        fs.chmodSync(envPath, 0o600);
+        console.log("Gemini .env の権限を600へ変更しました。");
+      } catch (chmodError) {
+        console.error("Gemini .env が第三者に読める権限のため使用しません:", chmodError.message);
+        return "";
+      }
+    }
     const line = fs
       .readFileSync(envPath, "utf8")
       .split(/\r?\n/)

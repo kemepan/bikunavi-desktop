@@ -949,6 +949,7 @@ function playPomodoroChime(kind) {
 
 function stopThinkingSound() {
   thinkingSoundRequested = false;
+  thinkingSoundIsPreview = false;
   const processToStop = thinkingSoundProcess;
   thinkingSoundProcess = undefined;
   processToStop?.kill("SIGTERM");
@@ -981,12 +982,17 @@ function startThinkingSound() {
   }
 }
 
+let thinkingSoundIsPreview = false;
+
 function previewThinkingSound() {
   // 実際に考え中なら、その再生を止めずにそのままにする。
   if (thinkingSoundRequested) return;
+  thinkingSoundIsPreview = true;
   startThinkingSound();
   setTimeout(() => {
-    if (thinkingSoundRequested) stopThinkingSound();
+    // 試聴中に本物の会話が始まっていたら（isPreviewが解除されていたら）止めない。
+    if (thinkingSoundIsPreview) stopThinkingSound();
+    thinkingSoundIsPreview = false;
   }, 5200);
 }
 
@@ -3338,7 +3344,11 @@ async function generateIdleLines() {
         .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim())
         .map((line) => line.replace(/^["「]|["」]$/g, ""))
         .map((line) => parseGeneratedIdleLine(line, latestTopics.sources))
-        .filter((item) => !item.invalidSourceIds.length)
+        // 実在しないIDを参照した行は、本文は残しソースだけ外す（行ごと捨てると
+        // 生成数不足で定型文へ落ちやすくなるため）。
+        .map((item) => (item.invalidSourceIds.length
+          ? { ...item, sources: [], invalidSourceIds: [] }
+          : item))
         .map((item) => ({
           ...item,
           text: repairBikutanSelfReferences(item.text, preferredUserName)
@@ -3439,7 +3449,7 @@ ipcMain.handle("companion:chat", async (
       ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。ただし普段の会話は要約見出しのように冷たく始めず、最初の一文に好奇心、嬉しさ、軽いツッコミのどれかを短くにじませてください。",
-    "通常は明るめ、成功や完了は一段嬉しそうに、謝罪・危険・深刻な話題では冶談を止めて落ち着いて答えてください。",
+    "通常は明るめ、成功や完了は一段嬉しそうに、謝罪・危険・深刻な話題では冗談を止めて落ち着いて答えてください。",
     preferredUserName
       ? `名前の区別は厳守してください。「${preferredUserName}」は会話相手であるユーザーだけの呼び名です。この表記を一字も変更・省略・訂正せず、相手を呼ぶ時は必ず「${preferredUserName}」のまま使ってください。びくたん自身を「${preferredUserName}」と呼ぶのは禁止です。びくたんの一人称は「びくたん」または主語省略だけです。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で相手を呼んでください。`
       : "ユーザーの呼び名はまだ決まっていません。『あなた』を連呼せず、自然に主語を省いてください。",
@@ -3710,6 +3720,8 @@ ipcMain.on("companion:stop-speech", () => {
 });
 
 ipcMain.on("companion:thinking-sound-start", () => {
+  // 試聴中でも、本物の会話が始まったら試聴扱いを解除して鳴らし続ける。
+  thinkingSoundIsPreview = false;
   startThinkingSound();
 });
 
@@ -3791,6 +3803,10 @@ app.on("before-quit", () => {
   clearPomodoroTimer();
   clearInterval(mediaPlaybackTimer);
   stopSpeech();
+  // 再生中のジングル・チャイムをアプリより長生きさせない
+  stopThinkingSound();
+  pomodoroChimeProcess?.kill("SIGTERM");
+  pomodoroChimeProcess = undefined;
   saveStateNow();
   if (voicevoxOwned) voicevoxProcess?.kill("SIGTERM");
 });

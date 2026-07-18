@@ -68,6 +68,10 @@ function parseGeneratedIdleLine(rawLine, sourceMap = new Map()) {
       // `news|本文|A3` のように本文とIDを逆にした出力も回収する。
       sourceIds = lastFieldIds;
       text = parts.slice(1, -1).join("|").trim();
+    } else {
+      // ID欄が不正な形式（例: `news|A3 TechCrunch|本文`）でも、内部フォーマットの
+      // プレフィックスを本文へ漏らさない。ソースは付けず本文だけを使う。
+      text = parts.slice(2).join("|").trim();
     }
   } else {
     const trailing = line.match(

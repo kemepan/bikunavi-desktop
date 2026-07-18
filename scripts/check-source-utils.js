@@ -36,4 +36,11 @@ assert.equal(
   "AIニュースによると新機能が出ました。"
 );
 
+// ID欄が不正でも「news|…|」プレフィックスを本文へ漏らさない（2026-07-18修正の回帰テスト)
+{
+  const leaked = parseGeneratedIdleLine("news|A3 TechCrunch|新しいモデルが出たみたいですよ。", sources);
+  assert.equal(leaked.text, "新しいモデルが出たみたいですよ。");
+  assert.deepEqual(leaked.sources, []);
+}
+
 console.log("source-utils: OK");

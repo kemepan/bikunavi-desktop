@@ -1,5 +1,7 @@
 // AIが無難な normal に偏っても、会話の温度に合う表情へ補正する。
 
+// renderer.js の ANSWER_EMOTES と同一内容を保つこと（rendererはブラウザ文脈のため
+// requireで共有できない）。表情を追加・削除するときは両方を更新する。
 const CHAT_EMOTES = new Set(["joy", "wink", "proud", "surprised", "normal"]);
 
 const SERIOUS_PATTERNS = [
@@ -11,7 +13,7 @@ const SERIOUS_PATTERNS = [
 
 const SURPRISED_PATTERN = /えっ|わっ|びっくり|驚き|まさか|本当ですか/;
 const PROUD_PATTERN = /できました|完了|成功|解決|いけます|うまくいきました/;
-const WINK_PATTERN = /ふふ|冥談|つっこみ|ツッコミ|こっそり|内緒/;
+const WINK_PATTERN = /ふふ|冗談|つっこみ|ツッコミ|こっそり|内緒/;
 
 function matchesAny(text, patterns) {
   return patterns.some((pattern) => pattern.test(text));

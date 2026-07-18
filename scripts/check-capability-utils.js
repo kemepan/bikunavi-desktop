@@ -35,4 +35,12 @@ assert.equal(
 assert.equal(isIdleCapabilitySafeLine("窓の外が暗くなってきましたね。"), false);
 assert.equal(isIdleCapabilitySafeLine("雨の日の音って落ち着きます。"), true);
 
+// 一文だけ問題がある回答は、全損させず安全な文を残す（2026-07-18修正の回帰テスト）
+const salvaged = sanitizeCapabilityResponse(
+  "お湯を沸かします。紅茶を入れます。3分蒸らすとおいしいですよ。"
+);
+assert.notEqual(salvaged, SAFE_CAPABILITY_FALLBACK);
+assert.ok(salvaged.includes("蒸らす"), `安全な文が残っていません: ${salvaged}`);
+assert.ok(!/紅茶を入れます/.test(salvaged));
+
 console.log("capability-utils: OK");

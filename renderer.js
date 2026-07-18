@@ -33,6 +33,7 @@ const EXPRESSION_NAMES = {
 };
 // AI回答が指定できる表情。"normal" はEMOTES/EXPRESSION_NAMES未定義のため
 // setEmoteで自然にデフォルト顔（表情リセット）へ落ちる。
+// emote-utils.js の CHAT_EMOTES と同一内容を保つこと（表情の増減時は両方更新）。
 const ANSWER_EMOTES = new Set(["joy", "wink", "proud", "surprised", "normal"]);
 let model;
 let originalModelWidth;
@@ -408,6 +409,8 @@ function updatePomodoroQuickVisibility() {
   pomodoroQuick?.setAttribute("aria-hidden", visible ? "false" : "true");
 }
 
+let soundToggleMutedRendered;
+
 function updateSoundToggle() {
   const visible = Boolean(isHovered && !dragging);
   if (visible !== soundToggleVisible) {
@@ -415,6 +418,9 @@ function updateSoundToggle() {
     soundToggle?.classList.toggle("is-visible", visible);
     soundToggle?.setAttribute("aria-hidden", visible ? "false" : "true");
   }
+  // 毎フレーム呼ばれるため、ミュート表示は値が変わった時だけDOMを触る
+  if (soundMuted === soundToggleMutedRendered) return;
+  soundToggleMutedRendered = soundMuted;
   soundToggle?.classList.toggle("is-muted", soundMuted);
   soundToggle.textContent = soundMuted ? "🔇" : "🔊";
   soundToggle?.setAttribute("aria-pressed", soundMuted ? "true" : "false");
@@ -1224,7 +1230,8 @@ async function runChat(rawMessage) {
     isPreparingSpeech = false;
     showChatBubble();
     setEmote(response.emote || "joy");
-    if (["joy", "wink", "proud", "surprised"].includes(response.emote || "joy")) {
+    // emoteはnormalizeSpeechItemでANSWER_EMOTES検証済み。normal以外は喜びモーション付き
+    if ((response.emote || "joy") !== "normal") {
       playMotionOnce("Happy");
     }
 

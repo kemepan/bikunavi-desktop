@@ -10,4 +10,6 @@ assert.equal(selectChatEmote("proud", "順番を説明します。"), "proud");
 assert.equal(selectChatEmote("joy", "危険な操作なので注意してください。"), "normal");
 assert.equal(selectChatEmote("", "確認します。", "エラーが出て困っています"), "normal");
 
+assert.equal(selectChatEmote("", "冗談はさておき、進めましょう。"), "wink");
+
 console.log("emote-utils: OK");

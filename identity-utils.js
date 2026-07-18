@@ -17,6 +17,9 @@ function repairBikutanSelfReferences(rawText, rawUserName) {
   );
   return text.replace(pattern, (match, prefix, body, ending) => {
     if (["?", "？"].includes(ending) || !SELF_REFERENCE_MARKERS.test(body)) return match;
+    // 「〜ですね」「〜ますね」等で終わる文はユーザーへの相槌（相手の話の反映）なので
+    // 主語を書き換えない。書き換えるのは、びくたんの一人称誤用らしい断定文だけ。
+    if (/(?:です|ます|でした|ました|ん)ね$/.test(body)) return match;
     return `${prefix}びくたんは${body}${ending}`;
   });
 }

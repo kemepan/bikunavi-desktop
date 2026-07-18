@@ -43,4 +43,10 @@ assert.equal(
   assert.deepEqual(leaked.sources, []);
 }
 
+// 一覧外の管理IDが本文へ [D8] 形式で混ざっても漏らさない（2026-07-18修正の回帰テスト）
+assert.equal(
+  sanitizeSpokenSourceIds("この[D8]のデザインの話、面白いですよ。", [], sources).includes("[D8]"),
+  false
+);
+
 console.log("source-utils: OK");

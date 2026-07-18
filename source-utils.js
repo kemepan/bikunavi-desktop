@@ -42,6 +42,16 @@ function sanitizeSpokenSourceIds(rawText, rawSourceIds = [], sourceMap = new Map
       .replace(new RegExp(`(?:参照(?:ID|番号)[:：]?\\s*)?${escapedId}(?=によると|の記事|の見出し|では)`, "gi"), replacement);
   }
 
+  // 一覧に無いIDでも、[D8] や |D8| の形で本文へ混ざった管理IDは表示・読み上げに漏らさない。
+  text = text.replace(
+    new RegExp(`(?:参照(?:ID|番号)[:：]?\\s*)?[\\[|]\\s*(${SOURCE_ID})\\s*[\\]|]`, "gi"),
+    (_match, id) => sourceLabel(sourceMap.get(String(id).toUpperCase()))
+  );
+  text = text.replace(
+    new RegExp(`(${SOURCE_ID})(?=によると|の記事|の見出し|では)`, "gi"),
+    (_match, id) => sourceLabel(sourceMap.get(String(id).toUpperCase()))
+  );
+
   // JSON形式が崩れ、明示的な「参照ID A3」だけが残った場合の最終安全網。
   text = text.replace(
     new RegExp(`参照(?:ID|番号)[:：]?\\s*(?:${SOURCE_ID})`, "gi"),

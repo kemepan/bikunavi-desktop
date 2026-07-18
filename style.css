@@ -168,6 +168,19 @@ body {
   background: rgb(252 237 240 / 88%);
 }
 
+/* assets/ui/sound-on.png / sound-off.png が存在する場合は、絵文字の代わりに
+   びくたんアイコンを表示する（renderer側が読み込み可否を判定してクラス付与） */
+#sound-toggle.has-image {
+  background-image: url("assets/ui/sound-on.png");
+  background-size: 78%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+#sound-toggle.has-image.is-muted {
+  background-image: url("assets/ui/sound-off.png");
+}
+
 #bubble.has-chat {
   width: min(320px, calc(100% - 16px));
   min-width: min(260px, calc(100% - 16px));

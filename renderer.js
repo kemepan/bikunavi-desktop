@@ -410,6 +410,24 @@ function updatePomodoroQuickVisibility() {
 }
 
 let soundToggleMutedRendered;
+// びくたんアイコン（assets/ui/sound-on.png / sound-off.png）が用意されていれば
+// 絵文字の代わりに使う。存在しない環境では従来の🔊/🔇のまま。
+let soundToggleUseImages = false;
+(function probeSoundToggleImages() {
+  let loadedCount = 0;
+  for (const src of ["assets/ui/sound-on.png", "assets/ui/sound-off.png"]) {
+    const probe = new Image();
+    probe.onload = () => {
+      loadedCount += 1;
+      if (loadedCount === 2) {
+        soundToggleUseImages = true;
+        soundToggleMutedRendered = undefined;
+        updateSoundToggle();
+      }
+    };
+    probe.src = src;
+  }
+})();
 
 function updateSoundToggle() {
   const visible = Boolean(isHovered && !dragging);
@@ -422,7 +440,8 @@ function updateSoundToggle() {
   if (soundMuted === soundToggleMutedRendered) return;
   soundToggleMutedRendered = soundMuted;
   soundToggle?.classList.toggle("is-muted", soundMuted);
-  soundToggle.textContent = soundMuted ? "🔇" : "🔊";
+  soundToggle?.classList.toggle("has-image", soundToggleUseImages);
+  soundToggle.textContent = soundToggleUseImages ? "" : (soundMuted ? "🔇" : "🔊");
   soundToggle?.setAttribute("aria-pressed", soundMuted ? "true" : "false");
   soundToggle?.setAttribute(
     "aria-label",

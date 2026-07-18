@@ -12,7 +12,8 @@ const {
   session,
   protocol,
   net,
-  globalShortcut
+  globalShortcut,
+  dialog
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -106,7 +107,8 @@ const DEFAULT_STATE = {
   savedLinks: [],
   conversationProvider: "auto",
   anthropicApiKey: "",
-  voicevoxGuideShown: false
+  voicevoxGuideShown: false,
+  trayGuideShown: false
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
 
@@ -1602,7 +1604,17 @@ function buildTrayMenu() {
       submenu: [
         {
           label: "おしゃべり履歴を消去…",
-          click: () => {
+          click: async () => {
+            // 取り消せない消去なので、実行前に必ず確認を挟む
+            const { response } = await dialog.showMessageBox({
+              type: "warning",
+              buttons: ["消去する", "キャンセル"],
+              defaultId: 1,
+              cancelId: 1,
+              message: "おしゃべり履歴を消去しますか？",
+              detail: "セリフ履歴と会話履歴が消えます。ことば帳・思い出帳・日記・気になる記事は消えません。"
+            });
+            if (response !== 0) return;
             persistedState.lineHistory = [];
             persistedState.chatEntries = [];
             conversationHistory.length = 0;
@@ -1966,9 +1978,24 @@ app.whenReady().then(() => {
     console.error("VOICEVOX prewarm failed:", error);
   });
   maybeShowVoicevoxGuide();
+  maybeShowTrayGuide();
 });
 
 // VOICEVOX未インストールの初回だけ、声の入手先を一度案内する（それまではmacOS音声で代用）
+// 初回起動時だけ、操作の入り口（メニューバーの🌱）を一度案内する。
+// VOICEVOX案内（15秒後）と重ならないよう、こちらは8秒後に出す。
+function maybeShowTrayGuide() {
+  if (persistedState.trayGuideShown) return;
+  setTimeout(() => {
+    persistedState.trayGuideShown = true;
+    saveStateSoon();
+    showAmbientLine({
+      text: "はじめまして、びくたんです！設定やお願いごとは、画面上のメニューバーにある🌱アイコンからできますよ。よろしくお願いします。",
+      sources: []
+    });
+  }, 8000);
+}
+
 function maybeShowVoicevoxGuide() {
   if (persistedState.voicevoxGuideShown) return;
   if (fs.existsSync("/Applications/VOICEVOX.app")) return;

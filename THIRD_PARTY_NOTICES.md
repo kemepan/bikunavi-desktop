@@ -18,6 +18,18 @@
 - VOICEVOX ソフトウェア利用規約: https://voicevox.hiroshiba.jp/term/
 - 猫使シリーズ利用規約: https://nekotukarb.wixsite.com/nekonohako/利用規約
 
+## OtoLogic — ポモドーロジングル
+
+- ファイル: `assets/sounds/pomodoro-start-bell.mp3`
+  - 素材名: Winning Bell 01-11 (Far-Strong)
+- ファイル: `assets/sounds/pomodoro-finish-bell.mp3`
+  - 素材名: Winning Bell 01-12 (Far-Strong)
+- ファイル: `assets/sounds/thinking-countdown.mp3`
+  - 素材名: Countdown 05-1
+- 音素材提供: [OtoLogic](https://otologic.jp/)
+- ライセンス: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)
+- 利用規約: https://otologic.jp/free/license.html
+
 ## whisper.cpp
 
 - ファイル: `native/stt/darwin-arm64/whisper-cli`、`native/stt/darwin-x64/whisper-cli`

@@ -31,4 +31,4 @@ xattr -cr /Applications/びくたん.app
 
 `ELECTRON_LICENSE` と `LICENSES.chromium.html` はElectron・Chromiumに関するライセンスです。本アプリ全体をMITライセンスで提供するものではありません。詳しくは `LICENSE.md` と `THIRD_PARTY_NOTICES.md` を参照してください。
 
-音声: VOICEVOX:猫使ビィ ／ Live2D Cubism Core © Live2D Inc.
+音声: VOICEVOX:猫使ビィ ／ Live2D Cubism Core © Live2D Inc. ／ ポモドーロジングルの音素材提供: [OtoLogic](https://otologic.jp/) (CC BY 4.0)

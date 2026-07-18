@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" />
-    <title>Claude APIキー設定</title>
+    <title>APIキー設定</title>
     <style>
       body {
         font-family: -apple-system, "Hiragino Sans", sans-serif;
@@ -15,7 +15,7 @@
         font-size: 13px;
       }
       h1 { font-size: 15px; margin: 0 0 10px; }
-      p.note { margin: 0 0 12px; color: #7a7062; font-size: 11.5px; line-height: 1.5; }
+      p.note { margin: 0 0 12px; color: #7a7062; font-size: 11.5px; line-height: 1.5; white-space: pre-line; }
       input {
         width: 100%;
         box-sizing: border-box;
@@ -43,12 +43,9 @@
     </style>
   </head>
   <body>
-    <h1>Claude APIキー</h1>
-    <p class="note">
-      Anthropic Console で発行した API キー（sk-ant-…）を入力してください。<br />
-      キーはこの Mac の設定ファイル（state.json）に平文で保存されます。共有マシンでは注意してください。
-    </p>
-    <input id="api-key" type="password" placeholder="sk-ant-api03-…" autofocus />
+    <h1 id="title">APIキー</h1>
+    <p id="note" class="note"></p>
+    <input id="api-key" type="password" autofocus />
     <div id="status"></div>
     <div class="row">
       <button id="cancel">キャンセル</button>

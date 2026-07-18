@@ -1,6 +1,6 @@
 {
   "name": "bikunavi-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Live2D desktop companion for macOS",
   "main": "main.js",

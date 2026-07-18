@@ -524,29 +524,33 @@ const FORTUNE_ELEMENTS = {
     bgm: ["さらさら流れるアンビエント", "静かな作業用のチル", "雨音まじりのローファイ"]
   }
 };
+// 整理・休息・遊び/創作・外や人、の4系統を混ぜて「毎日片付けを勧める説教bot」化を防ぐ。
+// 文末は辞書形の動詞で統一する（「〜のがおすすめです」に接続するため）。
 const FORTUNE_ACTIONS = [
   "机の上をひと区画だけ空ける",
-  "途中保存してから次へ進む",
-  "よく使うファイルを一つだけ定位置に戻す",
   "大きい作業を三つに割る",
-  "飲み物を用意してから始める",
-  "後回しメモを一行だけ書く",
-  "ブラウザのタブを三つ閉じる",
-  "5分だけ手を動かしてみる",
   "今日やらないことを一つ決める",
-  "ケーブルやペンを一つ戻す"
+  "飲み物を淹れて、ひと口目だけゆっくり味わう",
+  "肩を回して、深呼吸を三回する",
+  "5分だけ目を閉じるか、窓の外の遠くを見る",
+  "気になっていた曲を一曲だけ流す",
+  "落書きや素振りみたいな肩慣らしを5分だけする",
+  "作りかけを眺めて、いいところを一つ見つける",
+  "散歩がてら、外の空気を1分だけ吸う",
+  "最近のお気に入りを、びくたんか誰かに自慢する",
+  "5分だけ手を動かして、勢いをつける"
 ];
 const FORTUNE_ITEMS = [
   "あたたかい飲み物",
-  "小さなメモ",
-  "白い余白",
+  "ふせん一枚",
+  "小さなメモ帳",
   "いつものペン",
-  "畳んだハンカチ",
+  "きれいなマグカップ",
   "お気に入りの曲",
-  "空のトレイ",
-  "短いチェックリスト",
-  "明るい画面",
-  "一口のおやつ"
+  "イヤホン",
+  "ハンドクリーム",
+  "窓からの光",
+  "一口サイズのおやつ"
 ];
 const FORTUNE_CLOSINGS = [
   "びくたんは、まず小さく動く日に一票です。",
@@ -725,6 +729,15 @@ function getJstDateString(date = new Date()) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function makeYoutubeSearchSource(query) {
+  const safeQuery = String(query || "").trim();
+  return {
+    title: `${safeQuery} をYouTubeで検索`,
+    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(safeQuery)}`,
+    source: "YouTube検索"
+  };
+}
+
 function makeDailyFortune(date = new Date()) {
   const { year, month, day } = getJstDateParts(date);
   const dateNumber = year * 10000 + month * 100 + day;
@@ -733,16 +746,18 @@ function makeDailyFortune(date = new Date()) {
   const action = FORTUNE_ACTIONS[(dateNumber + month) % FORTUNE_ACTIONS.length];
   const item = FORTUNE_ITEMS[(dateNumber + day) % FORTUNE_ITEMS.length];
   const closing = FORTUNE_CLOSINGS[(dateNumber + month + day) % FORTUNE_CLOSINGS.length];
+  const bgm = element.bgm[(dateNumber + month + day) % element.bgm.length];
   const lines = [
-    `今日のびくたん占いです。${element.color}の気配で、テーマは「${stem.keyword}」。`,
-    `今日は${stem.mood}のが合いそうです。最初の一手は、${action}。`,
-    `お守りは「${item}」。${closing}`
+    `今日のびくたん占いです。テーマは「${stem.keyword}」、ラッキーカラーは${element.color}。視界のどこかに${element.color}をひとつ入れておくと、調子が出やすいですよ。`,
+    `今日は${stem.mood}くらいがちょうどよさそう。最初の一手は、${action}のがおすすめです。`,
+    `お守りは「${item}」。${closing}`,
+    `BGMは${bgm}あたりが合いそうです。よかったらどうぞ。`
   ];
   return {
     text: lines.join("\n"),
     lines,
-    lineSources: [[], [], []],
-    autoText: `今日の占いは「${stem.keyword}」。${action}と相性がよさそうです。`,
+    lineSources: [[], [], [], [makeYoutubeSearchSource(`${bgm} 作業用 BGM`)]],
+    autoText: `今日の占いは「${stem.keyword}」。${action}のと相性がよさそうです。`,
     sources: []
   };
 }

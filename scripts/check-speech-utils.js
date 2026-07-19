@@ -6,40 +6,55 @@ assert.deepEqual(splitIntoSpeechChunks(""), []);
 assert.deepEqual(splitIntoSpeechChunks("   "), []);
 assert.deepEqual(splitIntoSpeechChunks("こんにちは。"), ["こんにちは。"]);
 
-// 2文はそれぞれ独立した塊になる（1文目が先に再生開始できる）
+// 意味が通る単位＝1文ずつに分ける
 assert.deepEqual(
   splitIntoSpeechChunks("今日はいい天気ですね。散歩に行きたくなります。"),
   ["今日はいい天気ですね。", "散歩に行きたくなります。"]
 );
+assert.deepEqual(
+  splitIntoSpeechChunks(
+    "一文目です。二文目はもう少し長い文章になっています。三文目もあります。"
+  ),
+  ["一文目です。", "二文目はもう少し長い文章になっています。", "三文目もあります。"]
+);
 
-// 短い文（12文字未満）は次の文と束ねる
+// どの塊も文の区切りで終わる（文の途中でぶつ切りにしない）
+{
+  const chunks = splitIntoSpeechChunks(
+    "まず朝のうちに一番重い作業を片付けます。次に昼休みは画面から離れます。最後に夜は早めに切り上げましょう。"
+  );
+  assert.equal(chunks.length, 3);
+  for (const chunk of chunks) {
+    assert.ok(/[。！？!?]$/.test(chunk), `not sentence-aligned: ${chunk}`);
+  }
+}
+
+// 相槌などの極端に短い文（6文字未満）は次の文と束ねる
 assert.deepEqual(
   splitIntoSpeechChunks("うん！それはですね、こういう理由があるからなんです。"),
   ["うん！それはですね、こういう理由があるからなんです。"]
 );
 
-// 末尾の極端に短い残り（6文字未満）は前の塊へ吸収する
+// 末尾の極端に短い残りは前の文へ吸収する
 assert.deepEqual(
   splitIntoSpeechChunks("これが今日のおすすめの過ごし方です。ぜひ！"),
   ["これが今日のおすすめの過ごし方です。ぜひ！"]
 );
 
-// 句点なしの長文も1塊として扱える
-assert.equal(
-  splitIntoSpeechChunks("句読点のない長いテキストでも動作します").length,
-  1
-);
-
-// 改行区切りにも対応（占いなど複数行のセリフ）
+// 改行区切り（占いなど複数行のセリフ）も行＝文単位になる
 {
   const chunks = splitIntoSpeechChunks(
     "今日のびくたん占いです！\nラッキーカラーは水色。ハンカチに取り入れるのがおすすめです。\n午後は散歩に出かけると良いことがあるかも。"
   );
-  assert.ok(chunks.length >= 3, `expected >=3 chunks, got ${JSON.stringify(chunks)}`);
+  assert.ok(chunks.length >= 3);
   assert.ok(chunks[0].includes("占い"));
 }
 
-// 全文を繋げると元テキストの内容が失われていない（空白正規化のみ許容）
+// 句読点なしの長文でも壊れない・内容が失われない
+{
+  const source = "あ".repeat(100);
+  assert.equal(splitIntoSpeechChunks(source).join(""), source);
+}
 {
   const source = "一文目です。二文目はもう少し長い文章になっています。三文目！";
   const joined = splitIntoSpeechChunks(source).join("");

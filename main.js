@@ -895,21 +895,30 @@ function delay(ms) {
 async function showDailyFortune() {
   const fortune = makeDailyFortune();
   try {
+    if (systemSleeping) return;
     const lines = Array.isArray(fortune.lines) && fortune.lines.length
       ? fortune.lines
       : [fortune.text];
-    for (const [index, line] of lines.entries()) {
-      if (systemSleeping) return;
-      companionWindow?.webContents.send("companion:fortune", {
-        text: line,
-        sources: Array.isArray(fortune.lineSources?.[index])
-          ? fortune.lineSources[index]
-          : [],
-        index,
-        total: lines.length
-      });
-      await speakAndWait(line, "answer");
-      if (index < lines.length - 1) await delay(450);
+    // 占いは全文を1つの吹き出しに出し、音声も一気に読み切る
+    const text = lines.join("\n");
+    const sources = uniqueSources(
+      (fortune.lineSources || []).flatMap((entry) => (Array.isArray(entry) ? entry : []))
+    );
+    companionWindow?.webContents.send("companion:fortune", {
+      text,
+      sources,
+      index: 0,
+      total: 1
+    });
+    // 作り置き音声があれば無音ゼロで丸ごと再生。まだ無ければ文単位読みで
+    // すぐ話し始めつつ、次回のために作り置きを仕込む。
+    const prepared = dailyFortuneAudio;
+    if (prepared?.date === jstDateKey() && prepared.file && fs.existsSync(prepared.file)) {
+      await speakPreparedAudio(prepared.file, text, "answer");
+    } else {
+      await speakAndWait(text, "answer");
+      // もう一度開いた時のために作り置く（ライブ読み中の合成競合を避けて後から）
+      prepareDailyFortuneAudio();
     }
   } catch (error) {
     console.error("Fortune speech failed:", error);
@@ -1759,7 +1768,9 @@ async function ensureVoicevoxEngine() {
         "--host", "127.0.0.1",
         "--port", "50021",
         "--disable_mutable_api",
-        "--cpu_num_threads", "2"
+        // 2だと合成がほぼ実時間（230文字≒26秒）かかり、長文の作り置きや
+        // 文単位の先行合成が再生に追いつかないため4にする
+        "--cpu_num_threads", "4"
       ],
       { stdio: "ignore" }
     );
@@ -1780,7 +1791,7 @@ async function ensureVoicevoxEngine() {
   return voicevoxReadyPromise;
 }
 
-async function createVoicevoxAudio(text, speechId) {
+async function createVoicevoxAudio(text, speechId, edge = {}) {
   await ensureVoicevoxEngine();
   const queryResponse = await fetch(
     `http://127.0.0.1:50021/audio_query?text=${encodeURIComponent(text)}&speaker=${voicevoxSpeaker}`,
@@ -1792,6 +1803,10 @@ async function createVoicevoxAudio(text, speechId) {
   const query = await queryResponse.json();
   query.speedScale = Math.max(0.75, Math.min(1.35, speechRate / 190));
   query.intonationScale = 1.08;
+  // 分割合成のつなぎ目では、各WAVの前後無音（既定0.1秒）を削って
+  // afplay起動ラグと合わせても不自然な間にならないようにする
+  if (edge.trimLeading) query.prePhonemeLength = 0.02;
+  if (edge.trimTrailing) query.postPhonemeLength = 0.04;
 
   const synthesisResponse = await fetch(
     `http://127.0.0.1:50021/synthesis?speaker=${voicevoxSpeaker}`,
@@ -1884,34 +1899,60 @@ function playSpeechChunk(output, speechId) {
   });
 }
 
-async function speakVoicevoxSentences(text, speechId) {
-  const chunks = splitIntoSpeechChunks(text);
+async function speakVoicevoxSentences(text, speechId, noSplit = false) {
+  // noSplit: 占いなど「一気に読み切りたい」セリフは分割せず1回で合成する
+  const chunks = noSplit ? [String(text || "").trim()].filter(Boolean) : splitIntoSpeechChunks(text);
   if (!chunks.length) return false;
-  // 1文目の合成だけ待つ。失敗はそのまま投げて呼び出し側でmacOS音声へフォールバック。
-  const firstOutput = await createVoicevoxAudio(chunks[0], `${speechId}-0`);
+
+  // 全文ぶんの合成を直列で先行予約する。1文目の再生中もエンジンは次以降の文を
+  // 合成し続けるので、文間の待ちが最小になる。
+  let prev = Promise.resolve();
+  const audioPromises = chunks.map((chunk, index) => {
+    const job = prev.then(() => {
+      if (index > 0 && activeSpeechId !== speechId) return undefined;
+      return createVoicevoxAudio(chunk, `${speechId}-${index}`, {
+        trimLeading: index > 0,
+        trimTrailing: index < chunks.length - 1
+      });
+    });
+    prev = job.catch(() => undefined);
+    return job;
+  });
+
+  const cleanupFrom = (fromIndex) => {
+    for (let i = fromIndex; i < audioPromises.length; i += 1) {
+      audioPromises[i]
+        .then((file) => { if (file) fs.promises.unlink(file).catch(() => {}); })
+        .catch(() => {});
+    }
+  };
+
+  // 1文目の合成失敗はそのまま投げて、呼び出し側でmacOS音声へフォールバック
+  const firstOutput = await audioPromises[0];
   if (activeSpeechId !== speechId) {
-    fs.promises.unlink(firstOutput).catch(() => {});
+    if (firstOutput) fs.promises.unlink(firstOutput).catch(() => {});
+    cleanupFrom(1);
     return false;
   }
 
   (async () => {
-    let currentOutput = firstOutput;
+    let output = firstOutput;
     for (let index = 0; index < chunks.length; index += 1) {
-      const prefetch = index + 1 < chunks.length
-        ? createVoicevoxAudio(chunks[index + 1], `${speechId}-${index + 1}`).catch((error) => {
-            console.error("VOICEVOX sentence synthesis failed:", error?.message || error);
-            return undefined;
-          })
-        : undefined;
-      const finished = await playSpeechChunk(currentOutput, speechId);
-      const nextOutput = prefetch ? await prefetch : undefined;
+      const finished = await playSpeechChunk(output, speechId);
       if (!finished || activeSpeechId !== speechId) {
         // 中断時の終了イベントは stopSpeech 側が送っている
-        if (nextOutput) fs.promises.unlink(nextOutput).catch(() => {});
+        cleanupFrom(index + 1);
         return;
       }
-      if (index + 1 < chunks.length && !nextOutput) break;
-      currentOutput = nextOutput;
+      if (index + 1 >= chunks.length) break;
+      output = await audioPromises[index + 1].catch((error) => {
+        console.error("VOICEVOX sentence synthesis failed:", error?.message || error);
+        return undefined;
+      });
+      if (!output) {
+        cleanupFrom(index + 2);
+        break;
+      }
     }
     if (activeSpeechId === speechId) {
       activeSpeechId = undefined;
@@ -1950,15 +1991,19 @@ function resolveSpeechWaiter(speechId) {
   waiter();
 }
 
-async function speakText(rawText, kind) {
-  if (systemSleeping) return undefined;
-  if (soundMuted || !speechEnabled || (kind === "idle" && !idleSpeechEnabled)) return undefined;
-  const text = String(rawText ?? "")
+function cleanSpeechText(rawText) {
+  return String(rawText ?? "")
     .replace(/https?:\/\/\S+/g, "")
     .replace(/[*_`#>]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 600);
+}
+
+async function speakText(rawText, kind, options = {}) {
+  if (systemSleeping) return undefined;
+  if (soundMuted || !speechEnabled || (kind === "idle" && !idleSpeechEnabled)) return undefined;
+  const text = cleanSpeechText(rawText);
   if (!text) return undefined;
 
   stopSpeech();
@@ -1968,7 +2013,7 @@ async function speakText(rawText, kind) {
   if (speechProvider === "voicevox") {
     try {
       // 文単位に区切って合成し、1文目ができた時点で話し始める
-      const started = await speakVoicevoxSentences(text, speechId);
+      const started = await speakVoicevoxSentences(text, speechId, Boolean(options.noSplit));
       return started ? speechId : undefined;
     } catch (error) {
       console.error(`VOICEVOX (${voicevoxVoiceLabel}) failed; using macOS voice:`, error);
@@ -1987,8 +2032,8 @@ async function speakText(rawText, kind) {
   }
 }
 
-async function speakFromMain(text, kind = "answer") {
-  const speechId = await speakText(text, kind);
+async function speakFromMain(text, kind = "answer", options = {}) {
+  const speechId = await speakText(text, kind, options);
   if (speechId) {
     companionWindow?.webContents.send("companion:speech-started", {
       speechId,
@@ -1998,10 +2043,10 @@ async function speakFromMain(text, kind = "answer") {
   return speechId;
 }
 
-async function speakAndWait(text, kind = "answer") {
-  const speechId = await speakFromMain(text, kind);
-  if (!speechId) return undefined;
-  const fallbackMs = Math.min(12000, Math.max(1600, String(text).length * 170));
+async function waitForSpeechEnd(speechId, text) {
+  // 話速・分割合成の合成待ちも考慮した安全側の上限。早すぎると読み上げ中に
+  // 次のセリフ表示が進んでしまい、声と文章がずれる。
+  const fallbackMs = Math.min(45000, Math.max(1600, String(text).length * 200));
   await new Promise((resolve) => {
     const timeout = setTimeout(() => {
       speechWaiters.delete(speechId);
@@ -2012,6 +2057,69 @@ async function speakAndWait(text, kind = "answer") {
       resolve();
     });
   });
+}
+
+async function speakAndWait(text, kind = "answer", options = {}) {
+  const speechId = await speakFromMain(text, kind, options);
+  if (!speechId) return undefined;
+  await waitForSpeechEnd(speechId, text);
+  return speechId;
+}
+
+// ── 今日の占い音声の作り置き ──
+// 占いの内容は日付で決まるので、起動時に全文を1本のWAVへ合成しておき、
+// 占いを開いた瞬間に無音ゼロ・途切れゼロで一気に読み切れるようにする。
+let dailyFortuneAudio; // { date, text, file, promise }
+
+function jstDateKey() {
+  const { year, month, day } = getJstDateParts();
+  return `${year}-${month}-${day}`;
+}
+
+function prepareDailyFortuneAudio() {
+  const dateKey = jstDateKey();
+  if (dailyFortuneAudio?.date === dateKey && (dailyFortuneAudio.file || dailyFortuneAudio.promise)) {
+    return dailyFortuneAudio.promise || Promise.resolve(dailyFortuneAudio.file);
+  }
+  const fortune = makeDailyFortune();
+  const lines = Array.isArray(fortune.lines) && fortune.lines.length
+    ? fortune.lines
+    : [fortune.text];
+  const text = lines.join("\n");
+  const spoken = cleanSpeechText(text);
+  const entry = { date: dateKey, text };
+  entry.promise = createVoicevoxAudio(spoken, `fortune-${dateKey}`)
+    .then((file) => {
+      entry.file = file;
+      entry.promise = undefined;
+      return file;
+    })
+    .catch((error) => {
+      console.error("Fortune audio prewarm failed:", error?.message || error);
+      if (dailyFortuneAudio === entry) dailyFortuneAudio = undefined;
+      return undefined;
+    });
+  dailyFortuneAudio = entry;
+  return entry.promise;
+}
+
+// 作り置きWAVを1回の再生として話す（再生用にコピーし、作り置きは温存する）
+async function speakPreparedAudio(file, text, kind = "answer") {
+  if (systemSleeping || soundMuted || !speechEnabled) return undefined;
+  stopSpeech();
+  const speechId = ++speechSequence;
+  activeSpeechId = speechId;
+  const playFile = path.join(app.getPath("temp"), `bikunavi-speech-${speechId}.wav`);
+  try {
+    await fs.promises.copyFile(file, playFile);
+  } catch (error) {
+    console.error("Prepared audio copy failed:", error?.message || error);
+    if (activeSpeechId === speechId) activeSpeechId = undefined;
+    return undefined;
+  }
+  playSpeechAudio(playFile, speechId);
+  companionWindow?.webContents.send("companion:speech-started", { speechId, kind });
+  await waitForSpeechEnd(speechId, text);
   return speechId;
 }
 
@@ -2073,9 +2181,15 @@ app.whenReady().then(() => {
   powerMonitor.on("unlock-screen", () => {
     setSystemSleeping(false);
   });
-  ensureVoicevoxEngine().catch((error) => {
-    console.error("VOICEVOX prewarm failed:", error);
-  });
+  ensureVoicevoxEngine()
+    .then(() => {
+      // 起動直後の読み上げと合成が競合しないよう、少し置いてから
+      // 今日の占い音声を作り置きする
+      setTimeout(() => prepareDailyFortuneAudio(), 8000);
+    })
+    .catch((error) => {
+      console.error("VOICEVOX prewarm failed:", error);
+    });
   maybeShowVoicevoxGuide();
   maybeShowTrayGuide();
 });

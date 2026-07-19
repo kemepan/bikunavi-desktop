@@ -51,4 +51,38 @@ assert.deepEqual(
   { text: "空白入りでもOK", complete: false }
 );
 
+const { takeCompletedSentences } = require("../stream-utils");
+
+// 文末記号のあとに文字が続いて初めて文が確定する
+assert.deepEqual(takeCompletedSentences("こんにちは！", 0), {
+  sentences: [],
+  offset: 0
+});
+assert.deepEqual(takeCompletedSentences("こんにちは！今日は", 0), {
+  sentences: ["こんにちは！"],
+  offset: 6
+});
+
+// offsetから先だけを見る（同じ文を二度emitしない）
+{
+  const text = "こんにちは！今日はいい天気ですね。散歩に";
+  const first = takeCompletedSentences(text, 0);
+  assert.deepEqual(first.sentences, ["こんにちは！", "今日はいい天気ですね。"]);
+  const second = takeCompletedSentences(text, first.offset);
+  assert.deepEqual(second.sentences, []);
+  assert.equal(second.offset, first.offset);
+}
+
+// 短すぎる文は次の文とまとめて確定する
+{
+  const { sentences } = takeCompletedSentences("うん！それはいい考えですね。次に", 0);
+  assert.deepEqual(sentences, ["うん！それはいい考えですね。"]);
+}
+
+// 改行も文の区切りとして扱う
+{
+  const { sentences } = takeCompletedSentences("一行目のセリフです\n二行目", 0);
+  assert.deepEqual(sentences, ["一行目のセリフです"]);
+}
+
 console.log("stream-utils: OK");

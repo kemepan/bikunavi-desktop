@@ -1215,21 +1215,20 @@ async function runChat(rawMessage) {
   scheduleThinkingSound();
   try {
     const customizationQuestion = pendingCharacterCustomization;
-    const response = normalizeSpeechItem(
-      customizationQuestion
-        ? await bikunavi.invoke(
-          customQuestionAnswerChannel(customizationQuestion),
-          customizationQuestion.questionId,
-          message
-        )
-        : await bikunavi.invoke(
-          "companion:chat",
-          message,
-          contextLine,
-          isDirectReply,
-          contextSources
-        )
-    );
+    const rawChatResponse = customizationQuestion
+      ? await bikunavi.invoke(
+        customQuestionAnswerChannel(customizationQuestion),
+        customizationQuestion.questionId,
+        message
+      )
+      : await bikunavi.invoke(
+        "companion:chat",
+        message,
+        contextLine,
+        isDirectReply,
+        contextSources
+      );
+    const response = normalizeSpeechItem(rawChatResponse);
     if (customizationQuestion) pendingCharacterCustomization = undefined;
     chatEntries.push({
       question: message,
@@ -1258,17 +1257,22 @@ async function runChat(rawMessage) {
       playMotionOnce("Happy");
     }
 
-    bikunavi.invoke("companion:speak", response.text, "answer")
-      .then((speechId) => {
-        if (!speechId) return;
-        currentSpeechId = speechId;
-        currentSpeechKind = "answer";
-        isSpeaking = true;
-        armSpeechWatchdog(response.text);
-      })
-      .catch((speechError) => {
-        console.error("Speech failed:", speechError);
-      });
+    // main側の先行読み上げ（ストリーミング中に話し始めるやつ）が動いている
+    // 場合は、こちらから読み上げを始めない（二重再生防止）。発話状態は
+    // companion:speech-started / speech-ended イベント経由で同期される。
+    if (!rawChatResponse?.alreadySpeaking) {
+      bikunavi.invoke("companion:speak", response.text, "answer")
+        .then((speechId) => {
+          if (!speechId) return;
+          currentSpeechId = speechId;
+          currentSpeechKind = "answer";
+          isSpeaking = true;
+          armSpeechWatchdog(response.text);
+        })
+        .catch((speechError) => {
+          console.error("Speech failed:", speechError);
+        });
+    }
     scheduleChatIdleReset();
   } catch (error) {
     console.error(error);

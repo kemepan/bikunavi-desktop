@@ -37,4 +37,28 @@ function extractAnswerText(raw) {
   return { text: out, complete: false };
 }
 
-module.exports = { extractAnswerText };
+// ストリーミング中の本文から「確定した文」だけを取り出す。
+// 文末記号のあとに次の文字が届いて初めて確定とみなす（「！」の直後は「！？」と
+// 続くかもしれないため）。短すぎる文（6文字未満）は次の文と束ねる。
+// offset は text の先頭からの消費済み文字数。emitした分だけ進む。
+function takeCompletedSentences(text, offset = 0) {
+  const rest = String(text || "").slice(offset);
+  const sentences = [];
+  let buffer = "";
+  let consumed = 0;
+  const pattern = /[^。！？!?\n]*[。！？!?\n]+/g;
+  let match;
+  while ((match = pattern.exec(rest))) {
+    // 文末記号で入力が終わっている場合は、まだ記号が続く可能性があるので保留
+    if (pattern.lastIndex >= rest.length) break;
+    buffer += match[0];
+    if (buffer.trim().length >= 6) {
+      sentences.push(buffer.trim());
+      consumed = pattern.lastIndex;
+      buffer = "";
+    }
+  }
+  return { sentences, offset: offset + consumed };
+}
+
+module.exports = { extractAnswerText, takeCompletedSentences };

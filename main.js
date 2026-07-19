@@ -35,7 +35,7 @@ const {
 } = require("./source-utils");
 const { selectChatEmote } = require("./emote-utils");
 const { splitIntoSpeechChunks } = require("./speech-utils");
-const { extractAnswerText } = require("./stream-utils");
+const { extractAnswerText, takeCompletedSentences } = require("./stream-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -2074,6 +2074,77 @@ async function speakAndWait(text, kind = "answer", options = {}) {
   return speechId;
 }
 
+// ── ストリーミング読み上げ ──
+// 応答を受信しながら、確定した文を順に合成・再生するセッション。
+// 合成は直列チェーン、再生はその後追いチェーンで、通常の停止機構
+// （stopSpeech / activeSpeechId）にそのまま乗る。
+function createStreamingSpeech(kind = "answer") {
+  if (systemSleeping || soundMuted || !speechEnabled) return undefined;
+  stopSpeech();
+  const speechId = ++speechSequence;
+  activeSpeechId = speechId;
+  let chunkIndex = 0;
+  let queuedCount = 0;
+  let synthChain = Promise.resolve();
+  let playChain = Promise.resolve(true);
+  let announced = false;
+
+  const enqueue = (rawText) => {
+    const text = cleanSpeechText(rawText);
+    if (!text || activeSpeechId !== speechId) return;
+    const index = chunkIndex++;
+    queuedCount += 1;
+    const synth = synthChain.then(() => {
+      if (activeSpeechId !== speechId) return undefined;
+      return createVoicevoxAudio(text, `${speechId}-${index}`, {
+        trimLeading: index > 0,
+        trimTrailing: true
+      }).catch((error) => {
+        console.error("Streaming speech synthesis failed:", error?.message || error);
+        return undefined;
+      });
+    });
+    synthChain = synth;
+    playChain = playChain.then(async (previousOk) => {
+      const file = await synth;
+      if (!previousOk || activeSpeechId !== speechId) {
+        if (file) fs.promises.unlink(file).catch(() => {});
+        return false;
+      }
+      if (!file) return false;
+      if (!announced) {
+        announced = true;
+        companionWindow?.webContents.send("companion:speech-started", { speechId, kind });
+      }
+      return playSpeechChunk(file, speechId);
+    });
+  };
+
+  const end = () => {
+    playChain.then(() => {
+      if (activeSpeechId === speechId) {
+        activeSpeechId = undefined;
+        companionWindow?.webContents.send("companion:speech-ended", speechId);
+        resolveSpeechWaiter(speechId);
+      }
+    });
+  };
+
+  const cancel = () => {
+    if (activeSpeechId === speechId) stopSpeech();
+  };
+
+  return {
+    speechId,
+    enqueue,
+    end,
+    cancel,
+    isActive: () => activeSpeechId === speechId,
+    hasQueued: () => queuedCount > 0,
+    hasStarted: () => announced
+  };
+}
+
 // ── 今日の占い音声の作り置き ──
 // 占いの内容は日付で決まるので、起動時に全文を1本のWAVへ合成しておき、
 // 占いを開いた瞬間に無音ゼロ・途切れゼロで一気に読み切れるようにする。
@@ -3756,36 +3827,66 @@ ipcMain.handle("companion:chat", async (
   ].filter(Boolean).join("\n\n");
 
   let rawResponse;
+  // ストリーミング対応プロバイダでは、確定したanswer本文を受信のたびに
+  // rendererへ送って表示を育てつつ、文が確定するたびに読み上げも始める。
+  const stream = { rawAccum: "", lastSentPartial: "", spokenOffset: 0, speech: undefined };
+  const speakSentence = (sentence) => {
+    if (!stream.speech) stream.speech = createStreamingSpeech("answer");
+    stream.speech?.enqueue(sanitizeSpokenSourceIds(sentence, [], latestTopics.sources));
+  };
   try {
-    // ストリーミング対応プロバイダでは、確定したanswer本文を受信のたびに
-    // rendererへ送り、「考え中…」の代わりに文章が育っていく表示にする。
-    let rawAccum = "";
-    let lastSentPartial = "";
     rawResponse = await runAssistant(
       prompt,
       (delta) => {
-        rawAccum += delta;
-        const { text } = extractAnswerText(rawAccum);
-        if (!text || text === lastSentPartial) return;
-        lastSentPartial = text;
+        stream.rawAccum += delta;
+        const { text } = extractAnswerText(stream.rawAccum);
+        if (!text || text === stream.lastSentPartial) return;
+        stream.lastSentPartial = text;
         companionWindow?.webContents.send("companion:chat-delta", {
           // 内部参照IDだけは途中表示でも見せない
           text: sanitizeSpokenSourceIds(text, [], latestTopics.sources)
         });
+        const completed = takeCompletedSentences(text, stream.spokenOffset);
+        if (completed.sentences.length) {
+          stream.spokenOffset = completed.offset;
+          for (const sentence of completed.sentences) speakSentence(sentence);
+        }
       },
       () => {
-        rawAccum = "";
-        lastSentPartial = "";
+        // 別プロバイダへのフォールバック: 受信済みの途中経過と読み上げを破棄
+        stream.speech?.cancel();
+        stream.rawAccum = "";
+        stream.lastSentPartial = "";
+        stream.spokenOffset = 0;
+        stream.speech = undefined;
       }
     );
   } catch (error) {
+    stream.speech?.cancel();
     console.error("Chat failed:", error);
     return {
       text: "うまく考えられませんでした。トレイメニューの「会話AI」で使うAIと、そのログイン状態（またはAPIキー）を確認してください。",
       sources: []
     };
   }
+  // 読み上げ済み位置から先の残りを流し込み、セッションを締める
+  if (stream.speech) {
+    const finalAnswer = extractAnswerText(stream.rawAccum).text;
+    const remainder = finalAnswer.slice(stream.spokenOffset);
+    for (const chunk of splitIntoSpeechChunks(remainder)) {
+      speakSentence(chunk);
+    }
+    stream.speech.end();
+  }
   const response = parseChatResponse(rawResponse, latestTopics.sources, message);
+  // main側で先行読み上げが走っている（または確実に始まる）場合、renderer側の
+  // 読み上げ開始を抑止して二重再生を防ぐ
+  if (
+    stream.speech &&
+    (stream.speech.hasStarted() || (stream.speech.hasQueued() && stream.speech.isActive()))
+  ) {
+    response.alreadySpeaking = true;
+  }
   if (isDirectReply && contextSources.length) {
     response.sources = uniqueSources([...response.sources, ...contextSources]);
   }

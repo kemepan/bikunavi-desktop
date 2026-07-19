@@ -7,6 +7,7 @@ const SEND_CHANNELS = new Set([
   "companion:drag-end",
   "companion:auto-move",
   "companion:stop-speech",
+  "companion:focus-window",
   "companion:thinking-sound-start",
   "companion:thinking-sound-stop",
   "companion:save-history"
@@ -44,6 +45,7 @@ const INVOKE_CHANNELS = new Set([
 
 const ON_CHANNELS = new Set([
   "companion:cursor",
+  "companion:chat-delta",
   "companion:speech-ended",
   "companion:speech-started",
   "companion:music-playing",

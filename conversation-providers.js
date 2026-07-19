@@ -244,34 +244,88 @@ function runGeminiCli(prompt, config) {
   );
 }
 
-async function runGeminiApi(prompt, config) {
+async function runGeminiApi(prompt, config, onDelta) {
   const apiKey = geminiApiKey(config);
   if (!apiKey) {
     throw new Error("Gemini APIキーが設定されていないか、~/.gemini/.env の権限が安全ではありません。");
   }
   const model = process.env.BIKUNAVI_GEMINI_MODEL || "gemini-3.1-flash-lite";
+  const streaming = typeof onDelta === "function";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  // ストリーミングは受信完了まで時間がかかるため、非ストリーミングより長めに待つ
+  const timeout = setTimeout(() => controller.abort(), streaming ? 60000 : API_TIMEOUT_MS);
+  const endpoint = streaming
+    ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`
+    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   let response;
   try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 4096,
-            thinkingConfig: { thinkingLevel: "minimal" }
-          }
-        }),
-        signal: controller.signal
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 4096,
+          thinkingConfig: { thinkingLevel: "minimal" }
+        }
+      }),
+      signal: controller.signal
+    });
+
+    if (streaming) {
+      if (!response.ok) {
+        let data;
+        try {
+          data = await response.json();
+        } catch (_error) {
+          data = undefined;
+        }
+        throw new Error(data?.error?.message || `Gemini APIでエラーが発生しました（HTTP ${response.status}）。`);
       }
-    );
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let full = "";
+      const consumeLine = (line) => {
+        if (!line.startsWith("data:")) return;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") return;
+        try {
+          const data = JSON.parse(payload);
+          const text = (data.candidates?.[0]?.content?.parts || [])
+            .filter((part) => !part.thought)
+            .map((part) => part.text || "")
+            .join("");
+          if (text) {
+            full += text;
+            try {
+              onDelta(text);
+            } catch (_error) {
+              // 表示側の失敗で生成まで止めない
+            }
+          }
+        } catch (_error) {
+          // 分割されたJSONは無視（次のdata:行で完結する）
+        }
+      };
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          consumeLine(buffer.slice(0, newlineIndex).trim());
+          buffer = buffer.slice(newlineIndex + 1);
+        }
+      }
+      consumeLine(buffer.trim());
+      const text = full.trim();
+      if (!text) throw new Error("Gemini APIから返答を受け取れませんでした。");
+      return text;
+    }
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new Error("Gemini APIが時間内に応答しませんでした。");
@@ -299,19 +353,33 @@ async function runGeminiApi(prompt, config) {
   return text;
 }
 
-async function runClaudeApi(prompt, config) {
+async function runClaudeApi(prompt, config, onDelta) {
   const apiKey = config?.anthropicApiKey;
   if (!apiKey) throw new Error("Claude APIキーが設定されていません。");
   const client = new Anthropic({ apiKey, timeout: 120000 });
   const model = process.env.BIKUNAVI_CLAUDE_MODEL || "claude-opus-4-8";
-  const response = await client.messages.create({
+  const request = {
     model,
     max_tokens: 4096,
     thinking: { type: "adaptive" },
     // マスコット用途は短文・低レイテンシ優先
     output_config: { effort: "low" },
     messages: [{ role: "user", content: prompt }]
-  });
+  };
+  let response;
+  if (typeof onDelta === "function") {
+    const stream = client.messages.stream(request);
+    stream.on("text", (delta) => {
+      try {
+        onDelta(delta);
+      } catch (_error) {
+        // 表示側の失敗で生成まで止めない
+      }
+    });
+    response = await stream.finalMessage();
+  } else {
+    response = await client.messages.create(request);
+  }
   if (response.stop_reason === "refusal") {
     throw new Error("Claudeがこの内容への回答を控えました。");
   }
@@ -332,10 +400,16 @@ const RUNNERS = {
   "claude-api": runClaudeApi
 };
 
-function runProvider(providerId, prompt, config) {
+// テキストを受信しながら逐次コールバックできるプロバイダ（API系のみ）
+const STREAMABLE = new Set(["claude-api", "gemini-api"]);
+
+function runProvider(providerId, prompt, config, onDelta) {
   const runner = RUNNERS[providerId];
   if (!runner) return Promise.reject(new Error(`未知の会話AIです: ${providerId}`));
-  return runner(prompt, config);
+  const deltaHandler = STREAMABLE.has(providerId) && typeof onDelta === "function"
+    ? onDelta
+    : undefined;
+  return runner(prompt, config, deltaHandler);
 }
 
 module.exports = {

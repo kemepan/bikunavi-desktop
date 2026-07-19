@@ -35,6 +35,7 @@ const {
 } = require("./source-utils");
 const { selectChatEmote } = require("./emote-utils");
 const { splitIntoSpeechChunks } = require("./speech-utils");
+const { extractAnswerText } = require("./stream-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -1940,8 +1941,15 @@ async function speakVoicevoxSentences(text, speechId, noSplit = false) {
     for (let index = 0; index < chunks.length; index += 1) {
       const finished = await playSpeechChunk(output, speechId);
       if (!finished || activeSpeechId !== speechId) {
-        // 中断時の終了イベントは stopSpeech 側が送っている
         cleanupFrom(index + 1);
+        // stopSpeechによる中断なら終了イベントは送信済み。afplay自体の失敗で
+        // 止まった場合はここで終了扱いにしないと、rendererの口パクと会話モードが
+        // 「発話中」のまま固まる。
+        if (activeSpeechId === speechId) {
+          activeSpeechId = undefined;
+          companionWindow?.webContents.send("companion:speech-ended", speechId);
+          resolveSpeechWaiter(speechId);
+        }
         return;
       }
       if (index + 1 >= chunks.length) break;
@@ -2315,6 +2323,13 @@ ipcMain.on("companion:hover", (_event, hovered) => {
   if (characterHovered) clearInterval(autoMoveTimer);
 });
 
+// アクセサリ型アプリはクリックだけではアクティブにならないことがあるため、
+// 入力欄クリック時にrendererから明示的にフォーカスを要求する
+ipcMain.on("companion:focus-window", () => {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  companionWindow.focus();
+});
+
 function aiWorkingDirectory() {
   const configured = process.env.BIKUNAVI_AI_CWD || process.env.BIKUNAVI_CODEX_CWD;
   if (configured) return configured;
@@ -2330,14 +2345,18 @@ function activeProviderId() {
   return conversation.resolveProviderId(conversationProvider, conversationConfig());
 }
 
-async function runAssistant(prompt) {
+// onDelta: ストリーミング対応プロバイダ（API系）ではテキスト受信ごとに呼ばれる。
+// onAttemptStart: 自動フォールバックで別プロバイダを試す直前に呼ばれる
+// （受信済みの途中テキストを捨てて表示をやり直すための合図）。
+async function runAssistant(prompt, onDelta, onAttemptStart) {
   const config = conversationConfig();
   if (conversationProvider !== "auto") {
     const providerId = conversation.resolveProviderId(conversationProvider, config);
     if (!providerId) {
       throw new Error("選択中の会話AIが使えません。トレイメニューの「会話AI」を確認してください。");
     }
-    return conversation.runProvider(providerId, prompt, config);
+    onAttemptStart?.();
+    return conversation.runProvider(providerId, prompt, config, onDelta);
   }
   // 自動モードは、失敗（未ログイン・タイムアウト等）したら次の候補へフォールバックする
   const available = conversation.detectProviders(config).filter((provider) => provider.available);
@@ -2347,7 +2366,8 @@ async function runAssistant(prompt) {
   let lastError;
   for (const provider of available) {
     try {
-      return await conversation.runProvider(provider.id, prompt, config);
+      onAttemptStart?.();
+      return await conversation.runProvider(provider.id, prompt, config, onDelta);
     } catch (error) {
       console.error(`Conversation provider ${provider.id} failed:`, error?.message || error);
       lastError = error;
@@ -3737,7 +3757,27 @@ ipcMain.handle("companion:chat", async (
 
   let rawResponse;
   try {
-    rawResponse = await runAssistant(prompt);
+    // ストリーミング対応プロバイダでは、確定したanswer本文を受信のたびに
+    // rendererへ送り、「考え中…」の代わりに文章が育っていく表示にする。
+    let rawAccum = "";
+    let lastSentPartial = "";
+    rawResponse = await runAssistant(
+      prompt,
+      (delta) => {
+        rawAccum += delta;
+        const { text } = extractAnswerText(rawAccum);
+        if (!text || text === lastSentPartial) return;
+        lastSentPartial = text;
+        companionWindow?.webContents.send("companion:chat-delta", {
+          // 内部参照IDだけは途中表示でも見せない
+          text: sanitizeSpokenSourceIds(text, [], latestTopics.sources)
+        });
+      },
+      () => {
+        rawAccum = "";
+        lastSentPartial = "";
+      }
+    );
   } catch (error) {
     console.error("Chat failed:", error);
     return {

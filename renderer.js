@@ -704,6 +704,7 @@ async function replaySpeech(text) {
     currentSpeechId = speechId;
     currentSpeechKind = "answer";
     isSpeaking = true;
+    armSpeechWatchdog(replayText);
     setEmote("joy");
     playMotionOnce("Happy");
   } catch (error) {
@@ -715,9 +716,9 @@ function createReplayButton(text) {
   if (!String(text || "").trim()) return undefined;
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "is-wide";
-  button.textContent = "↻ もう一度聞く";
-  button.title = "この内容を先頭から読み上げ";
+  button.className = "icon-replay";
+  button.title = "もう一度聞く";
+  button.setAttribute("aria-label", "この内容を先頭から読み上げ");
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -823,9 +824,9 @@ function showLineHistory(index = lineHistoryIndex) {
 
   const replay = document.createElement("button");
   replay.type = "button";
-  replay.className = "is-wide";
-  replay.textContent = "↻ もう一度聞く";
-  replay.title = "びくたんの発言を読み上げ";
+  replay.className = "icon-replay";
+  replay.title = "もう一度聞く";
+  replay.setAttribute("aria-label", "びくたんの発言を読み上げ");
   replay.disabled = !entry.speakText;
   replay.addEventListener("click", (event) => {
     event.preventDefault();
@@ -1034,18 +1035,20 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
       }
       scheduleChatIdleReset();
     });
-    history.append(previous, count, next, copy);
+    // もう一度聞くはアイコンだけにして、コピーの隣へ（本文スペースを確保）
+    const replay = createReplayButton(entry?.answer);
+    if (replay) history.append(previous, count, next, replay, copy);
+    else history.append(previous, count, next, copy);
     bubble.append(message);
     if (sourceList) bubble.append(sourceList);
     bubble.append(history);
   } else {
     bubble.append(message);
     if (sourceList) bubble.append(sourceList);
-  }
-
-  if (!busy) {
-    const replayText = pendingCharacterCustomization?.text || carriedLine?.text || entry?.answer;
-    appendReplayAction(replayText);
+    // ナビ行が無い表示（持ち越しセリフ・質問中）でも、もう一度聞くだけは残す
+    if (!busy) {
+      appendReplayAction(pendingCharacterCustomization?.text || carriedLine?.text || entry?.answer);
+    }
   }
 
   if (pendingCharacterCustomization && !busy && !preparingSpeech) {
@@ -1261,6 +1264,7 @@ async function runChat(rawMessage) {
         currentSpeechId = speechId;
         currentSpeechKind = "answer";
         isSpeaking = true;
+        armSpeechWatchdog(response.text);
       })
       .catch((speechError) => {
         console.error("Speech failed:", speechError);
@@ -1721,6 +1725,19 @@ bikunavi.on("companion:custom-question", (item) => {
   scheduleChatIdleReset();
 });
 
+// Dockに出ないアクセサリ型アプリのため、ウィンドウが非アクティブだと入力欄を
+// クリックしてもmacOSがキーボードフォーカスをくれないことがある。
+// その場合はmain側でウィンドウを明示的にフォーカスしてから入力欄へ戻す。
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (document.hasFocus()) return;
+  bikunavi.send("companion:focus-window");
+  setTimeout(() => {
+    if (document.hasFocus()) target.focus();
+  }, 60);
+}, true);
+
 new MutationObserver(() => {
   if (model && topDocked) fitModel();
 }).observe(bubble, {
@@ -1728,8 +1745,22 @@ new MutationObserver(() => {
   attributeFilter: ["class"]
 });
 
+// 終了イベントを万一取りこぼしても、口パクと会話モードが「発話中」のまま
+// 固まらないための自己回復タイマー（固まるとポモドーロUI等が出なくなる）
+let speechWatchdogTimer;
+function armSpeechWatchdog(text) {
+  clearTimeout(speechWatchdogTimer);
+  const limitMs = Math.min(60000, Math.max(10000, String(text || "").length * 250));
+  speechWatchdogTimer = setTimeout(() => {
+    currentSpeechId = undefined;
+    currentSpeechKind = undefined;
+    isSpeaking = false;
+  }, limitMs);
+}
+
 bikunavi.on("companion:speech-ended", (speechId) => {
   if (speechId !== currentSpeechId) return;
+  clearTimeout(speechWatchdogTimer);
   const speechKind = currentSpeechKind;
   currentSpeechId = undefined;
   currentSpeechKind = undefined;
@@ -1753,11 +1784,25 @@ bikunavi.on("companion:speech-started", (payload) => {
   currentSpeechId = payload?.speechId;
   currentSpeechKind = payload?.kind || "answer";
   isSpeaking = Boolean(currentSpeechId);
+  if (isSpeaking) armSpeechWatchdog(displayedLineItem?.text || latestAmbientLineItem?.text);
 });
 
 bikunavi.on("companion:music-playing", (playing) => {
   musicPlaying = Boolean(playing);
   resumeAmbientState();
+});
+
+// ストリーミング応答: 「考え中です…」の位置に、受信できた本文を育てて表示する。
+// 完成した回答は従来どおり companion:chat の戻り値（サニタイズ済み）で置き換わる。
+bikunavi.on("companion:chat-delta", (payload) => {
+  if (!isThinking) return;
+  const partial = String(payload?.text || "").trim();
+  if (!partial) return;
+  const message = bubble.querySelector(".chat-message");
+  if (!message) return;
+  message.textContent =
+    `${preferredUserName}：${shortenForBubble(pendingQuestion, 80)}\n\n` +
+    `びくたん：${shortenForBubble(partial, 240)}`;
 });
 
 bikunavi.on("companion:fortune", (fortune) => {

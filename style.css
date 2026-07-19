@@ -451,10 +451,19 @@ body {
 }
 
 .chat-history button.icon-copy,
-.line-history button.icon-copy {
+.line-history button.icon-copy,
+.chat-history button.icon-replay,
+.line-history button.icon-replay,
+.bubble-actions button.icon-replay {
   display: inline-grid;
   place-items: center;
   min-width: 28px;
+}
+
+.icon-replay::before {
+  content: "↻";
+  font-size: 14px;
+  line-height: 1;
 }
 
 .icon-copy::before {

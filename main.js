@@ -36,6 +36,7 @@ const {
 const { selectChatEmote } = require("./emote-utils");
 const { splitIntoSpeechChunks } = require("./speech-utils");
 const { extractAnswerText, takeCompletedSentences } = require("./stream-utils");
+const { getJapaneseHoliday } = require("./holiday-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -318,6 +319,20 @@ function pickFallbackIdleLine() {
 // 直近に話した「びくたんの作業メモ」。会話で「何してるの？」と聞かれた時に
 // 矛盾しない答えを返せるよう、チャットのプロンプトにも渡す。
 let currentBikutanActivity;
+// 「何してるの？」への答えの種。固定例文だと同じ答えを繰り返すため、
+// プロンプトには毎回この中からランダムに2つだけ渡す
+const BIKUTAN_SMALL_ACTIVITIES = [
+  "ことば帳を読み返す",
+  "聞いてみたいことを考える",
+  "今日の話題を集める",
+  "日記の下書きを眺める",
+  "お気に入りの記事を並べ替える",
+  "覚えた言葉を小さく声に出して練習する",
+  "背筋を伸ばして深呼吸する",
+  "好きなBGMを頭の中で流す",
+  "次のポモドーロの計画を立てる",
+  "思い出帳をぱらぱらめくる"
+];
 
 function makeBikutanWorkLine(force = false) {
   const now = Date.now();
@@ -745,7 +760,9 @@ function getJstTimeContext(date = new Date()) {
     : hour < 19 ? "夕方"
     : hour < 23 ? "夜"
     : "深夜";
-  return { hour, weekday: values.weekday, slot };
+  const { year, month, day } = getJstDateParts(date);
+  const holiday = getJapaneseHoliday(year, month, day);
+  return { hour, weekday: values.weekday, slot, holiday };
 }
 
 function getJstDateString(date = new Date()) {
@@ -3650,7 +3667,10 @@ async function generateIdleLines() {
         : "",
       (() => {
         const t = getJstTimeContext();
-        return `今は${t.weekday}曜日の${t.slot}です。セリフはこの時間帯の空気に合わせてください（深夜・早朝は静かめの話題、朝は軽やか、夜はねぎらい寄り。昼寝の話題は昼〜午後だけ）。`;
+        const holidayNote = t.holiday
+          ? `今日は祝日「${t.holiday}」です。20個のうち1〜2個だけ、祝日らしいゆったりした話題やひとことに使って構いません（連呼はしない）。`
+          : "";
+        return `今は${t.weekday}曜日の${t.slot}です。セリフはこの時間帯の空気に合わせてください（深夜・早朝は静かめの話題、朝は軽やか、夜はねぎらい寄り。昼寝の話題は昼〜午後だけ）。${holidayNote}`;
       })(),
       "次は必ず避けてください: 見えないはずの画面や作業内容を見たかのような発言、『保存しました？』のような確認やお小言の繰り返し、『◯時台ですね』のような時刻の実況、ユーザーの様子を見張る発言、説教。",
       "20個は互いに似せないでください。『おっ、〜』『〜します？』のような書き出しや文型を続けて使わず、語尾も散らしてください。ひねりすぎた比喩より、素直で具体的な一言を優先してください。",
@@ -3785,6 +3805,7 @@ ipcMain.handle("companion:chat", async (
       : "",
     "キャラクター性を保ちながら、結論から簡潔に答えてください。ただし普段の会話は要約見出しのように冷たく始めず、最初の一文に好奇心、嬉しさ、軽いツッコミのどれかを短くにじませてください。",
     "通常は明るめ、成功や完了は一段嬉しそうに、謝罪・危険・深刻な話題では冗談を止めて落ち着いて答えてください。",
+    "下の「直近の会話」に出てくる自分の言い回し・例え・話題・締めの文をそのまま繰り返さないでください。同じ趣旨でも毎回違う角度や表現で答えてください。",
     preferredUserName
       ? `名前の区別は厳守してください。「${preferredUserName}」は会話相手であるユーザーだけの呼び名です。この表記を一字も変更・省略・訂正せず、相手を呼ぶ時は必ず「${preferredUserName}」のまま使ってください。びくたん自身を「${preferredUserName}」と呼ぶのは禁止です。びくたんの一人称は「びくたん」または主語省略だけです。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で相手を呼んでください。`
       : "ユーザーの呼び名はまだ決まっていません。『あなた』を連呼せず、自然に主語を省いてください。",
@@ -3796,11 +3817,22 @@ ipcMain.handle("companion:chat", async (
       : "",
     (() => {
       const t = getJstTimeContext();
-      return `今は${t.weekday}曜日の${t.slot}（${t.hour}時ごろ）です。この時間感覚を会話の前提にしてください。ただし時刻の実況はせず、深夜に元気すぎる提案、朝夕がずれた挨拶、昼以外の時間帯での昼寝の話はしないでください。`;
+      const holidayNote = t.holiday
+        ? `今日は祝日「${t.holiday}」です。話題に自然に合うときだけ軽く触れて構いません（毎回は言わない）。`
+        : "";
+      return `今は${t.weekday}曜日の${t.slot}（${t.hour}時ごろ）です。この時間感覚を会話の前提にしてください。ただし時刻の実況はせず、深夜に元気すぎる提案、朝夕がずれた挨拶、昼以外の時間帯での昼寝の話はしないでください。${holidayNote}`;
     })(),
     currentBikutanActivity
       ? `びくたんは少し前まで「${currentBikutanActivity.replace(/。$/, "")}」ところでした。「何してるの？」のように今の様子を聞かれたら、この内容を自然に踏まえて答えてください。`
-      : "「何してるの？」のように今の様子を聞かれたら、ことば帳を読み返す、聞いてみたいことを考えるなど、アプリ内で完結するささやかな様子をひとつ挙げて答えてください。",
+      : (() => {
+        // 固定の例文だとモデルが同じ答えを繰り返すので、毎回シャッフルして渡す
+        const samples = [...BIKUTAN_SMALL_ACTIVITIES]
+          .sort(() => Math.random() - 0.5)
+          .slice(0, 2)
+          .map((activity) => `「${activity}」`)
+          .join("や");
+        return `「何してるの？」のように今の様子を聞かれたら、例えば${samples}のような、アプリ内で完結するささやかな様子をひとつ挙げて答えてください。例をそのまま使わず、自分の言葉で少し変えてください。`;
+      })(),
     CAPABILITY_BOUNDARY_PROMPT,
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",

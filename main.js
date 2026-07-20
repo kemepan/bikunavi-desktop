@@ -1070,6 +1070,7 @@ function setSoundMuted(muted) {
     pomodoroChimeProcess = undefined;
     stopThinkingSound();
     stopSpeech();
+    stopAizuchi();
   }
   companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
   tray?.setContextMenu(buildTrayMenu());
@@ -1742,6 +1743,7 @@ function setSystemSleeping(sleeping) {
     pomodoroChimeProcess = undefined;
     stopThinkingSound();
     stopSpeech();
+    stopAizuchi();
     pomodoroPausedBySystem = pomodoroState.active && pomodoroState.running;
     if (pomodoroPausedBySystem) pausePomodoro();
   } else if (pomodoroPausedBySystem) {
@@ -1954,6 +1956,8 @@ async function speakVoicevoxSentences(text, speechId, noSplit = false) {
   }
 
   (async () => {
+    // 相づちの再生中なら、切らずに終わってから話し始める
+    await aizuchiDone();
     let output = firstOutput;
     for (let index = 0; index < chunks.length; index += 1) {
       const finished = await playSpeechChunk(output, speechId);
@@ -2131,6 +2135,8 @@ function createStreamingSpeech(kind = "answer") {
       if (!file) return false;
       if (!announced) {
         announced = true;
+        // 相づちの再生中なら、切らずに終わってから話し始める
+        await aizuchiDone();
         companionWindow?.webContents.send("companion:speech-started", { speechId, kind });
       }
       return playSpeechChunk(file, speechId);
@@ -2160,6 +2166,101 @@ function createStreamingSpeech(kind = "answer") {
     hasQueued: () => queuedCount > 0,
     hasStarted: () => announced
   };
+}
+
+// ── 相づち音声の作り置き ──
+// 話しかけられた直後、考えている間に短く反応する。フレーズは起動時に
+// 合成しておき、再生時はコピーを使う（本回答の読み上げが始まると
+// stopSpeech 経由で自動的に引っ込む）。
+const AIZUCHI_PHRASES = [
+  "うんうん。",
+  "ふむふむ。",
+  "なるほど…",
+  "えっと、ですね。",
+  "はい、聞きました。",
+  "ちょっと考えますね。"
+];
+let aizuchiAudio; // { speaker, files: [{ text, file }] }
+
+async function prepareAizuchiAudio() {
+  const speaker = voicevoxSpeaker;
+  if (aizuchiAudio?.speaker === speaker && aizuchiAudio.files.length) return;
+  const files = [];
+  for (const [index, text] of AIZUCHI_PHRASES.entries()) {
+    const file = path.join(
+      app.getPath("temp"),
+      `bikunavi-speech-aizuchi-${speaker}-${index}.wav`
+    );
+    try {
+      if (!fs.existsSync(file)) {
+        const generated = await createVoicevoxAudio(text, `aizuchi-${speaker}-${index}`);
+        if (generated !== file) await fs.promises.rename(generated, file);
+      }
+      files.push({ text, file });
+    } catch (error) {
+      console.error("Aizuchi prewarm failed:", error?.message || error);
+      break;
+    }
+  }
+  if (files.length) aizuchiAudio = { speaker, files };
+}
+
+// 相づちは通常の読み上げと別チャンネルで再生する。本回答の読み上げは
+// 相づちを途中で切らず、終わるのを待ってから話し始める（aizuchiDone）。
+let aizuchiProcess;
+let aizuchiSequence = 0;
+let aizuchiDoneResolvers = [];
+
+function resolveAizuchiDone() {
+  const resolvers = aizuchiDoneResolvers;
+  aizuchiDoneResolvers = [];
+  for (const resolve of resolvers) resolve();
+}
+
+function stopAizuchi() {
+  const child = aizuchiProcess;
+  aizuchiProcess = undefined;
+  child?.kill("SIGTERM");
+  resolveAizuchiDone();
+}
+
+// 相づちが鳴り終わるまで待つ（鳴っていなければ即解決。安全のため上限4秒）
+function aizuchiDone() {
+  if (!aizuchiProcess) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, 4000);
+    aizuchiDoneResolvers.push(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
+function maybePlayAizuchi() {
+  if (!aizuchiAudio || aizuchiAudio.speaker !== voicevoxSpeaker) return;
+  if (systemSleeping || soundMuted || !speechEnabled) return;
+  // 毎回だとうるさいので、たまに黙って考える
+  if (Math.random() < 0.25) return;
+  const pick = aizuchiAudio.files[Math.floor(Math.random() * aizuchiAudio.files.length)];
+  if (!pick || !fs.existsSync(pick.file)) return;
+
+  stopSpeech(); // 読み上げ中の独り言などは止めてから相づちを打つ
+  stopAizuchi();
+  const aizuchiId = `aizuchi-${++aizuchiSequence}`;
+  const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+  const child = spawn("/usr/bin/afplay", ["-v", volumeScale, pick.file], { stdio: "ignore" });
+  aizuchiProcess = child;
+  companionWindow?.webContents.send("companion:speech-started", { speechId: aizuchiId, kind: "answer" });
+  const finish = () => {
+    if (aizuchiProcess === child) aizuchiProcess = undefined;
+    companionWindow?.webContents.send("companion:speech-ended", aizuchiId);
+    resolveAizuchiDone();
+  };
+  child.on("close", finish);
+  child.on("error", (error) => {
+    console.error("Aizuchi playback failed:", error?.message || error);
+    finish();
+  });
 }
 
 // ── 今日の占い音声の作り置き ──
@@ -2211,6 +2312,11 @@ async function speakPreparedAudio(file, text, kind = "answer") {
   } catch (error) {
     console.error("Prepared audio copy failed:", error?.message || error);
     if (activeSpeechId === speechId) activeSpeechId = undefined;
+    return undefined;
+  }
+  await aizuchiDone();
+  if (activeSpeechId !== speechId) {
+    fs.promises.unlink(playFile).catch(() => {});
     return undefined;
   }
   playSpeechAudio(playFile, speechId);
@@ -2280,8 +2386,12 @@ app.whenReady().then(() => {
   ensureVoicevoxEngine()
     .then(() => {
       // 起動直後の読み上げと合成が競合しないよう、少し置いてから
-      // 今日の占い音声を作り置きする
-      setTimeout(() => prepareDailyFortuneAudio(), 8000);
+      // 相づち→今日の占いの順に音声を作り置きする（相づちは小さく先に済む）
+      setTimeout(() => {
+        prepareAizuchiAudio()
+          .catch(() => {})
+          .finally(() => prepareDailyFortuneAudio());
+      }, 8000);
     })
     .catch((error) => {
       console.error("VOICEVOX prewarm failed:", error);
@@ -3762,6 +3872,8 @@ ipcMain.handle("companion:chat", async (
 ) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
+  // 考えている間の相づち（本回答の声が始まると自動で引っ込む）
+  maybePlayAizuchi();
   const contextLine = String(rawContextLine ?? "").trim().slice(0, 600);
   const isDirectReply = Boolean(rawIsDirectReply && contextLine);
   const contextSources = uniqueSources(
@@ -4224,6 +4336,7 @@ app.on("before-quit", () => {
   clearPomodoroTimer();
   clearInterval(mediaPlaybackTimer);
   stopSpeech();
+  stopAizuchi();
   // 再生中のジングル・チャイムをアプリより長生きさせない
   stopThinkingSound();
   pomodoroChimeProcess?.kill("SIGTERM");

@@ -1461,12 +1461,16 @@ function scheduleChatter() {
 }
 
 function startFloating() {
-  setTimeout(() => {
-    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
-  }, 20000);
-  setInterval(() => {
-    if (!isHovered && !dragging && !chatActive && !pomodoroState.active) bikunavi.send("companion:auto-move");
-  }, 45000);
+  // 一定間隔だと機械的なので、18〜35秒のゆらぎで移動チャンスを作る
+  const scheduleNext = (delayMs) => {
+    setTimeout(() => {
+      if (!isHovered && !dragging && !chatActive && !pomodoroState.active) {
+        bikunavi.send("companion:auto-move");
+      }
+      scheduleNext(18000 + Math.random() * 17000);
+    }, delayMs);
+  };
+  scheduleNext(20000);
 }
 
 function updateIdleGaze(seconds, deltaMs, active) {

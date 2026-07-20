@@ -2477,14 +2477,25 @@ ipcMain.on("companion:auto-move", () => {
   // 自動移動ではメニューバー直下へ吸い付かせない。上端へ行きたい時は手動ドラッグだけにする。
   const maxY = area.y + area.height - bounds.height;
   const minY = Math.min(area.y + 64, maxY);
-  const stepX = Math.round((Math.random() * 2 - 1) * 160);
-  const stepY = Math.round((Math.random() * 2 - 1) * 110);
-  const destination = {
-    x: Math.max(minX, Math.min(maxX, origin[0] + stepX)),
-    y: Math.max(minY, Math.min(maxY, origin[1] + stepY))
-  };
+  // 3割の確率で画面内のどこかへ大きくお出かけ、残りは近場の中移動。
+  // 移動時間は距離に応じて伸縮し、歩く速さの印象を一定に保つ。
+  let destination;
+  if (Math.random() < 0.3) {
+    destination = {
+      x: Math.round(minX + Math.random() * Math.max(0, maxX - minX)),
+      y: Math.round(minY + Math.random() * Math.max(0, maxY - minY))
+    };
+  } else {
+    const stepX = Math.round((Math.random() * 2 - 1) * 260);
+    const stepY = Math.round((Math.random() * 2 - 1) * 180);
+    destination = {
+      x: Math.max(minX, Math.min(maxX, origin[0] + stepX)),
+      y: Math.max(minY, Math.min(maxY, origin[1] + stepY))
+    };
+  }
   const startedAt = Date.now();
-  const duration = 14000;
+  const distance = Math.hypot(destination.x - origin[0], destination.y - origin[1]);
+  const duration = Math.max(6000, Math.min(20000, Math.round(distance * 22)));
 
   if (!Number.isFinite(destination.x) || !Number.isFinite(destination.y) ||
       !Number.isFinite(origin[0]) || !Number.isFinite(origin[1])) {

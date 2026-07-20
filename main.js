@@ -4189,7 +4189,7 @@ ipcMain.handle("companion:chat", async (
     CAPABILITY_BOUNDARY_PROMPT,
     "吹き出し表示のため、回答は原則180文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
-    "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・普段の会話・質問・挨拶）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、normal（注意・謝罪・深刻な話だけ）。迷った時はjoyにし、普段の説明をnormalにしないでください。",
+    "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・普段の会話・質問・挨拶）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、troubled（謝罪・うまくできなかった時・困った時）、sad（悲しい話・寂しい話・しんみりした話題）、normal（危険の注意・深刻な話だけ）。迷った時はjoyにし、普段の説明をnormalにしないでください。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",
     "音楽・BGM・プレイリストのおすすめを答えたときだけ、JSONに \"musicQuery\":\"YouTube検索に使う短い語\" を追加してください（例: \"ローファイヒップホップ 作業用\"）。挙げた曲調やジャンルがそのまま検索で見つかる語にし、音楽以外の話題では musicQuery を入れないでください。",
     "A1・G3のような参照IDは内部管理用です。answer本文には絶対に書かず、情報源へ触れる場合は媒体名を自然に書いてください。存在しないIDを作らないでください。",
@@ -4216,9 +4216,16 @@ ipcMain.handle("companion:chat", async (
   // ストリーミング対応プロバイダでは、確定したanswer本文を受信のたびに
   // rendererへ送って表示を育てつつ、文が確定するたびに読み上げも始める。
   const stream = { rawAccum: "", lastSentPartial: "", spokenOffset: 0, speech: undefined };
+  // 途中表示・先行読み上げにも、最終回答と同じ主語・呼び名の修復と
+  // 参照ID除去をかける（生の出力を見せない・話させない）
+  const polishPartial = (text) => sanitizeSpokenSourceIds(
+    repairBikutanSelfReferences(text, preferredUserName),
+    [],
+    latestTopics.sources
+  );
   const speakSentence = (sentence) => {
     if (!stream.speech) stream.speech = createStreamingSpeech("answer");
-    stream.speech?.enqueue(sanitizeSpokenSourceIds(sentence, [], latestTopics.sources));
+    stream.speech?.enqueue(polishPartial(sentence));
   };
   try {
     rawResponse = await runAssistant(
@@ -4229,8 +4236,7 @@ ipcMain.handle("companion:chat", async (
         if (!text || text === stream.lastSentPartial) return;
         stream.lastSentPartial = text;
         companionWindow?.webContents.send("companion:chat-delta", {
-          // 内部参照IDだけは途中表示でも見せない
-          text: sanitizeSpokenSourceIds(text, [], latestTopics.sources)
+          text: polishPartial(text)
         });
         const completed = takeCompletedSentences(text, stream.spokenOffset);
         if (completed.sentences.length) {

@@ -102,6 +102,21 @@
 			"Name": "顔06"
 		},
 		{
+			"Id": "Paramf07",
+			"GroupId": "",
+			"Name": "顔07"
+		},
+		{
+			"Id": "Paramf08",
+			"GroupId": "",
+			"Name": "顔08"
+		},
+		{
+			"Id": "Paramf09",
+			"GroupId": "",
+			"Name": "顔09"
+		},
+		{
 			"Id": "ParamCheek",
 			"GroupId": "",
 			"Name": "照れ"

@@ -22,19 +22,27 @@ const EMOTES = {
   surprised: { eyeOpen: 1.2, eyeSmile: 0, mouthForm: 0, mouthOpen: 0.8 },
   thinking: { eyeOpen: 0.08, eyeSmile: 0, mouthForm: -0.15, mouthOpen: 0 },
   wink: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 },
-  proud: { eyeOpen: 1, eyeSmile: 0, mouthForm: 0.4, mouthOpen: 0 }
+  proud: { eyeOpen: 1, eyeSmile: 0, mouthForm: 0.4, mouthOpen: 0 },
+  troubled: { eyeOpen: 0.65, eyeSmile: 0, mouthForm: -0.35, mouthOpen: 0 },
+  sad: { eyeOpen: 0.45, eyeSmile: 0, mouthForm: -0.6, mouthOpen: 0 }
 };
 const EXPRESSION_NAMES = {
   joy: "f02",
   surprised: "f03",
-  thinking: "f04",
-  wink: "f05",
-  proud: "f06"
+  // thinkingはf08＋目とじパラメータの併用（docs/Live2D制作メモ.md）
+  thinking: "f08",
+  wink: "f09",
+  proud: "f06",
+  troubled: "f04",
+  sad: "f05"
 };
+// ミュート中はびくたん本人が×マスクを着ける（表情はf07）
+const MASK_EXPRESSION = "f07";
+let lastEmoteName = "default";
 // AI回答が指定できる表情。"normal" はEMOTES/EXPRESSION_NAMES未定義のため
 // setEmoteで自然にデフォルト顔（表情リセット）へ落ちる。
 // emote-utils.js の CHAT_EMOTES と同一内容を保つこと（表情の増減時は両方更新）。
-const ANSWER_EMOTES = new Set(["joy", "wink", "proud", "surprised", "normal"]);
+const ANSWER_EMOTES = new Set(["joy", "wink", "proud", "surprised", "troubled", "sad", "normal"]);
 let model;
 let originalModelWidth;
 let originalModelHeight;
@@ -440,6 +448,9 @@ function updateSoundToggle() {
   if (soundMuted === soundToggleMutedRendered) return;
   soundToggleMutedRendered = soundMuted;
   const useImage = soundMuted ? soundToggleImageReady.off : soundToggleImageReady.on;
+  // ミュート切替に合わせて、びくたん本人のマスク表情も着脱する
+  if (soundMuted) model?.expression(MASK_EXPRESSION);
+  else setEmote(lastEmoteName);
   soundToggle?.classList.toggle("is-muted", soundMuted);
   soundToggle?.classList.toggle("has-image", useImage);
   soundToggle.textContent = useImage ? "" : (soundMuted ? "🔇" : "🔊");
@@ -1252,8 +1263,9 @@ async function runChat(rawMessage) {
     isPreparingSpeech = false;
     showChatBubble();
     setEmote(response.emote || "joy");
-    // emoteはnormalizeSpeechItemでANSWER_EMOTES検証済み。normal以外は喜びモーション付き
-    if ((response.emote || "joy") !== "normal") {
+    // emoteはnormalizeSpeechItemでANSWER_EMOTES検証済み。明るい表情だけ喜びモーション付き
+    // （normal・troubled・sad では跳ねない）
+    if (["joy", "wink", "proud", "surprised"].includes(response.emote || "joy")) {
       playMotionOnce("Happy");
     }
 
@@ -1316,7 +1328,13 @@ function hideBubble(delay = 0) {
 }
 
 function setEmote(name) {
+  lastEmoteName = name;
   currentEmote = { ...(EMOTES[name] || EMOTES.default) };
+  // ミュート中は表情をマスク（f07）で固定する。解除時に本来の表情へ戻る
+  if (soundMuted) {
+    model?.expression(MASK_EXPRESSION);
+    return;
+  }
   const expressionName = EXPRESSION_NAMES[name];
   if (expressionName) {
     model?.expression(expressionName);
@@ -1355,7 +1373,9 @@ function enterCharacter() {
   if (isHovered || dragging) return;
   isHovered = true;
   bikunavi.send("companion:hover", true);
-  setEmote("joy");
+  // セリフに合わせた表情（泣き顔・困り顔など）はホバーで上書きしない。
+  // 素の顔のときだけ、気づいてにこっとする
+  if (lastEmoteName === "default" || lastEmoteName === "normal") setEmote("joy");
   if (lineHistoryActive) return;
   if (chatActive && bubble.classList.contains("has-chat")) return;
   if (pomodoroState.active) {

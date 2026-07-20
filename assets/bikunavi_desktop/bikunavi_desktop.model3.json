@@ -31,6 +31,18 @@
       {
         "Name": "f06",
         "File": "f06.exp3.json"
+      },
+      {
+        "Name": "f07",
+        "File": "f07.exp3.json"
+      },
+      {
+        "Name": "f08",
+        "File": "f08.exp3.json"
+      },
+      {
+        "Name": "f09",
+        "File": "f09.exp3.json"
       }
     ],
     "Motions": {

@@ -1784,9 +1784,10 @@ function setSystemSleeping(sleeping) {
   companionWindow?.webContents.send("companion:system-sleep", systemSleeping);
   if (!systemSleeping) {
     const name = getPreferredUserName();
+    // 復帰は夜も昼もあるので「おはよー」は付けず、時間帯を問わない挨拶にする
     const greeting = name
-      ? `おはよー、${name}。おかえりなさい。`
-      : "おはよー。おかえりなさい。";
+      ? `${name}、おかえりなさい。`
+      : "おかえりなさい。";
     showAmbientLine({ text: greeting, sources: [], kind: "wake" });
     speakFromMain(greeting, "answer").catch((error) => {
       console.error("Wake greeting speech failed:", error);

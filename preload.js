@@ -40,7 +40,10 @@ const INVOKE_CHANNELS = new Set([
   "companion:transcribe-audio",
   "companion:api-key-status",
   "companion:set-api-key",
-  "companion:close-api-key"
+  "companion:close-api-key",
+  "companion:data-overview",
+  "companion:data-delete",
+  "companion:data-clear"
 ]);
 
 const ON_CHANNELS = new Set([

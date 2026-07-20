@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" />
+    <title>びくたんのデータ管理</title>
+    <style>
+      body {
+        font-family: -apple-system, "Hiragino Sans", sans-serif;
+        margin: 0;
+        padding: 16px 20px 24px;
+        background: #f7f4ef;
+        color: #3a342c;
+        font-size: 12.5px;
+      }
+      h1 { font-size: 15px; margin: 0 0 4px; }
+      p.note { margin: 0 0 14px; color: #7a7062; font-size: 11px; line-height: 1.5; }
+      section {
+        background: #fff;
+        border: 1px solid #e3dccf;
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+      }
+      section h2 {
+        font-size: 12.5px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      section h2 .count { color: #9a9080; font-weight: normal; font-size: 11px; }
+      section h2 button { margin-left: auto; }
+      ul { list-style: none; margin: 8px 0 0; padding: 0; }
+      li {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 4px 0;
+        border-top: 1px solid #f0ebe1;
+        line-height: 1.45;
+      }
+      li .body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      li .meta { color: #9a9080; font-size: 10.5px; }
+      button {
+        font: inherit;
+        font-size: 11px;
+        padding: 3px 10px;
+        border: 1px solid #cfc6b8;
+        border-radius: 7px;
+        background: #fff;
+        color: #3a342c;
+        cursor: pointer;
+        flex: none;
+      }
+      button:hover { background: #f2ede4; }
+      button.danger { color: #a33; border-color: #d8b6b6; }
+      button.danger:hover { background: #f8ecec; }
+      .empty { color: #9a9080; font-size: 11px; margin: 8px 0 0; }
+      #forget-all { width: 100%; padding: 8px; margin-top: 4px; }
+      .keyline { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+      .keyline .body { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <h1>びくたんのデータ管理</h1>
+    <p class="note">びくたんが覚えている内容の確認と削除ができます。削除はすぐに反映され、元に戻せません。データはこのMacの中だけに保存されています。</p>
+    <div id="sections"></div>
+    <section>
+      <h2>ぜんぶ忘れる</h2>
+      <p class="note" style="margin:6px 0 8px">呼び名・ことば帳・思い出帳・性格の回答・日記・会話とセリフの履歴・気になる記事をすべて削除します（設定とAPIキーは残ります）。</p>
+      <button id="forget-all" class="danger">すべての記憶を削除…</button>
+    </section>
+    <script src="data.js"></script>
+  </body>
+</html>

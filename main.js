@@ -13,7 +13,8 @@ const {
   protocol,
   net,
   globalShortcut,
-  dialog
+  dialog,
+  safeStorage
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -167,7 +168,14 @@ function collectState() {
   persistedState.musicReactEnabled = musicReactEnabled;
   persistedState.idleIntervalMs = idleIntervalMs;
   persistedState.conversationProvider = conversationProvider;
-  persistedState.anthropicApiKey = anthropicApiKey;
+  // 暗号化できる環境では平文キーをstate.jsonへ残さない
+  if (anthropicApiKey && safeStorage.isEncryptionAvailable()) {
+    persistedState.anthropicApiKeyEnc = safeStorage.encryptString(anthropicApiKey).toString("base64");
+    persistedState.anthropicApiKey = "";
+  } else {
+    persistedState.anthropicApiKey = anthropicApiKey;
+    if (!anthropicApiKey) delete persistedState.anthropicApiKeyEnc;
+  }
   persistedState.conversationHistory = conversationHistory.slice(-12);
   if (companionWindow) persistedState.position = companionWindow.getPosition();
 }
@@ -217,6 +225,24 @@ let conversationProvider = ["auto", "codex", "claude-cli", "gemini-api", "gemini
   .includes(persistedState.conversationProvider)
   ? persistedState.conversationProvider
   : "auto";
+// Claude APIキーは safeStorage（macOSキーチェーン連動）で暗号化して保存する。
+// 旧バージョンの平文キーは読み込み時に引き継ぎ、次回保存で暗号化へ移行する。
+function decryptStoredApiKey() {
+  const encrypted = persistedState.anthropicApiKeyEnc;
+  if (typeof encrypted === "string" && encrypted && safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+    } catch (error) {
+      console.error("APIキーの復号に失敗しました:", error?.message || error);
+      return "";
+    }
+  }
+  return typeof persistedState.anthropicApiKey === "string"
+    ? persistedState.anthropicApiKey
+    : "";
+}
+// safeStorage は app ready 前に使えないため、まず平文だけ読み、
+// ready 後に decryptStoredApiKey() で暗号化分を復号して上書きする
 let anthropicApiKey = typeof persistedState.anthropicApiKey === "string"
   ? persistedState.anthropicApiKey
   : "";
@@ -1669,6 +1695,11 @@ function buildTrayMenu() {
       label: "データ管理",
       submenu: [
         {
+          label: "覚えている内容を見る・消す…",
+          click: () => openDataWindow()
+        },
+        { type: "separator" },
+        {
           label: "おしゃべり履歴を消去…",
           click: async () => {
             // 取り消せない消去なので、実行前に必ず確認を挟む
@@ -2326,6 +2357,8 @@ async function speakPreparedAudio(file, text, kind = "answer") {
 }
 
 app.whenReady().then(() => {
+  // 暗号化保存されたAPIキーの復号（safeStorageはready後のみ使用可）
+  anthropicApiKey = decryptStoredApiKey();
   protocol.handle(APP_SCHEME, (request) => {
     const url = new URL(request.url);
     const requestPath = path.normalize(decodeURIComponent(url.pathname));
@@ -2593,6 +2626,189 @@ async function runAssistant(prompt, onDelta, onAttemptStart) {
 
 let apiKeyWindow;
 let apiKeyWindowProvider = "claude";
+let dataWindow;
+
+function openDataWindow() {
+  if (dataWindow && !dataWindow.isDestroyed()) {
+    dataWindow.focus();
+    return;
+  }
+  dataWindow = new BrowserWindow({
+    width: 540,
+    height: 620,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    title: "びくたんのデータ管理",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+  dataWindow.setMenuBarVisibility?.(false);
+  dataWindow.loadURL(`${APP_SCHEME}://app/data.html`);
+  dataWindow.on("closed", () => {
+    dataWindow = undefined;
+  });
+}
+
+function formatDataDate(timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+  const { year, month, day } = getJstDateParts(new Date(timestamp));
+  return `${year}/${month}/${day}`;
+}
+
+ipcMain.handle("companion:data-overview", () => {
+  const growth = getGrowthData();
+  const answers = getCharacterAnswers();
+  const characterAnswers = Object.entries(answers)
+    .filter(([id]) => id !== "user_address")
+    .map(([id, entry]) => ({
+      id,
+      question: String(entry?.question || id).slice(0, 120),
+      answer: String(entry?.answer || "").slice(0, 200)
+    }));
+  const growthAnswers = Object.entries(growth.growthAnswers).map(([id, entry]) => ({
+    id,
+    question: String(entry?.question || id).slice(0, 120),
+    answer: String(entry?.answer || "").slice(0, 200)
+  }));
+  return {
+    userName: getPreferredUserName(),
+    learnedWords: growth.learnedWords.map((entry) => ({
+      text: String(entry?.text || "").slice(0, 200),
+      date: formatDataDate(Number(entry?.learnedAt))
+    })),
+    sharedMemories: growth.sharedMemories.map((entry) => ({
+      text: String(entry?.text || "").slice(0, 200),
+      date: formatDataDate(Number(entry?.createdAt))
+    })),
+    characterAnswers,
+    growthAnswers,
+    diaries: getDailyDiaries().map((entry) => ({
+      date: entry.date,
+      preview: entry.lines.join(" / ").slice(0, 160)
+    })),
+    savedLinks: getSavedLinks().map((link) => ({
+      title: String(link.title || link.url || "").slice(0, 120),
+      url: String(link.url || ""),
+      source: String(link.source || "")
+    })),
+    lineCount: Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory.length : 0,
+    chatCount: Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries.length : 0,
+    historyCount:
+      (Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory.length : 0) +
+      (Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries.length : 0),
+    apiKeys: {
+      claude: {
+        present: Boolean(anthropicApiKey),
+        encrypted: Boolean(anthropicApiKey) && safeStorage.isEncryptionAvailable()
+      },
+      gemini: {
+        present: Boolean(conversation.getGeminiApiKey(conversationConfig()))
+      }
+    }
+  };
+});
+
+function clearChatHistories() {
+  persistedState.lineHistory = [];
+  persistedState.chatEntries = [];
+  conversationHistory.length = 0;
+  companionWindow?.webContents.send("companion:clear-history");
+}
+
+ipcMain.handle("companion:data-delete", (_event, rawCategory, rawKey) => {
+  const category = String(rawCategory || "");
+  const growth = getGrowthData();
+  const index = Number(rawKey);
+  switch (category) {
+    case "characterAnswer": {
+      const id = String(rawKey || "");
+      delete getCharacterAnswers()[id];
+      break;
+    }
+    case "growthAnswer": {
+      delete growth.growthAnswers[String(rawKey || "")];
+      break;
+    }
+    case "learnedWord":
+      if (Number.isInteger(index) && index >= 0) growth.learnedWords.splice(index, 1);
+      break;
+    case "sharedMemory":
+      if (Number.isInteger(index) && index >= 0) growth.sharedMemories.splice(index, 1);
+      break;
+    case "diary": {
+      const date = String(rawKey || "");
+      persistedState.dailyDiaries = getDailyDiaries().filter((entry) => entry.date !== date);
+      break;
+    }
+    case "savedLink":
+      removeSavedLink(String(rawKey || ""));
+      break;
+    case "apiKeyClaude":
+      anthropicApiKey = "";
+      if (conversationProvider === "claude-api") conversationProvider = "auto";
+      break;
+    case "apiKeyGemini":
+      writeGeminiApiKey("");
+      if (conversationProvider === "gemini-api") conversationProvider = "auto";
+      break;
+    default:
+      return false;
+  }
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return true;
+});
+
+ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
+  const category = String(rawCategory || "");
+  const growth = getGrowthData();
+  switch (category) {
+    case "learnedWords":
+      growth.learnedWords.length = 0;
+      break;
+    case "sharedMemories":
+      growth.sharedMemories.length = 0;
+      break;
+    case "personality":
+      persistedState.characterAnswers = {
+        ...(getCharacterAnswers().user_address
+          ? { user_address: getCharacterAnswers().user_address }
+          : {})
+      };
+      persistedState.bikutanGrowthAnswers = {};
+      break;
+    case "diaries":
+      persistedState.dailyDiaries = [];
+      break;
+    case "savedLinks":
+      persistedState.savedLinks = [];
+      break;
+    case "history":
+      clearChatHistories();
+      break;
+    case "all":
+      persistedState.characterAnswers = {};
+      persistedState.bikutanGrowthAnswers = {};
+      persistedState.learnedWords = [];
+      persistedState.sharedMemories = [];
+      persistedState.dailyDiaries = [];
+      persistedState.savedLinks = [];
+      persistedState.fortuneThemes = [];
+      clearChatHistories();
+      break;
+    default:
+      return false;
+  }
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return true;
+});
 
 function openApiKeyWindow(provider = "claude") {
   const requestedProvider = provider === "gemini" ? "gemini" : "claude";

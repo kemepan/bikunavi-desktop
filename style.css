@@ -7,6 +7,15 @@
   user-select: none;
 }
 
+/* セリフ・回答の本文は部分コピーできるように選択可能にする */
+.bubble-message,
+.bubble-message *,
+.chat-message,
+.chat-message * {
+  user-select: text;
+  cursor: text;
+}
+
 html,
 body {
   width: 100%;

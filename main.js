@@ -2355,6 +2355,12 @@ app.whenReady().then(() => {
     return Boolean(isAppPage && wantsMicrophone);
   });
   app.dock?.hide();
+  // メニューを持たないとmacOSでCmd+C/Vなどのクリップボード操作が効かない。
+  // Dock非表示なのでメニュー自体は見えないが、ショートカットのために設定する。
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: "びくたん", submenu: [{ role: "quit" }] },
+    { role: "editMenu" }
+  ]));
   createWindow();
   if (needsLegacyUserVocativeRepair) saveStateSoon();
   if (!globalShortcut.register(CHAT_SHORTCUT, openChatInput)) {
@@ -3562,13 +3568,21 @@ function parseChatResponse(rawResponse, sourceMap, userMessage = "") {
     .filter(Boolean);
   const explicitSources = Array.isArray(parsed.sources) ? parsed.sources : [];
   const emote = selectChatEmote(parsed.emote, text, userMessage);
+  // 音楽のおすすめには、占いのBGM行と同じYouTube検索リンクを付ける
+  const musicQuery = typeof parsed.musicQuery === "string"
+    ? parsed.musicQuery.trim().slice(0, 60)
+    : "";
+  const musicSources = musicQuery
+    ? [makeYoutubeSearchSource(/BGM|音楽|プレイリスト|作業用/i.test(musicQuery) ? musicQuery : `${musicQuery} BGM`)]
+    : [];
   return {
     text,
     emote,
     sources: uniqueSources([
       ...idSources,
       ...explicitSources,
-      ...extractUrlsFromText(text)
+      ...extractUrlsFromText(text),
+      ...musicSources
     ])
   };
 }
@@ -3950,6 +3964,7 @@ ipcMain.handle("companion:chat", async (
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
     "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・普段の会話・質問・挨拶）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、normal（注意・謝罪・深刻な話だけ）。迷った時はjoyにし、普段の説明をnormalにしないでください。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",
+    "音楽・BGM・プレイリストのおすすめを答えたときだけ、JSONに \"musicQuery\":\"YouTube検索に使う短い語\" を追加してください（例: \"ローファイヒップホップ 作業用\"）。挙げた曲調やジャンルがそのまま検索で見つかる語にし、音楽以外の話題では musicQuery を入れないでください。",
     "A1・G3のような参照IDは内部管理用です。answer本文には絶対に書かず、情報源へ触れる場合は媒体名を自然に書いてください。存在しないIDを作らないでください。",
     latestTopics.promptText
       ? "下の最新見出しを使った場合は、元にした見出しIDを sourceIds に入れてください。見出しだけで分からない詳細は補わず、推測は推測と分かるようにしてください。"

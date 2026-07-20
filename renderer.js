@@ -1734,12 +1734,17 @@ bikunavi.on("companion:custom-question", (item) => {
 // その場合はmain側でウィンドウを明示的にフォーカスしてから入力欄へ戻す。
 document.addEventListener("pointerdown", (event) => {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement)) return;
+  const isInput = target instanceof HTMLInputElement;
+  // 吹き出し内のテキスト選択→Cmd+Cにもキーボードフォーカスが要る
+  const inBubble = target instanceof Element && Boolean(target.closest("#bubble"));
+  if (!isInput && !inBubble) return;
   if (document.hasFocus()) return;
   bikunavi.send("companion:focus-window");
-  setTimeout(() => {
-    if (document.hasFocus()) target.focus();
-  }, 60);
+  if (isInput) {
+    setTimeout(() => {
+      if (document.hasFocus()) target.focus();
+    }, 60);
+  }
 }, true);
 
 new MutationObserver(() => {

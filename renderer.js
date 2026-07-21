@@ -1260,6 +1260,7 @@ async function runChat(rawMessage) {
   const replyContextItem = directReplyItem || recentLineItem;
   const contextLine = replyContextItem?.text || "";
   const contextSources = replyContextItem?.sources || [];
+  const contextKind = replyContextItem?.kind || "";
   const isDirectReply = Boolean(directReplyItem);
   stopVoiceInput();
   chatDraft = "";
@@ -1288,7 +1289,8 @@ async function runChat(rawMessage) {
         message,
         contextLine,
         isDirectReply,
-        contextSources
+        contextSources,
+        contextKind
       );
     const response = normalizeSpeechItem(rawChatResponse);
     if (customizationQuestion) pendingCharacterCustomization = undefined;

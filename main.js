@@ -40,6 +40,12 @@ const { createSpeechProviderRegistry } = require("./speech-provider-utils");
 const { extractAnswerText, takeCompletedSentences } = require("./stream-utils");
 const { getJapaneseHoliday } = require("./holiday-utils");
 const { normalizeDataEdit } = require("./data-edit-utils");
+const {
+  formatDiaryMemoryLine,
+  markDiaryMemoryMention,
+  normalizeMentionState,
+  selectDiaryMemory
+} = require("./diary-memory-utils");
 const { roundWindowCoordinate } = require("./movement-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
@@ -111,6 +117,8 @@ const DEFAULT_STATE = {
   pendingFortuneQuestion: undefined,
   lastFortuneQuestionAt: 0,
   dailyDiaries: [],
+  diaryMemoryAiEnabled: false,
+  diaryMemoryMentions: { lastMentionDate: "", keys: [] },
   savedLinks: [],
   conversationProvider: "auto",
   anthropicApiKey: "",
@@ -339,7 +347,8 @@ function rememberRecentIdle(item) {
   if (!key) return;
   recentIdleItems.push({
     text: typeof item === "string" ? item : String(item.text || ""),
-    urls: idleSourceUrls(item)
+    urls: idleSourceUrls(item),
+    kind: typeof item === "string" ? "" : String(item.kind || "")
   });
   while (recentIdleItems.length > RECENT_IDLE_LIMIT) recentIdleItems.shift();
 }
@@ -1405,7 +1414,7 @@ function buildTrayMenu() {
           label: `日記（${getDailyDiaries().length}日）`,
           submenu: [
             {
-              label: "今日の日記をつける",
+              label: "今日の日記をAIでまとめる",
               click: () => {
                 saveTodayDiary().catch((error) => {
                   console.error("Diary save failed:", error);
@@ -1421,6 +1430,25 @@ function buildTrayMenu() {
               enabled: getDailyDiaries().length > 0,
               click: showRecentDiaries
             },
+            { type: "separator" },
+            {
+              label: "日記を会話AIにも覚えさせる（送信）",
+              type: "checkbox",
+              checked: persistedState.diaryMemoryAiEnabled === true,
+              click: (item) => {
+                persistedState.diaryMemoryAiEnabled = Boolean(item.checked);
+                // OFFへ戻した後、日記を含む生成済みセリフを使い続けない。
+                idleLineQueue.length = 0;
+                recentIdleItems.length = 0;
+                tray?.setContextMenu(buildTrayMenu());
+                saveStateSoon();
+              }
+            },
+            {
+              label: "OFFでも朝の振り返りはMac内だけで行います",
+              enabled: false
+            },
+            { type: "separator" },
             {
               label: "日記は最大14日分だけ保存します",
               enabled: false
@@ -1801,12 +1829,18 @@ function setSystemSleeping(sleeping) {
   companionWindow?.webContents.send("companion:system-sleep", systemSleeping);
   if (!systemSleeping) {
     const name = getPreferredUserName();
+    const diaryMemory = takeLocalDiaryMemory({ includeUserName: false });
     // 復帰は夜も昼もあるので「おはよー」は付けず、時間帯を問わない挨拶にする
     const greeting = name
       ? `${name}、おかえりなさい。`
       : "おかえりなさい。";
-    showAmbientLine({ text: greeting, sources: [], kind: "wake" });
-    speakFromMain(greeting, "answer").catch((error) => {
+    const text = diaryMemory ? `${greeting}\n${diaryMemory.text}` : greeting;
+    showAmbientLine({
+      text,
+      sources: [],
+      kind: diaryMemory ? "diary-memory" : "wake"
+    });
+    speakFromMain(text, "answer").catch((error) => {
       console.error("Wake greeting speech failed:", error);
     });
   }
@@ -2774,6 +2808,9 @@ ipcMain.handle("companion:data-delete", (_event, rawCategory, rawKey) => {
     case "diary": {
       const date = String(rawKey || "");
       persistedState.dailyDiaries = getDailyDiaries().filter((entry) => entry.date !== date);
+      const mentionState = normalizeMentionState(persistedState.diaryMemoryMentions);
+      mentionState.keys = mentionState.keys.filter((key) => !key.endsWith(`:${date}`));
+      persistedState.diaryMemoryMentions = mentionState;
       break;
     }
     case "savedLink":
@@ -2888,6 +2925,7 @@ ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
       break;
     case "diaries":
       persistedState.dailyDiaries = [];
+      persistedState.diaryMemoryMentions = { lastMentionDate: "", keys: [] };
       break;
     case "savedLinks":
       persistedState.savedLinks = [];
@@ -2901,6 +2939,7 @@ ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
       persistedState.learnedWords = [];
       persistedState.sharedMemories = [];
       persistedState.dailyDiaries = [];
+      persistedState.diaryMemoryMentions = { lastMentionDate: "", keys: [] };
       persistedState.savedLinks = [];
       persistedState.fortuneThemes = [];
       clearChatHistories();
@@ -3261,6 +3300,30 @@ function getDailyDiaries() {
   return persistedState.dailyDiaries;
 }
 
+function takeLocalDiaryMemory({ includeUserName = true, date = new Date() } = {}) {
+  const today = getJstDateString(date);
+  const memory = selectDiaryMemory({
+    diaries: getDailyDiaries(),
+    today,
+    slot: getJstTimeContext(date).slot,
+    mentionState: persistedState.diaryMemoryMentions
+  });
+  if (!memory) return undefined;
+  persistedState.diaryMemoryMentions = markDiaryMemoryMention(
+    persistedState.diaryMemoryMentions,
+    memory,
+    today
+  );
+  saveStateSoon();
+  const item = {
+    text: formatDiaryMemoryLine(memory, includeUserName ? getPreferredUserName() : ""),
+    sources: [],
+    kind: "diary-memory"
+  };
+  rememberRecentIdle(item);
+  return item;
+}
+
 function getSavedLinks() {
   if (!Array.isArray(persistedState.savedLinks)) persistedState.savedLinks = [];
   const seenUrls = new Set();
@@ -3302,6 +3365,7 @@ function removeSavedLink(rawUrl) {
 }
 
 function formatDiaryMemory() {
+  if (persistedState.diaryMemoryAiEnabled !== true) return "";
   const diaries = getDailyDiaries().slice(-7);
   if (!diaries.length) return "";
   return [
@@ -4072,6 +4136,9 @@ async function generateIdleLines() {
     const recentConversationContext = formatRecentConversationCallbackContext();
     const recentLinesForPrompt = recentIdleItems
       .slice(-20)
+      .filter((item) => (
+        persistedState.diaryMemoryAiEnabled === true || item.kind !== "diary-memory"
+      ))
       .map((item) => `- ${item.text}`)
       .join("\n");
     const prompt = [
@@ -4220,13 +4287,19 @@ ipcMain.handle("companion:chat", async (
   rawMessage,
   rawContextLine,
   rawIsDirectReply,
-  rawContextSources
+  rawContextSources,
+  rawContextKind
 ) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
   // 考えている間の相づち（本回答の声が始まると自動で引っ込む）
   maybePlayAizuchi();
-  const contextLine = String(rawContextLine ?? "").trim().slice(0, 600);
+  const diaryContextBlocked =
+    String(rawContextKind || "") === "diary-memory" &&
+    persistedState.diaryMemoryAiEnabled !== true;
+  const contextLine = diaryContextBlocked
+    ? ""
+    : String(rawContextLine ?? "").trim().slice(0, 600);
   const isDirectReply = Boolean(rawIsDirectReply && contextLine);
   const contextSources = uniqueSources(
     Array.isArray(rawContextSources) ? rawContextSources : []
@@ -4308,6 +4381,9 @@ ipcMain.handle("companion:chat", async (
       ? "下の最新見出しを使った場合は、元にした見出しIDを sourceIds に入れてください。見出しだけで分からない詳細は補わず、推測は推測と分かるようにしてください。"
       : "外部情報を断定するときは、実在すると確信できる公式ページや記事URLだけ sources に入れてください。URLの推測は禁止です。",
     "変更・操作の依頼には、実行したふりをせず、びくたん単体では操作できないことと手順の案内を返してください。",
+    diaryContextBlocked
+      ? "ユーザーはMac内だけで表示した日記の振り返りへ返信しています。プライバシー設定により日記本文は会話AIへ渡されていません。本文を推測せず、ユーザーの発言だけで答えてください。内容の参照が必要なら、日記メニューの『日記を会話AIにも覚えさせる（送信）』をONにできると短く案内してください。"
+      : "",
     isDirectReply
       ? `ユーザーは、次のびくたんのセリフと同じ吹き出しにある入力欄から直接返信しました。これは新しい話題ではなく、必ずこのセリフへの返答・質問・ツッコミとして理解してください。短い「知らない」「教えて」「そうなの？」なども、このセリフを目的語として補って答えてください。別の話題へ切り替えないでください。\n\n返信先のセリフ:\n「${contextLine}」`
       : contextLine
@@ -4417,6 +4493,8 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 });
 
 ipcMain.handle("companion:idle-line", async () => {
+  const diaryMemory = takeLocalDiaryMemory();
+  if (diaryMemory) return withInferredEmote(diaryMemory);
   const characterQuestion = makeCharacterQuestion(false);
   if (characterQuestion) return withInferredEmote(characterQuestion);
   const growthQuestion = makeGrowthQuestion();

@@ -1,5 +1,11 @@
 const assert = require("node:assert/strict");
-const { splitIntoSpeechChunks } = require("../speech-utils");
+const { normalizeSpeechVolume, splitIntoSpeechChunks } = require("../speech-utils");
+
+assert.equal(normalizeSpeechVolume(53), 55);
+assert.equal(normalizeSpeechVolume(0), 10);
+assert.equal(normalizeSpeechVolume(120), 100);
+assert.equal(normalizeSpeechVolume("75"), 75);
+assert.equal(normalizeSpeechVolume("invalid", 50), 50);
 
 // 空・短文はそのまま
 assert.deepEqual(splitIntoSpeechChunks(""), []);

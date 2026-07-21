@@ -23,6 +23,7 @@ const INVOKE_CHANNELS = new Set([
   "companion:pomodoro-state",
   "companion:pomodoro-action",
   "companion:toggle-sound-mute",
+  "companion:set-speech-volume",
   "companion:open-url",
   "companion:copy-text",
   "companion:save-link",
@@ -42,6 +43,7 @@ const INVOKE_CHANNELS = new Set([
   "companion:set-api-key",
   "companion:close-api-key",
   "companion:data-overview",
+  "companion:data-update",
   "companion:data-delete",
   "companion:data-clear"
 ]);

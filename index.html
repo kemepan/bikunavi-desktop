@@ -16,7 +16,13 @@
       <button type="button" data-phase="focus25" aria-label="25分作業を始める">25</button>
       <button type="button" data-phase="focus90" aria-label="90分作業を始める">90</button>
     </div>
-    <button id="sound-toggle" type="button" aria-label="びくたんの音をミュート" aria-pressed="false">🔊</button>
+    <div id="sound-controls" aria-hidden="true">
+      <button id="sound-toggle" type="button" aria-label="びくたんの音をミュート" aria-pressed="false">🔊</button>
+      <label id="volume-control">
+        <span id="volume-value">100%</span>
+        <input id="volume-slider" type="range" min="10" max="100" step="5" value="100" aria-label="びくたんの音量">
+      </label>
+    </div>
     <canvas id="stage"></canvas>
     <div id="status">読み込み中…</div>
     <script src="vendor/live2dcubismcore.min.js"></script>

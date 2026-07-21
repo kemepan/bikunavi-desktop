@@ -9,6 +9,7 @@
 | 今の機能・構成をざっと把握する | [`PROJECT_STATUS.md`](PROJECT_STATUS.md) |
 | 開発、検証、実行用アプリへの反映手順を見る | [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) |
 | 次に直したいこと・今後の課題を見る | [`ROADMAP.md`](ROADMAP.md) |
+| 読み上げ音声の共通化・本人音声の土台を見る | [`SPEECH_PROVIDERS.md`](SPEECH_PROVIDERS.md) |
 | GitHub保存・公開の準備を見る | [`GITHUB_SETUP.md`](GITHUB_SETUP.md) |
 | 権利・ライセンス確認を見る | [`RIGHTS_CHECK.md`](RIGHTS_CHECK.md) |
 | v0.1.0 の公開作業を見る | [`公開手順-v0.1.0.md`](公開手順-v0.1.0.md) |

@@ -35,9 +35,12 @@ const {
   sanitizeSpokenSourceIds
 } = require("./source-utils");
 const { selectChatEmote } = require("./emote-utils");
-const { splitIntoSpeechChunks } = require("./speech-utils");
+const { normalizeSpeechVolume, splitIntoSpeechChunks } = require("./speech-utils");
+const { createSpeechProviderRegistry } = require("./speech-provider-utils");
 const { extractAnswerText, takeCompletedSentences } = require("./stream-utils");
 const { getJapaneseHoliday } = require("./holiday-utils");
+const { normalizeDataEdit } = require("./data-edit-utils");
+const { roundWindowCoordinate } = require("./movement-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -211,9 +214,7 @@ let idleSpeechEnabled = Boolean(persistedState.idleSpeechEnabled);
 let speechRate = [150, 190, 230].includes(persistedState.speechRate)
   ? persistedState.speechRate
   : 190;
-let speechVolume = [25, 50, 75, 100].includes(persistedState.speechVolume)
-  ? persistedState.speechVolume
-  : 100;
+let speechVolume = normalizeSpeechVolume(persistedState.speechVolume);
 let soundMuted = Boolean(persistedState.soundMuted);
 let thinkingSoundEnabled = persistedState.thinkingSoundEnabled !== false;
 let autoMoveEnabled = Boolean(persistedState.autoMoveEnabled);
@@ -249,6 +250,21 @@ let anthropicApiKey = typeof persistedState.anthropicApiKey === "string"
 let speechProvider = "voicevox";
 const voicevoxSpeaker = 58;
 const voicevoxVoiceLabel = "猫使ビィ";
+// 音声生成を共通の登録形式へまとめる。本人音声などを追加する時は、
+// synthesizeと能力だけを登録し、会話・音量・ミュート・再生経路は共用する。
+const speechProviderRegistry = createSpeechProviderRegistry([
+  {
+    id: "voicevox",
+    label: `VOICEVOX（${voicevoxVoiceLabel}）`,
+    synthesize: createVoicevoxAudio,
+    capabilities: { sentenceStreaming: true }
+  },
+  {
+    id: "macos",
+    label: "macOS代替音声",
+    synthesize: createMacSpeechAudio
+  }
+], { fallbackIds: ["macos"] });
 let speechProcess;
 let speechSequence = 0;
 let activeSpeechId;
@@ -1566,6 +1582,7 @@ function buildTrayMenu() {
           enabled: speechEnabled,
           click: () => {
             speechVolume = volume;
+            companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
             tray.setContextMenu(buildTrayMenu());
             saveStateSoon();
           }
@@ -1951,7 +1968,7 @@ function playSpeechChunk(output, speechId) {
   });
 }
 
-async function speakVoicevoxSentences(text, speechId, noSplit = false) {
+async function speakProviderSentences(provider, text, speechId, noSplit = false) {
   // noSplit: 占いなど「一気に読み切りたい」セリフは分割せず1回で合成する
   const chunks = noSplit ? [String(text || "").trim()].filter(Boolean) : splitIntoSpeechChunks(text);
   if (!chunks.length) return false;
@@ -1962,7 +1979,7 @@ async function speakVoicevoxSentences(text, speechId, noSplit = false) {
   const audioPromises = chunks.map((chunk, index) => {
     const job = prev.then(() => {
       if (index > 0 && activeSpeechId !== speechId) return undefined;
-      return createVoicevoxAudio(chunk, `${speechId}-${index}`, {
+      return provider.synthesize(chunk, `${speechId}-${index}`, {
         trimLeading: index > 0,
         trimTrailing: index < chunks.length - 1
       });
@@ -1979,7 +1996,7 @@ async function speakVoicevoxSentences(text, speechId, noSplit = false) {
     }
   };
 
-  // 1文目の合成失敗はそのまま投げて、呼び出し側でmacOS音声へフォールバック
+  // 1文目の合成失敗はそのまま投げて、呼び出し側で次のプロバイダへフォールバック
   const firstOutput = await audioPromises[0];
   if (activeSpeechId !== speechId) {
     if (firstOutput) fs.promises.unlink(firstOutput).catch(() => {});
@@ -2007,7 +2024,7 @@ async function speakVoicevoxSentences(text, speechId, noSplit = false) {
       }
       if (index + 1 >= chunks.length) break;
       output = await audioPromises[index + 1].catch((error) => {
-        console.error("VOICEVOX sentence synthesis failed:", error?.message || error);
+        console.error(`${provider.label} sentence synthesis failed:`, error?.message || error);
         return undefined;
       });
       if (!output) {
@@ -2071,26 +2088,34 @@ async function speakText(rawText, kind, options = {}) {
   const speechId = ++speechSequence;
   activeSpeechId = speechId;
 
-  if (speechProvider === "voicevox") {
+  let lastError;
+  for (const provider of speechProviderRegistry.getFallbackChain(speechProvider)) {
+    if (activeSpeechId !== speechId) return undefined;
     try {
-      // 文単位に区切って合成し、1文目ができた時点で話し始める
-      const started = await speakVoicevoxSentences(text, speechId, Boolean(options.noSplit));
-      return started ? speechId : undefined;
+      if (provider.capabilities.sentenceStreaming) {
+        // 文単位に区切って合成し、1文目ができた時点で話し始める
+        const started = await speakProviderSentences(
+          provider,
+          text,
+          speechId,
+          Boolean(options.noSplit)
+        );
+        if (started) return speechId;
+      } else {
+        const output = await provider.synthesize(text, speechId, options);
+        if (!output || activeSpeechId !== speechId) return undefined;
+        playSpeechAudio(output, speechId);
+        return speechId;
+      }
     } catch (error) {
-      console.error(`VOICEVOX (${voicevoxVoiceLabel}) failed; using macOS voice:`, error);
+      lastError = error;
+      console.error(`${provider.label} failed:`, error);
     }
   }
 
-  if (activeSpeechId !== speechId) return undefined;
-  try {
-    const output = await createMacSpeechAudio(text, speechId);
-    if (!output || activeSpeechId !== speechId) return undefined;
-    playSpeechAudio(output, speechId);
-    return speechId;
-  } catch (error) {
-    if (activeSpeechId === speechId) activeSpeechId = undefined;
-    throw error;
-  }
+  if (activeSpeechId === speechId) activeSpeechId = undefined;
+  if (lastError) throw lastError;
+  return undefined;
 }
 
 async function speakFromMain(text, kind = "answer", options = {}) {
@@ -2133,6 +2158,8 @@ async function speakAndWait(text, kind = "answer", options = {}) {
 // （stopSpeech / activeSpeechId）にそのまま乗る。
 function createStreamingSpeech(kind = "answer") {
   if (systemSleeping || soundMuted || !speechEnabled) return undefined;
+  const provider = speechProviderRegistry.get(speechProvider);
+  if (!provider?.capabilities.sentenceStreaming) return undefined;
   stopSpeech();
   const speechId = ++speechSequence;
   activeSpeechId = speechId;
@@ -2149,7 +2176,7 @@ function createStreamingSpeech(kind = "answer") {
     queuedCount += 1;
     const synth = synthChain.then(() => {
       if (activeSpeechId !== speechId) return undefined;
-      return createVoicevoxAudio(text, `${speechId}-${index}`, {
+      return provider.synthesize(text, `${speechId}-${index}`, {
         trimLeading: index > 0,
         trimTrailing: true
       }).catch((error) => {
@@ -2282,7 +2309,8 @@ function maybePlayAizuchi() {
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
   const child = spawn("/usr/bin/afplay", ["-v", volumeScale, pick.file], { stdio: "ignore" });
   aizuchiProcess = child;
-  companionWindow?.webContents.send("companion:speech-started", { speechId: aizuchiId, kind: "answer" });
+  // 本回答とは区別し、rendererが「短く相づち → また考える」を表情で示せるようにする。
+  companionWindow?.webContents.send("companion:speech-started", { speechId: aizuchiId, kind: "aizuchi" });
   const finish = () => {
     if (aizuchiProcess === child) aizuchiProcess = undefined;
     companionWindow?.webContents.send("companion:speech-ended", aizuchiId);
@@ -2547,8 +2575,8 @@ ipcMain.on("companion:auto-move", () => {
     }
     const progress = Math.min(1, (Date.now() - startedAt) / duration);
     const eased = (1 - Math.cos(Math.PI * progress)) / 2;
-    const nextX = Math.round(origin[0] + (destination.x - origin[0]) * eased);
-    const nextY = Math.round(origin[1] + (destination.y - origin[1]) * eased);
+    const nextX = roundWindowCoordinate(origin[0] + (destination.x - origin[0]) * eased);
+    const nextY = roundWindowCoordinate(origin[1] + (destination.y - origin[1]) * eased);
     if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
       console.error(`auto-move: 移動中の座標が不正なため中断 next=(${nextX}, ${nextY})`);
       clearInterval(autoMoveTimer);
@@ -2670,27 +2698,28 @@ ipcMain.handle("companion:data-overview", () => {
     .map(([id, entry]) => ({
       id,
       question: String(entry?.question || id).slice(0, 120),
-      answer: String(entry?.answer || "").slice(0, 200)
+      answer: String(entry?.answer || "").slice(0, 1000)
     }));
   const growthAnswers = Object.entries(growth.growthAnswers).map(([id, entry]) => ({
     id,
     question: String(entry?.question || id).slice(0, 120),
-    answer: String(entry?.answer || "").slice(0, 200)
+    answer: String(entry?.answer || "").slice(0, 1000)
   }));
   return {
     userName: getPreferredUserName(),
     learnedWords: growth.learnedWords.map((entry) => ({
-      text: String(entry?.text || "").slice(0, 200),
+      text: String(entry?.text || "").slice(0, 1000),
       date: formatDataDate(Number(entry?.learnedAt))
     })),
     sharedMemories: growth.sharedMemories.map((entry) => ({
-      text: String(entry?.text || "").slice(0, 200),
+      text: String(entry?.text || "").slice(0, 1000),
       date: formatDataDate(Number(entry?.createdAt))
     })),
     characterAnswers,
     growthAnswers,
     diaries: getDailyDiaries().map((entry) => ({
       date: entry.date,
+      lines: entry.lines,
       preview: entry.lines.join(" / ").slice(0, 160)
     })),
     savedLinks: getSavedLinks().map((link) => ({
@@ -2764,6 +2793,79 @@ ipcMain.handle("companion:data-delete", (_event, rawCategory, rawKey) => {
   saveStateSoon();
   tray?.setContextMenu(buildTrayMenu());
   return true;
+});
+
+ipcMain.handle("companion:data-update", (_event, rawCategory, rawKey, rawValue) => {
+  const category = String(rawCategory || "");
+  const key = String(rawKey ?? "");
+  const normalized = normalizeDataEdit(category, rawValue);
+  if (!normalized.ok) return normalized;
+
+  const growth = getGrowthData();
+  const index = Number(rawKey);
+  let updated = false;
+  switch (category) {
+    case "userName": {
+      const question = characterQuestions.find((item) => item.id === "user_address");
+      if (!question) break;
+      getCharacterAnswers().user_address = {
+        question: question.question,
+        answer: normalized.value,
+        updatedAt: Date.now()
+      };
+      updated = true;
+      break;
+    }
+    case "characterAnswer": {
+      const question = characterQuestions.find((item) => item.id === key && item.id !== "user_address");
+      if (!question || !getCharacterAnswers()[key]) break;
+      getCharacterAnswers()[key] = {
+        ...getCharacterAnswers()[key],
+        question: question.question,
+        answer: normalized.value,
+        updatedAt: Date.now()
+      };
+      updated = true;
+      break;
+    }
+    case "growthAnswer": {
+      if (!growthQuestions.some((item) => item.id === key) || !growth.growthAnswers[key]) break;
+      growth.growthAnswers[key] = {
+        ...growth.growthAnswers[key],
+        answer: normalized.value,
+        updatedAt: Date.now()
+      };
+      updated = true;
+      break;
+    }
+    case "learnedWord":
+      if (Number.isInteger(index) && index >= 0 && index < growth.learnedWords.length) {
+        growth.learnedWords[index] = { ...growth.learnedWords[index], text: normalized.value };
+        updated = true;
+      }
+      break;
+    case "sharedMemory":
+      if (Number.isInteger(index) && index >= 0 && index < growth.sharedMemories.length) {
+        growth.sharedMemories[index] = { ...growth.sharedMemories[index], text: normalized.value };
+        updated = true;
+      }
+      break;
+    case "diary": {
+      const diary = getDailyDiaries().find((entry) => entry.date === key);
+      if (!diary) break;
+      diary.lines = normalized.value;
+      diary.savedAt = Date.now();
+      updated = true;
+      break;
+    }
+    default:
+      break;
+  }
+
+  if (!updated) return { ok: false, error: "編集する項目が見つかりませんでした。画面を開き直してください。" };
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return { ok: true };
 });
 
 ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
@@ -3473,7 +3575,15 @@ function showAmbientLine(item) {
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
   companionWindow.show();
-  companionWindow.webContents.send("companion:ambient-line", item);
+  companionWindow.webContents.send("companion:ambient-line", withInferredEmote(item));
+}
+
+function withInferredEmote(rawItem) {
+  const item = typeof rawItem === "string"
+    ? { text: rawItem, sources: [] }
+    : { ...(rawItem || {}) };
+  item.emote = selectChatEmote(item.emote, item.text);
+  return item;
 }
 
 function diaryContextText() {
@@ -4308,13 +4418,13 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 
 ipcMain.handle("companion:idle-line", async () => {
   const characterQuestion = makeCharacterQuestion(false);
-  if (characterQuestion) return characterQuestion;
+  if (characterQuestion) return withInferredEmote(characterQuestion);
   const growthQuestion = makeGrowthQuestion();
-  if (growthQuestion) return growthQuestion;
+  if (growthQuestion) return withInferredEmote(growthQuestion);
   const fortuneQuestion = makeFortuneQuestion(false);
-  if (fortuneQuestion) return fortuneQuestion;
+  if (fortuneQuestion) return withInferredEmote(fortuneQuestion);
   const workLine = Math.random() < 0.18 ? makeBikutanWorkLine(false) : undefined;
-  if (workLine) return workLine;
+  if (workLine) return withInferredEmote(workLine);
   if (!idleLineQueue.length) await generateIdleLines();
   // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
   const allRecent = idleLineQueue.length > 0 &&
@@ -4322,7 +4432,7 @@ ipcMain.handle("companion:idle-line", async () => {
   if (allRecent) await generateIdleLines();
   const line = takeFreshIdleLine();
   if (idleLineQueue.length < 5) generateIdleLines().catch(() => {});
-  return line;
+  return withInferredEmote(line);
 });
 
 ipcMain.handle("companion:answer-character-question", (_event, questionId, rawAnswer) => {
@@ -4515,7 +4625,8 @@ function getRendererSettings() {
   return {
     idleIntervalMs,
     preferredUserName: getPreferredUserName(),
-    soundMuted
+    soundMuted,
+    speechVolume
   };
 }
 
@@ -4524,6 +4635,18 @@ ipcMain.handle("companion:settings", () => getRendererSettings());
 ipcMain.handle("companion:toggle-sound-mute", () => {
   setSoundMuted(!soundMuted);
   return soundMuted;
+});
+
+ipcMain.handle("companion:set-speech-volume", (_event, rawVolume) => {
+  speechVolume = normalizeSpeechVolume(rawVolume, speechVolume);
+  if (soundMuted) {
+    setSoundMuted(false);
+  } else {
+    companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+    tray?.setContextMenu(buildTrayMenu());
+    saveStateSoon();
+  }
+  return getRendererSettings();
 });
 
 ipcMain.handle("companion:copy-text", (_event, rawText) => {

@@ -25,4 +25,10 @@ function splitIntoSpeechChunks(rawText) {
   return chunks;
 }
 
-module.exports = { splitIntoSpeechChunks };
+function normalizeSpeechVolume(rawValue, fallback = 100) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(10, Math.min(100, Math.round(value / 5) * 5));
+}
+
+module.exports = { normalizeSpeechVolume, splitIntoSpeechChunks };

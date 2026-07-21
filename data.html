@@ -43,6 +43,22 @@
       }
       li .body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
       li .meta { color: #9a9080; font-size: 10.5px; }
+      li .actions { display: flex; gap: 5px; }
+      li.is-editing { align-items: stretch; flex-wrap: wrap; }
+      li.is-editing .editor {
+        box-sizing: border-box;
+        flex: 1 1 100%;
+        min-height: 68px;
+        resize: vertical;
+        border: 1px solid #bfb3a2;
+        border-radius: 7px;
+        padding: 7px 9px;
+        background: #fffcf7;
+        color: #3a342c;
+        font: inherit;
+        line-height: 1.5;
+      }
+      li.is-editing .actions { margin-left: auto; }
       button {
         font: inherit;
         font-size: 11px;
@@ -65,7 +81,7 @@
   </head>
   <body>
     <h1>びくたんのデータ管理</h1>
-    <p class="note">びくたんが覚えている内容の確認と削除ができます。削除はすぐに反映され、元に戻せません。データはこのMacの中だけに保存されています。</p>
+    <p class="note">びくたんが覚えている内容の確認・編集・削除ができます。削除はすぐに反映され、元に戻せません。データはこのMacの中だけに保存されています。</p>
     <div id="sections"></div>
     <section>
       <h2>ぜんぶ忘れる</h2>

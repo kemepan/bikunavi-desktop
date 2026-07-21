@@ -5,7 +5,11 @@ const { Live2DModel } = PIXI.live2d;
 const canvas = document.querySelector("#stage");
 const bubble = document.querySelector("#bubble");
 const pomodoroQuick = document.querySelector("#pomodoro-quick");
+const soundControls = document.querySelector("#sound-controls");
 const soundToggle = document.querySelector("#sound-toggle");
+const volumeControl = document.querySelector("#volume-control");
+const volumeSlider = document.querySelector("#volume-slider");
+const volumeValue = document.querySelector("#volume-value");
 const status = document.querySelector("#status");
 const pixiApp = new PIXI.Application({
   view: canvas,
@@ -21,7 +25,18 @@ const EMOTES = {
   joy: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 },
   surprised: { eyeOpen: 1.2, eyeSmile: 0, mouthForm: 0, mouthOpen: 0.8 },
   thinking: { eyeOpen: 0.08, eyeSmile: 0, mouthForm: -0.15, mouthOpen: 0 },
-  wink: { eyeOpen: 1, eyeSmile: 1, mouthForm: 1, mouthOpen: 0 },
+  // f09はモデルの顔変形と目パラメータが重なると崩れるため使わず、
+  // 左目はOpen=1のままSmile=1にして、通常の目閉じではなく笑顔の目を使う。
+  wink: {
+    eyeOpen: 1,
+    eyeSmile: 0,
+    eyeLOpen: 1,
+    eyeROpen: 1,
+    eyeLSmile: 1,
+    eyeRSmile: 0.15,
+    mouthForm: 0.75,
+    mouthOpen: 0
+  },
   proud: { eyeOpen: 1, eyeSmile: 0, mouthForm: 0.4, mouthOpen: 0 },
   troubled: { eyeOpen: 0.65, eyeSmile: 0, mouthForm: -0.35, mouthOpen: 0 },
   sad: { eyeOpen: 0.45, eyeSmile: 0, mouthForm: -0.6, mouthOpen: 0 }
@@ -31,7 +46,6 @@ const EXPRESSION_NAMES = {
   surprised: "f03",
   // thinkingはf08＋目とじパラメータの併用（docs/Live2D制作メモ.md）
   thinking: "f08",
-  wink: "f09",
   proud: "f06",
   troubled: "f04",
   sad: "f05"
@@ -84,6 +98,12 @@ let idleGazeY = 0;
 let idleGazeTargetX = 0;
 let idleGazeTargetY = 0;
 let nextIdleGazeAt = 0;
+const interactionMotionWeights = {
+  idle: 1,
+  listening: 0,
+  thinking: 0,
+  speaking: 0
+};
 let systemSleeping = false;
 let topDocked = false;
 let pomodoroState = { active: false, running: false, remaining: 0, label: "", timeText: "" };
@@ -91,6 +111,7 @@ let pomodoroHideTimer;
 let pomodoroQuickVisible;
 let soundMuted = false;
 let soundToggleVisible;
+let speechVolume = 100;
 // いま素の吹き出しに出しているソース。ニュース吹き出しにホバーして会話欄へ
 // 切り替わっても、このソースボタンを引き継いで消さないために覚えておく。
 let displayedLineSources = [];
@@ -328,10 +349,11 @@ function fitModel() {
   bubble.style.top = topDocked
     ? `${characterHitBounds.y + characterHitBounds.height + 5}px`
     : `${characterHitBounds.y - 5}px`;
-  const soundLeft = Math.min(width - 34, characterHitBounds.x + characterHitBounds.width - 12);
+  const soundButtonLeft = Math.min(width - 38, characterHitBounds.x + characterHitBounds.width - 12);
+  const soundLeft = Math.max(4, Math.min(width - 140, soundButtonLeft - 98));
   const soundTop = Math.max(8, characterHitBounds.y + Math.min(64, characterHitBounds.height * 0.16));
-  soundToggle.style.left = `${soundLeft}px`;
-  soundToggle.style.top = `${soundTop}px`;
+  soundControls.style.left = `${soundLeft}px`;
+  soundControls.style.top = `${soundTop}px`;
 }
 
 function getVisualBounds(internalModel) {
@@ -394,9 +416,9 @@ function isPointInPomodoroQuick(point) {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
 }
 
-function isPointInSoundToggle(point) {
-  if (!soundToggle?.classList.contains("is-visible")) return false;
-  const rect = soundToggle.getBoundingClientRect();
+function isPointInSoundControls(point) {
+  if (!soundControls?.classList.contains("is-visible")) return false;
+  const rect = soundControls.getBoundingClientRect();
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
 }
 
@@ -441,8 +463,8 @@ function updateSoundToggle() {
   const visible = Boolean(isHovered && !dragging);
   if (visible !== soundToggleVisible) {
     soundToggleVisible = visible;
-    soundToggle?.classList.toggle("is-visible", visible);
-    soundToggle?.setAttribute("aria-hidden", visible ? "false" : "true");
+    soundControls?.classList.toggle("is-visible", visible);
+    soundControls?.setAttribute("aria-hidden", visible ? "false" : "true");
   }
   // 毎フレーム呼ばれるため、ミュート表示は値が変わった時だけDOMを触る
   if (soundMuted === soundToggleMutedRendered) return;
@@ -460,6 +482,13 @@ function updateSoundToggle() {
     soundMuted ? "びくたんの音を再開" : "びくたんの音をミュート"
   );
   soundToggle.title = soundMuted ? "音を再開" : "音をミュート";
+}
+
+function updateVolumeControl() {
+  if (!volumeSlider || !volumeValue) return;
+  if (document.activeElement !== volumeSlider) volumeSlider.value = String(speechVolume);
+  volumeValue.textContent = `${speechVolume}%`;
+  volumeControl?.classList.toggle("is-muted", soundMuted);
 }
 
 pomodoroQuick?.addEventListener("click", async (event) => {
@@ -483,8 +512,28 @@ soundToggle?.addEventListener("click", async (event) => {
   try {
     soundMuted = Boolean(await bikunavi.invoke("companion:toggle-sound-mute"));
     updateSoundToggle();
+    updateVolumeControl();
   } catch (error) {
     console.error("Sound mute toggle failed:", error);
+  }
+});
+
+volumeSlider?.addEventListener("input", () => {
+  speechVolume = Number(volumeSlider.value) || speechVolume;
+  volumeValue.textContent = `${speechVolume}%`;
+});
+
+volumeSlider?.addEventListener("change", async (event) => {
+  event.stopPropagation();
+  try {
+    const settings = await bikunavi.invoke("companion:set-speech-volume", volumeSlider.value);
+    speechVolume = Number(settings?.speechVolume) || speechVolume;
+    soundMuted = Boolean(settings?.soundMuted);
+    updateSoundToggle();
+    updateVolumeControl();
+  } catch (error) {
+    console.error("Speech volume update failed:", error);
+    updateVolumeControl();
   }
 });
 
@@ -1221,6 +1270,8 @@ async function runChat(rawMessage) {
   isThinking = true;
   pendingQuestion = message;
   bikunavi.send("companion:hover", true);
+  // ホバー時の手振りなどを考え中まで引きずらない。
+  stopMotions();
   setEmote("thinking");
   showChatBubble(true);
   scheduleThinkingSound();
@@ -1309,7 +1360,7 @@ async function runChat(rawMessage) {
     isPreparingSpeech = false;
     isSpeaking = false;
     showChatBubble();
-    setEmote("surprised");
+    setEmote("troubled");
     scheduleChatIdleReset();
   } finally {
     stopThinkingSound();
@@ -1356,6 +1407,17 @@ function playMotionOnce(group, duration = 2950) {
     if (sequence !== motionSequence) return;
     stopMotions();
   }, duration);
+}
+
+function isBrightEmote(emote) {
+  return ["joy", "wink", "proud", "surprised"].includes(emote);
+}
+
+function showLineEmote(lineItem, motionGroup = "Happy") {
+  const emote = ANSWER_EMOTES.has(lineItem?.emote) ? lineItem.emote : "joy";
+  setEmote(emote);
+  if (isBrightEmote(emote)) playMotionOnce(motionGroup);
+  else stopMotions();
 }
 
 function resumeAmbientState() {
@@ -1454,8 +1516,7 @@ function scheduleChatter() {
       }
       rememberLine(lineItem, "idle");
       showBubble(lineItem);
-      setEmote("joy");
-      playMotionOnce(lineItem.kind === "custom-question" ? "Wave" : "Happy");
+      showLineEmote(lineItem, lineItem.kind === "custom-question" ? "Wave" : "Happy");
 
       clearTimeout(chatterEndTimer);
       const displayDuration = speechId
@@ -1506,6 +1567,44 @@ function updateIdleGaze(seconds, deltaMs, active) {
   const ease = Math.min(1, deltaMs / 1150);
   idleGazeX += (idleGazeTargetX - idleGazeX) * ease;
   idleGazeY += (idleGazeTargetY - idleGazeY) * ease;
+}
+
+function updateInteractionMotion(core, seconds, deltaMs, disabled) {
+  const activeState = disabled
+    ? ""
+    : isSpeaking
+      ? "speaking"
+      : isThinking
+        ? "thinking"
+        : (chatActive || isHovered)
+          ? "listening"
+          : "idle";
+  const ease = Math.min(1, deltaMs / 260);
+  for (const state of Object.keys(interactionMotionWeights)) {
+    const target = state === activeState ? 1 : 0;
+    interactionMotionWeights[state] += (target - interactionMotionWeights[state]) * ease;
+  }
+
+  const speaking = interactionMotionWeights.speaking;
+  if (speaking > 0.001) {
+    core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 4.2) * 2.2, speaking);
+    core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 2.1) * 1.4, speaking);
+  }
+  const thinking = interactionMotionWeights.thinking;
+  if (thinking > 0.001) {
+    core.addParameterValueById("ParamAngleZ", 1.7 + Math.sin(seconds * 1.7) * 1.3, thinking);
+    core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.2) * 0.8, thinking);
+  }
+  const listening = interactionMotionWeights.listening;
+  if (listening > 0.001) {
+    core.addParameterValueById("ParamAngleZ", 1.1 + Math.sin(seconds * 1.1) * 0.6, listening);
+    core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.3) * 0.7, listening);
+  }
+  const idle = interactionMotionWeights.idle;
+  if (idle > 0.001) {
+    core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 0.9) * 0.75, idle);
+    core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 0.55) * 0.55, idle);
+  }
 }
 
 async function start() {
@@ -1577,38 +1676,27 @@ async function start() {
           musicDanceWeight
         );
       }
-      if (!danceActive && !dragging) {
-        if (isThinking) {
-          // 考え中は少し首を傾け、話している時とは違う静かな動きにする。
-          core.addParameterValueById("ParamAngleZ", Math.sin(seconds * 1.7) * 1.6);
-          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.2) * 0.8);
-        } else if (isSpeaking) {
-          // 発話中は口だけでなく、声に合わせて上体も小さく弾ませる。
-          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 4.2) * 2.2);
-          core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 2.1) * 1.4);
-        } else if (chatActive || isHovered) {
-          // 聞いている間はユーザー側へ軽く首を傾ける。
-          core.addParameterValueById("ParamAngleZ", 1.1 + Math.sin(seconds * 1.1) * 0.6);
-          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 1.3) * 0.7);
-        } else {
-          // 待機中も完全停止にせず、呼吸より長い周期でごく小さく揺らす。
-          core.addParameterValueById("ParamBodyPositionY", Math.sin(seconds * 0.9) * 0.75);
-          core.addParameterValueById("ParamBodyAngleZ", Math.sin(seconds * 0.55) * 0.55);
-        }
-      }
+      // 聞く・考える・話す・待機の動きを約0.26秒で混ぜ、状態切替時のカクつきを抑える。
+      // 先行読み上げ中は、回答生成が続いていても「話す」を最優先する。
+      updateInteractionMotion(core, seconds, pixiApp.ticker.deltaMS, danceActive || dragging);
       blinkTimer -= pixiApp.ticker.deltaMS;
       if (blinkTimer <= 0) blinkTimer = Math.random() * 3000 + 2000;
-      const smilingEyes = currentEmote.eyeSmile > 0.5;
-      const eyeOpen = !smilingEyes && blinkTimer < 150 ? 0 : currentEmote.eyeOpen;
+      const eyeLSmile = currentEmote.eyeLSmile ?? currentEmote.eyeSmile;
+      const eyeRSmile = currentEmote.eyeRSmile ?? currentEmote.eyeSmile;
+      const eyeLOpenBase = currentEmote.eyeLOpen ?? currentEmote.eyeOpen;
+      const eyeROpenBase = currentEmote.eyeROpen ?? currentEmote.eyeOpen;
+      const blinking = blinkTimer < 150;
+      const eyeLOpen = eyeLSmile <= 0.5 && blinking ? 0 : eyeLOpenBase;
+      const eyeROpen = eyeRSmile <= 0.5 && blinking ? 0 : eyeROpenBase;
       let mouthOpen = currentEmote.mouthOpen;
-      if (!isThinking && (isSpeaking || (isHovered && !chatActive))) {
+      if (isSpeaking || (!isThinking && isHovered && !chatActive)) {
         const noise = Math.sin(seconds * 25) * Math.sin(seconds * 7);
         mouthOpen = Math.max(mouthOpen, noise * 0.5 + 0.4);
       }
-      core.setParameterValueById("ParamEyeLOpen", eyeOpen);
-      core.setParameterValueById("ParamEyeROpen", eyeOpen);
-      core.setParameterValueById("ParamEyeLSmile", currentEmote.eyeSmile);
-      core.setParameterValueById("ParamEyeRSmile", currentEmote.eyeSmile);
+      core.setParameterValueById("ParamEyeLOpen", eyeLOpen);
+      core.setParameterValueById("ParamEyeROpen", eyeROpen);
+      core.setParameterValueById("ParamEyeLSmile", eyeLSmile);
+      core.setParameterValueById("ParamEyeRSmile", eyeRSmile);
       core.setParameterValueById("ParamMouthForm", currentEmote.mouthForm);
       core.setParameterValueById("ParamMouthOpenY", mouthOpen);
     });
@@ -1624,6 +1712,10 @@ async function start() {
       if (typeof settings?.soundMuted === "boolean") {
         soundMuted = settings.soundMuted;
         updateSoundToggle();
+      }
+      if (Number.isFinite(Number(settings?.speechVolume))) {
+        speechVolume = Number(settings.speechVolume);
+        updateVolumeControl();
       }
     } catch (error) {
       console.error("Settings load failed:", error);
@@ -1700,7 +1792,7 @@ bikunavi.on("companion:cursor", (point) => {
   if (!model || pointerDown) return;
   const insideCharacter = characterHitBounds?.contains(point.x, point.y) ?? false;
   const inside = insideCharacter || isPointInActiveBubble(point) ||
-    isPointInPomodoroQuick(point) || isPointInSoundToggle(point);
+    isPointInPomodoroQuick(point) || isPointInSoundControls(point);
   if (suppressHoverUntilLeave) {
     if (!inside) suppressHoverUntilLeave = false;
     model.focus(point.x, point.y);
@@ -1798,6 +1890,9 @@ bikunavi.on("companion:speech-ended", (speechId) => {
   currentSpeechId = undefined;
   currentSpeechKind = undefined;
   isSpeaking = false;
+  if (speechKind === "aizuchi" && isThinking) {
+    setEmote("thinking");
+  }
   if (speechKind === "idle") {
     const holdMs = currentSpeechHoldMs;
     currentSpeechHoldMs = 900;
@@ -1817,7 +1912,15 @@ bikunavi.on("companion:speech-started", (payload) => {
   currentSpeechId = payload?.speechId;
   currentSpeechKind = payload?.kind || "answer";
   isSpeaking = Boolean(currentSpeechId);
-  if (isSpeaking) armSpeechWatchdog(displayedLineItem?.text || latestAmbientLineItem?.text);
+  if (!isSpeaking) return;
+  if (currentSpeechKind === "aizuchi" && isThinking) {
+    setEmote("joy");
+  } else if (currentSpeechKind === "answer" && isThinking) {
+    // 先行読み上げが始まった時点で、見た目とジングルも「考える」から「話す」へ移る。
+    stopThinkingSound();
+    if (lastEmoteName === "thinking") setEmote("joy");
+  }
+  armSpeechWatchdog(displayedLineItem?.text || latestAmbientLineItem?.text);
 });
 
 bikunavi.on("companion:music-playing", (playing) => {
@@ -1859,8 +1962,7 @@ bikunavi.on("companion:ambient-line", async (item) => {
   suppressHoverUntilLeave = false;
   rememberLine(lineItem, "idle");
   showBubble(lineItem);
-  setEmote("joy");
-  playMotionOnce(lineItem.kind === "custom-question" ? "Wave" : "Happy");
+  showLineEmote(lineItem, lineItem.kind === "custom-question" ? "Wave" : "Happy");
 
   let speechId = null;
   try {
@@ -1894,6 +1996,10 @@ bikunavi.on("companion:settings-changed", (settings) => {
   if (typeof settings?.soundMuted === "boolean") {
     soundMuted = settings.soundMuted;
     updateSoundToggle();
+  }
+  if (Number.isFinite(Number(settings?.speechVolume))) {
+    speechVolume = Number(settings.speechVolume);
+    updateVolumeControl();
   }
 });
 

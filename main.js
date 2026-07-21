@@ -43,6 +43,7 @@ const { normalizeDataEdit } = require("./data-edit-utils");
 const {
   formatDiaryMemoryLine,
   markDiaryMemoryMention,
+  normalizeGeneratedDiary,
   normalizeMentionState,
   selectDiaryMemory
 } = require("./diary-memory-utils");
@@ -2891,6 +2892,8 @@ ipcMain.handle("companion:data-update", (_event, rawCategory, rawKey, rawValue) 
       const diary = getDailyDiaries().find((entry) => entry.date === key);
       if (!diary) break;
       diary.lines = normalized.value;
+      // 本文を編集した後は、以前の行番号と時刻の対応を引き継がない。
+      diary.moments = [];
       diary.savedAt = Date.now();
       updated = true;
       break;
@@ -3290,11 +3293,31 @@ function getDailyDiaries() {
   if (!Array.isArray(persistedState.dailyDiaries)) persistedState.dailyDiaries = [];
   persistedState.dailyDiaries = persistedState.dailyDiaries
     .filter((entry) => entry && typeof entry.date === "string" && Array.isArray(entry.lines))
-    .map((entry) => ({
-      date: entry.date,
-      lines: entry.lines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 5),
-      savedAt: Number(entry.savedAt) || Date.now()
-    }))
+    .map((entry) => {
+      const lines = entry.lines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 5);
+      const moments = (Array.isArray(entry.moments) ? entry.moments : [])
+        .map((moment) => ({
+          lineIndex: Number(moment?.lineIndex),
+          occurredAt: Number(moment?.occurredAt),
+          slot: String(moment?.slot || "")
+        }))
+        .filter((moment) => (
+          Number.isInteger(moment.lineIndex) &&
+          moment.lineIndex >= 0 &&
+          moment.lineIndex < lines.length &&
+          Number.isFinite(moment.occurredAt) &&
+          moment.occurredAt > 0 &&
+          getJstDateString(new Date(moment.occurredAt)) === entry.date &&
+          ["深夜", "早朝", "朝", "昼", "午後", "夕方", "夜"].includes(moment.slot)
+        ))
+        .slice(0, 5);
+      return {
+        date: entry.date,
+        lines,
+        moments,
+        savedAt: Number(entry.savedAt) || Date.now()
+      };
+    })
     .filter((entry) => entry.lines.length)
     .slice(-14);
   return persistedState.dailyDiaries;
@@ -3650,21 +3673,58 @@ function withInferredEmote(rawItem) {
   return item;
 }
 
-function diaryContextText() {
+function formatDiaryContextTimestamp(timestamp) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date(timestamp));
+  return `${getJstDateString(new Date(timestamp))} ${parts}・${getJstTimeContext(new Date(timestamp)).slot}`;
+}
+
+function diaryContext() {
+  const today = getJstDateString();
+  const sources = new Map();
+  let chatSourceIndex = 0;
+  let lineSourceIndex = 0;
   const chatLines = (Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries : [])
     .slice(-10)
-    .flatMap((entry) => [
-      entry.question ? `ユーザー: ${String(entry.question).slice(0, 1000)}` : "",
-      entry.answer ? `びくたん: ${String(entry.answer).slice(0, 1000)}` : ""
-    ])
+    .map((entry) => {
+      const parts = [
+        entry.question ? `ユーザー: ${String(entry.question).slice(0, 1000)}` : "",
+        entry.answer ? `びくたん: ${String(entry.answer).slice(0, 1000)}` : ""
+      ].filter(Boolean);
+      if (!parts.length) return "";
+      const occurredAt = Number(entry.time);
+      if (!Number.isFinite(occurredAt) || occurredAt <= 0 || getJstDateString(new Date(occurredAt)) !== today) {
+        return `[時刻なし] ${parts.join(" / ")}`;
+      }
+      chatSourceIndex += 1;
+      const id = `C${chatSourceIndex}`;
+      sources.set(id, { occurredAt, slot: getJstTimeContext(new Date(occurredAt)).slot });
+      return `[${id} ${formatDiaryContextTimestamp(occurredAt)}] ${parts.join(" / ")}`;
+    })
     .filter(Boolean);
   const conversationLines = conversationHistory
     .slice(-12)
-    .map((turn) => `${turn.role === "user" ? "ユーザー" : "びくたん"}: ${String(turn.text).slice(0, 1000)}`);
+    .map((turn) => `[時刻なし] ${turn.role === "user" ? "ユーザー" : "びくたん"}: ${String(turn.text).slice(0, 1000)}`);
   const lineLines = (Array.isArray(persistedState.lineHistory) ? persistedState.lineHistory : [])
     .slice(-20)
-    .map((entry) => `びくたんの最近の発言: ${String(entry.text || "").slice(0, 600)}`)
-    .filter((line) => line.trim());
+    .filter((entry) => entry?.kind !== "diary-memory")
+    .map((entry) => {
+      const text = String(entry.text || "").slice(0, 600).trim();
+      if (!text) return "";
+      const occurredAt = Number(entry.time);
+      if (!Number.isFinite(occurredAt) || occurredAt <= 0 || getJstDateString(new Date(occurredAt)) !== today) {
+        return `[時刻なし] びくたんの最近の発言: ${text}`;
+      }
+      lineSourceIndex += 1;
+      const id = `L${lineSourceIndex}`;
+      sources.set(id, { occurredAt, slot: getJstTimeContext(new Date(occurredAt)).slot });
+      return `[${id} ${formatDiaryContextTimestamp(occurredAt)}] びくたんの最近の発言: ${text}`;
+    })
+    .filter(Boolean);
   const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
   const growthLines = growthQuestions
     .filter((question) => growthAnswers[question.id]?.answer)
@@ -3673,14 +3733,15 @@ function diaryContextText() {
     ...learnedWords.slice(-8).map((item) => `ことば帳: ${String(item.text || "").slice(0, 300)}`),
     ...sharedMemories.slice(-8).map((item) => `思い出帳: ${String(item.text || "").slice(0, 300)}`)
   ];
-  return [
+  const text = [
     chatLines.length ? `会話履歴:\n${chatLines.join("\n")}` : "",
-    conversationLines.length ? `直近の会話:\n${conversationLines.join("\n")}` : "",
+    conversationLines.length ? `時刻を保存していない直近の会話:\n${conversationLines.join("\n")}` : "",
     lineLines.length ? `最近のセリフ:\n${lineLines.join("\n")}` : "",
     growthLines.length || memoryLines.length
       ? `覚えていること:\n${[...growthLines, ...memoryLines].join("\n")}`
       : ""
   ].filter(Boolean).join("\n\n").slice(0, 16000);
+  return { text, sources };
 }
 
 function parseDiaryLines(rawResponse) {
@@ -3690,19 +3751,21 @@ function parseDiaryLines(rawResponse) {
     : String(rawResponse)
       .split(/\r?\n/)
       .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim());
-  return rawLines
-    .map((line) => String(line || "").trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^["「]|["」]$/g, ""))
-    .filter((line) => line.length >= 4)
-    .slice(0, 5)
-    .map((line) => line.slice(0, 180));
+  return normalizeGeneratedDiary(rawLines, new Map()).lines;
 }
 
-function upsertDailyDiary(lines) {
+function parseDiaryResult(rawResponse, sourceMap) {
+  const parsed = extractJsonObject(rawResponse);
+  if (Array.isArray(parsed?.lines)) {
+    return normalizeGeneratedDiary(parsed.lines, sourceMap);
+  }
+  return { lines: parseDiaryLines(rawResponse), moments: [] };
+}
+
+function upsertDailyDiary(lines, moments = []) {
   const date = getJstDateString();
   const diaries = getDailyDiaries().filter((entry) => entry.date !== date);
-  diaries.push({ date, lines, savedAt: Date.now() });
+  diaries.push({ date, lines, moments, savedAt: Date.now() });
   persistedState.dailyDiaries = diaries.slice(-14);
   saveStateSoon();
   tray?.setContextMenu(buildTrayMenu());
@@ -3711,8 +3774,8 @@ function upsertDailyDiary(lines) {
 
 async function saveTodayDiary() {
   showAmbientLine({ text: "今日の日記をまとめています。大事そうなことだけ、短く残しますね。", sources: [] });
-  const context = diaryContextText();
-  if (!context) {
+  const context = diaryContext();
+  if (!context.text) {
     const diary = upsertDailyDiary(["今日はまだ日記に残せる会話が少なめでした。"]);
     showAmbientLine({
       text: `今日の日記をつけました。\n・${diary.lines.join("\n・")}`,
@@ -3733,27 +3796,28 @@ async function saveTodayDiary() {
     "- 全会話のログではなく、びくたんが覚えておきたい要点だけにする。",
     "- 実名、住所、秘密、ファイルパス、APIキーのような個人情報や機密情報は書かない。",
     "- ユーザーの感情や好みは、断定しすぎず『〜がよさそう』『〜を好む傾向』くらいにする。",
-    "- 出力はJSONだけ。形式は {\"lines\":[\"日記1\",\"日記2\",\"日記3\"]}",
+    "- [C1 ...]・[L1 ...]のような根拠IDが直接支えている行だけ、そのIDをsourceIdへ1つ入れる。",
+    "- [時刻なし]の内容や、複数の記録をまとめた行はsourceIdを空文字にする。根拠IDを推測・創作しない。",
+    "- 出力はJSONだけ。形式は {\"lines\":[{\"text\":\"日記1\",\"sourceId\":\"C1\"},{\"text\":\"日記2\",\"sourceId\":\"\"}]}",
     `日付: ${getJstDateString()}`,
-    `素材:\n${context}`,
+    `素材:\n${context.text}`,
     "びくたん日記JSON:"
   ].join("\n\n");
 
-  let lines;
+  let diaryResult = { lines: [], moments: [] };
   try {
     const rawResponse = await runAssistant(prompt);
-    lines = parseDiaryLines(rawResponse);
+    diaryResult = parseDiaryResult(rawResponse, context.sources);
   } catch (error) {
     console.error("Diary generation failed:", error);
-    lines = [];
   }
-  if (!lines.length) {
-    lines = [
+  if (!diaryResult.lines.length) {
+    diaryResult = { lines: [
       "今日は、びくたんとの調整や会話で覚えておきたいことがありました。",
       "次回も、自然な言い方と一緒に育つ感じを大事にするとよさそうです。"
-    ];
+    ], moments: [] };
   }
-  const diary = upsertDailyDiary(lines);
+  const diary = upsertDailyDiary(diaryResult.lines, diaryResult.moments);
   showAmbientLine({
     text: `今日の日記をつけました。\n・${diary.lines.join("\n・")}`,
     sources: []

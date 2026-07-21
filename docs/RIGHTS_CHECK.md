@@ -6,7 +6,7 @@
 
 | 対象 | 場所 | ライセンス / 状況 |
 |------|------|------------------|
-| びくにたん Live2Dモデル一式 | `assets/bikunavi_desktop/` | 自作（確認済み・下記） |
+| びくたん Live2Dモデル一式 | `assets/bikunavi_desktop/` | 自作（確認済み・下記） |
 | Live2D Cubism Core | `vendor/live2dcubismcore.min.js` | Live2D Proprietary Software License。再配布は出版許諾（下記） |
 | whisper.cpp バイナリ | `native/stt/darwin-arm64/whisper-cli`、`native/stt/darwin-x64/whisper-cli` | MIT（whisper.cpp）。配布時にライセンス文同梱 |
 | Whisper モデル | `models/ggml-base.bin` | MIT（OpenAI Whisper）。配布時にライセンス文同梱 |
@@ -26,11 +26,11 @@
 - 検証・開発は無償。**リリース時**に出版許諾契約の対象になる
 - **個人・小規模事業者（直近年間売上 1,000万円未満）は契約・支払いとも免除**
 - ただし「拡張性アプリケーション」（ユーザーが任意の Live2D モデルを読み込める汎用ビューア等）は規模によらず契約必須
-  - びくにたんは固定モデルのみなので現状は非該当。**モデル差し替え機能を付けると該当する**ので注意
+  - びくたんは固定モデルのみなので現状は非該当。**モデル差し替え機能を付けると該当する**ので注意
 - 配布物に Live2D の権利表記（Cubism Core のライセンス通知）を含めること
 - 参照: https://www.live2d.com/sdk/license/
 
-## びくにたんモデル本体（確認済み 2026-07-10）
+## びくたんモデル本体（確認済み 2026-07-10）
 
 - 出典はサイト `bikunitan.online`（自サイト）の稼働版一式
 - 制作経緯: ユーザー自作の6頭身キャラクターイラストをもとに、AI（nanobanana）でSDサイズ画像を出力 → ユーザー自身がパーツ分けし Live2D でモデリング

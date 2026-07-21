@@ -15,7 +15,7 @@ if (provider === "gemini") {
 } else {
   document.title = "Claude APIキー設定";
   title.textContent = "Claude APIキー";
-  note.textContent = "Anthropic Consoleで発行したAPIキー（sk-ant-…）を入力してください。\nキーはこのMacの設定ファイル（state.json）に平文で保存されます。共有マシンでは注意してください。";
+  note.textContent = "Anthropic Consoleで発行したAPIキー（sk-ant-…）を入力してください。\nキーはmacOSの安全な保存機能（Keychain連動）で暗号化され、暗号化したデータがstate.jsonに保存されます。";
   input.placeholder = "sk-ant-api03-…";
 }
 

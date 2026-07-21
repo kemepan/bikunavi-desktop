@@ -1623,7 +1623,7 @@ async function start() {
     status.textContent = "";
 
     if (model.internalModel.physics) {
-      console.log("びくにたんのLive2D物理演算を読み込みました");
+      console.log("びくたんのLive2D物理演算を読み込みました");
     }
 
     // Site behavior: breathing, randomized blinking, and speaking mouth.
@@ -1779,7 +1779,7 @@ async function start() {
     pomodoroState = await bikunavi.invoke("companion:pomodoro-state");
     if (pomodoroState.active) showPomodoroBubble(pomodoroState);
     resumeAmbientState();
-    console.log("サイト版の挙動でびくにたんを起動しました");
+    console.log("サイト版の挙動でびくたんを起動しました");
     window.addEventListener("resize", () => {
       fitModel();
       requestAnimationFrame(fitModel);

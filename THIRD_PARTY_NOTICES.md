@@ -108,5 +108,5 @@ THE SOFTWARE.
 
 ## 本アプリ独自の素材
 
-- Live2D モデル「びくにたん」（`assets/bikunavi_desktop/`）およびキャラクターデザインは本アプリ制作者の著作物です。無断での再配布・転用はできません。
+- Live2D モデル「びくたん」（`assets/bikunavi_desktop/`）およびキャラクターデザインは本アプリ制作者の著作物です。無断での再配布・転用はできません。
 - `native/now-playing` は自作（ソース: `native/now-playing.m`）。

@@ -4614,7 +4614,8 @@ ipcMain.handle("companion:chat", async (
   rawContextLine,
   rawIsDirectReply,
   rawContextSources,
-  rawContextKind
+  rawContextKind,
+  rawUncertainHearing
 ) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
@@ -4672,6 +4673,9 @@ ipcMain.handle("companion:chat", async (
   );
   const greetingOnly = isGreetingOnly(message);
   const correctionLike = looksLikeCorrection(message);
+  // ハンズフリーで確信度が低かった聞き取り。手入力や単発録音では立たない
+  // （本人が目で確かめてから送るため）。
+  const uncertainHearing = Boolean(rawUncertainHearing);
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
     "以下のキャラクターシートを一貫して演じてください。例文をそのまま繰り返さず、性格・価値観・口調として反映してください。",
@@ -4695,6 +4699,9 @@ ipcMain.handle("companion:chat", async (
       : "",
     correctionLike
       ? "ユーザーは直前の理解を訂正しています。短く訂正を受け入れ、新しく示された意味で会話を続けてください。間違った前提を引きずらないでください。"
+      : "",
+    uncertainHearing
+      ? "今回の発言は音声認識の確信度が低く、聞き間違えている可能性が高いです。意味を推測で補って答えないでください。聞こえた言葉をそのまま引用し、「〜で合ってますか？」と短く一度だけ確認してください。合っていた場合の答えは、確認が取れてからにしてください。"
       : "",
     (() => {
       const t = getJstTimeContext();

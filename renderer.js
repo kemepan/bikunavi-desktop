@@ -160,6 +160,10 @@ const HANDS_FREE_BUFFER_SIZE = 4096;
 const THREAD_FOLLOW_UP_MS = 3500;
 // マイクを押したままハンズフリーを切り替えるまでの時間。
 const MIC_LONG_PRESS_MS = 600;
+// これを下回る聞き取りは、断定せず聞き返してもらう。
+// 暫定値。実測は0.19〜0.98で、低い側（0.19 / 0.34）が怪しかった。
+// out.log の「Hands-free transcript accepted」で頻度を見ながら調整する。
+const HANDS_FREE_UNCERTAIN_CONFIDENCE = 0.45;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
 // この間隔でまとめる。累計は別に定期要約として出す。
 const AUDIO_DROP_LOG_THROTTLE_MS = 3000;
@@ -499,9 +503,19 @@ async function finishHandsFreeUtterance(utterance) {
       return;
     }
 
+    // 聞き取りが怪しい時は、断定して答えず聞き返してもらう。
+    // 手入力や単発録音は本人が目で確かめてから送るので、常時待機の時だけ。
+    const confidence = Number(result?.confidence) || 0;
+    const uncertain = confidence > 0 && confidence < HANDS_FREE_UNCERTAIN_CONFIDENCE;
+    console.log(
+      `Hands-free transcript accepted: ${text.length}文字, ` +
+      `confidence ${confidence ? confidence.toFixed(3) : "なし"}` +
+      (uncertain ? "（聞き返す）" : "")
+    );
+
     showStatusMessage(`「${shortenForBubble(text, 42)}」`, 1200);
     handsFreeTranscribing = false;
-    await runChat(text);
+    await runChat(text, { uncertain });
     chatStarted = true;
   } catch (error) {
     console.error("Hands-free transcription failed:", error);
@@ -1680,7 +1694,7 @@ function stopThinkingSound() {
   thinkingSoundPlaying = false;
 }
 
-async function runChat(rawMessage) {
+async function runChat(rawMessage, { uncertain = false } = {}) {
   const message = rawMessage.trim();
   if (!message || isSpeaking || isThinking || isPreparingSpeech) return;
   // 「考え中」表示へ切り替えると displayedLineItem が消えるため、先に返信先を固定する。
@@ -1730,7 +1744,8 @@ async function runChat(rawMessage) {
         contextLine,
         isDirectReply,
         contextSources,
-        contextKind
+        contextKind,
+        uncertain
       );
     if (rawChatResponse?.aborted) {
       // 生成中に話しかけられて畳んだ。回答も履歴も残さず静かに戻る。

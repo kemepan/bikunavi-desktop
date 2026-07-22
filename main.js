@@ -4888,8 +4888,11 @@ ipcMain.handle("companion:transcribe-audio", async (_event, payload) => {
     console.log(
       `Speech transcription: ${result.engine || result.model || "unknown engine"}, ` +
       `${Number(result.elapsedMs) || 0}ms` +
+      // 端末内認識（requiresOnDeviceRecognition）ではsegment.confidenceが常に0で
+      // 返るため、値がある時だけ出す。0を並べても判断材料にならない。
       (result.engine === "macos-speech"
-        ? `, ${result.onDevice ? "on-device" : "network"}, confidence ${result.confidence.toFixed(3)}`
+        ? `, ${result.onDevice ? "on-device" : "network"}` +
+          (result.confidence > 0 ? `, confidence ${result.confidence.toFixed(3)}` : "")
         : "")
     );
     return {

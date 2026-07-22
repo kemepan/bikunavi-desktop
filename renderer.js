@@ -133,6 +133,9 @@ let displayedLineItem;
 let latestAmbientLineItem;
 let idleIntervalMs = 30000;
 let chatterTimer;
+let chatterFollowUpTimer;
+// 直前に話した独り言に続きがあるか（main側のキューが持っている）
+let threadFollowUpPending = false;
 let historySaveTimer;
 let voiceInputActive = false;
 let voiceInputButton;
@@ -152,6 +155,8 @@ const VOICE_INPUT_MAX_MS = 15000;
 const HANDS_FREE_PRE_ROLL_MS = 360;
 const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
 const HANDS_FREE_BUFFER_SIZE = 4096;
+// 続きものの次の行までの間。読み終えて一拍おいてから続ける。
+const THREAD_FOLLOW_UP_MS = 7000;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
 // この間隔でまとめる。累計は別に定期要約として出す。
 const AUDIO_DROP_LOG_THROTTLE_MS = 3000;
@@ -1647,6 +1652,9 @@ async function runChat(rawMessage) {
   stopVoiceInput();
   chatDraft = "";
   chatActive = true;
+  // 話しかけられたので、途中の独り言の続きは追いかけない（main側でも捨てられる）。
+  threadFollowUpPending = false;
+  clearTimeout(chatterFollowUpTimer);
   clearTimeout(chatIdleTimer);
   clearTimeout(responseSpeechTimer);
   isSpeaking = false;
@@ -1873,68 +1881,84 @@ function startChatter() {
 
 function scheduleChatter() {
   clearInterval(chatterTimer);
-  chatterTimer = setInterval(async () => {
-    if (
-      isHovered ||
-      dragging ||
-      isSpeaking ||
-      chatActive ||
-      pomodoroState.active ||
-      systemSleeping ||
-      idleChatterBusy ||
-      !model
-    ) return;
-
-    idleChatterBusy = true;
-    try {
-      const lineItem = normalizeSpeechItem(await bikunavi.invoke("companion:idle-line"));
-      if (systemSleeping || isHovered || dragging || chatActive) return;
-      if (lineItem.kind === "custom-question" && lineItem.questionId) {
-        pendingCharacterCustomization = lineItem;
-      }
-
-      let speechId = null;
-      try {
-        speechId = await bikunavi.invoke("companion:speak", lineItem.text, "idle");
-      } catch (speechError) {
-        console.error("Idle speech failed:", speechError);
-      }
-      if (systemSleeping || isHovered || dragging || chatActive) {
-        if (speechId) bikunavi.send("companion:stop-speech");
-        return;
-      }
-
-      isSpeaking = true;
-      currentSpeechHoldMs = getIdleSpeechHoldMs(lineItem);
-      if (speechId) {
-        currentSpeechId = speechId;
-        currentSpeechKind = "idle";
-      }
-      rememberLine(lineItem, "idle");
-      showBubble(lineItem);
-      showLineEmote(lineItem, lineItem.kind === "custom-question" ? "Wave" : "Happy");
-
-      clearTimeout(chatterEndTimer);
-      const displayDuration = speechId
-        ? 60000
-        : Math.max(
-          currentSpeechHoldMs,
-          Math.min(30000, Math.max(6500, lineItem.text.length * 180))
-        );
-      chatterEndTimer = setTimeout(() => {
-        deferUnansweredQuestion(lineItem).catch(console.error);
-        currentSpeechKind = undefined;
-        currentSpeechHoldMs = 900;
-        isSpeaking = false;
-        resumeAmbientState();
-        hideBubble();
-      }, displayDuration);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      idleChatterBusy = false;
-    }
+  chatterTimer = setInterval(() => {
+    runIdleChatter().catch(console.error);
   }, idleIntervalMs);
+}
+
+// 続きものを話している間だけ、いつもの間隔を待たずに次の行へ進む。
+// 30秒〜2分空くと「続き」に聞こえないため。
+function scheduleThreadFollowUp() {
+  clearTimeout(chatterFollowUpTimer);
+  chatterFollowUpTimer = setTimeout(() => {
+    runIdleChatter().catch(console.error);
+  }, THREAD_FOLLOW_UP_MS);
+}
+
+async function runIdleChatter() {
+  if (
+    isHovered ||
+    dragging ||
+    isSpeaking ||
+    chatActive ||
+    pomodoroState.active ||
+    systemSleeping ||
+    idleChatterBusy ||
+    !model
+  ) return;
+
+  idleChatterBusy = true;
+  try {
+    const rawLine = await bikunavi.invoke("companion:idle-line");
+    const lineItem = normalizeSpeechItem(rawLine);
+    threadFollowUpPending = Boolean(rawLine?.followUpSoon);
+    if (systemSleeping || isHovered || dragging || chatActive) return;
+    if (lineItem.kind === "custom-question" && lineItem.questionId) {
+      pendingCharacterCustomization = lineItem;
+    }
+
+    let speechId = null;
+    try {
+      speechId = await bikunavi.invoke("companion:speak", lineItem.text, "idle");
+    } catch (speechError) {
+      console.error("Idle speech failed:", speechError);
+    }
+    if (systemSleeping || isHovered || dragging || chatActive) {
+      if (speechId) bikunavi.send("companion:stop-speech");
+      return;
+    }
+
+    isSpeaking = true;
+    currentSpeechHoldMs = getIdleSpeechHoldMs(lineItem);
+    if (speechId) {
+      currentSpeechId = speechId;
+      currentSpeechKind = "idle";
+    }
+    rememberLine(lineItem, "idle");
+    showBubble(lineItem);
+    showLineEmote(lineItem, lineItem.kind === "custom-question" ? "Wave" : "Happy");
+
+    clearTimeout(chatterEndTimer);
+    const displayDuration = speechId
+      ? 60000
+      : Math.max(
+        currentSpeechHoldMs,
+        Math.min(30000, Math.max(6500, lineItem.text.length * 180))
+      );
+    chatterEndTimer = setTimeout(() => {
+      deferUnansweredQuestion(lineItem).catch(console.error);
+      currentSpeechKind = undefined;
+      currentSpeechHoldMs = 900;
+      isSpeaking = false;
+      resumeAmbientState();
+      hideBubble();
+      if (threadFollowUpPending) scheduleThreadFollowUp();
+    }, displayDuration);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    idleChatterBusy = false;
+  }
 }
 
 function startFloating() {
@@ -2310,6 +2334,8 @@ bikunavi.on("companion:speech-ended", (speechId) => {
     }
     resumeAmbientState();
     hideBubble(holdMs);
+    // 続きものは、いつもの間隔を待たずに次の行へ進む。
+    if (threadFollowUpPending) scheduleThreadFollowUp();
   }
 });
 

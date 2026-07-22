@@ -16,7 +16,8 @@ assert.deepEqual(
     sources: [{ title: "AIの記事", url: "https://example.com/ai", source: "AIニュース" }],
     sourceIds: ["A3"],
     invalidSourceIds: [],
-    kind: "news"
+    kind: "news",
+    continues: false
   }
 );
 assert.equal(
@@ -48,5 +49,30 @@ assert.equal(
   sanitizeSpokenSourceIds("この[D8]のデザインの話、面白いですよ。", [], sources).includes("[D8]"),
   false
 );
+
+// 独り言の「続き」行。話題は先頭の行が持つので種別は通常セリフ扱いにする。
+{
+  const first = parseGeneratedIdleLine("normal||リギングのボーン、名前で悩みますよね。", sources);
+  assert.equal(first.continues, false);
+  assert.equal(first.kind, "normal");
+
+  const next = parseGeneratedIdleLine("cont||結局あとで自分が読めるかどうかなんですよね。", sources);
+  assert.equal(next.continues, true);
+  assert.equal(next.kind, "normal");
+  assert.equal(next.text, "結局あとで自分が読めるかどうかなんですよね。");
+
+  // ニュースの続きでも、種別は通常セリフ・出典なしで扱う（出典は先頭の行に付く）。
+  const newsFollowUp = parseGeneratedIdleLine("cont|A3|さっきの話、実際どう動くのか気になります。", sources);
+  assert.equal(newsFollowUp.continues, true);
+  assert.equal(newsFollowUp.kind, "normal");
+  assert.equal(newsFollowUp.text, "さっきの話、実際どう動くのか気になります。");
+}
+
+// 「cont」を本文に含む普通のセリフを、続き扱いにしない。
+{
+  const notContinuation = parseGeneratedIdleLine("normal||contという名前の変数、よく見かけます。", sources);
+  assert.equal(notContinuation.continues, false);
+  assert.equal(notContinuation.text, "contという名前の変数、よく見かけます。");
+}
 
 console.log("source-utils: OK");

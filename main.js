@@ -445,15 +445,51 @@ function makeBikutanWorkLine(force = false) {
 
 // キューから、最近話していない行を優先して取り出す。
 // 新鮮な行がなければ、溜まった既出行を1つ捨てて予備の一言を返す（既出は返さない）。
+// 話している途中の「続きもの」の残り。キューから切り離して持つことで、
+// 鮮度による並べ替えや占いの差し込みに邪魔されず、最後まで話し切れる。
+let pendingThreadLines = [];
+let pendingThreadServedAt = 0;
+// これ以上間が空いた続きは、もう続きとして聞こえない。ホバーやドラッグ、
+// スリープで独り言が飛ぶと、話していない行の続きだけが残ることがある。
+const PENDING_THREAD_MAX_GAP_MS = 90000;
+
+function dropPendingThread() {
+  pendingThreadLines = [];
+}
+
 function takeFreshIdleLine() {
-  for (let index = 0; index < idleLineQueue.length; index += 1) {
-    if (!isRecentIdle(idleLineQueue[index])) {
-      const [line] = idleLineQueue.splice(index, 1);
-      rememberRecentIdle(line);
-      return line;
-    }
+  if (
+    pendingThreadLines.length &&
+    Date.now() - pendingThreadServedAt > PENDING_THREAD_MAX_GAP_MS
+  ) {
+    dropPendingThread();
   }
-  if (idleLineQueue.length) idleLineQueue.shift();
+  // 続きものの途中なら、鮮度を問わずそのまま続ける。
+  // ここで別の話題を挟むと、前の行を受けた言い回しが宙に浮く。
+  if (pendingThreadLines.length) {
+    const line = pendingThreadLines.shift();
+    pendingThreadServedAt = Date.now();
+    rememberRecentIdle(line);
+    return line;
+  }
+  for (let index = 0; index < idleLineQueue.length; index += 1) {
+    const candidate = idleLineQueue[index];
+    // 続きの行だけを単独で取り出さない。話題の先頭からしか始めない。
+    if (candidate.continues || isRecentIdle(candidate)) continue;
+    idleLineQueue.splice(index, 1);
+    // 後ろに続く行はキューへ残さず、この場で引き取って順番に話す。
+    while (idleLineQueue[index]?.continues) {
+      pendingThreadLines.push(...idleLineQueue.splice(index, 1));
+    }
+    pendingThreadServedAt = Date.now();
+    rememberRecentIdle(candidate);
+    return candidate;
+  }
+  if (idleLineQueue.length) {
+    idleLineQueue.shift();
+    // 先頭を捨てたら、その続きも道連れにする（宙に浮いた続きを残さない）。
+    while (idleLineQueue[0]?.continues) idleLineQueue.shift();
+  }
   const line = pickFallbackIdleLine();
   rememberRecentIdle(line);
   return line;
@@ -4377,7 +4413,11 @@ async function generateIdleLines() {
       "気の合う作業仲間のような、具体的でくだけた口調にしてください。",
       CAPABILITY_BOUNDARY_PROMPT,
       "重要: あなたはユーザーの画面・手元・作業内容・成果物を見ることはできません。見て言っているかのような発言（例『その配色いいですね』『さっきの手さばき速い』『集中してますね』『机の上が〜』）は絶対にしないでください。見えないことを見たフリするのは禁止です。",
-      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知りたいことを考える様子、ふと浮かんだ小ネタ、コーヒー休憩や音楽の好み、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけず、1個ごとに話題を変えてください。",
+      "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知りたいことを考える様子、ふと浮かんだ小ネタ、コーヒー休憩や音楽の好み、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけないでください。",
+      "20個のうち3〜4か所は、ひとつの話題を2〜4行かけて話す「続きもの」にしてください。続きの行は種別を `cont` にし、`cont||セリフ` の形で、直前の行のすぐ次に置いてください。それ以外の行は今までどおり1個ごとに話題を変えてください。",
+      "続きものは、考えが進んでいく独り言にしてください。前の行を言い直したり要約したりせず、そこから一歩進んだこと（気づき、脱線、思い出したこと、やっぱりこうかも、という揺り戻し）を話してください。",
+      "続きものの2行目以降は、それ単体で読んでも不自然でない長さと内容にしてください。『さっきの件ですが』のように前を指す言い方は、たまに使う程度にしてください。",
+      "続きものの最後の行で話題を締めてください。次の行へ持ち越さないでください。",
       "勉強熱心さは、知識自慢ではなく『知りたい』『覚えておきたい』『あとで試したい』くらいの素直な温度にしてください。",
       "ポエム、格言、抽象的な励まし、悟った言い回し、仏教・スピリチュアル調は禁止です。",
       latestTopicText
@@ -4427,7 +4467,7 @@ async function generateIdleLines() {
     ].join("\n");
     try {
       const response = await runAssistant(prompt);
-      const lines = response
+      const parsedLines = response
         .split(/\r?\n/)
         .map((line) => line.replace(/^\s*(?:[-*・]|\d+[.)、])\s*/, "").trim())
         .map((line) => line.replace(/^["「]|["」]$/g, ""))
@@ -4440,27 +4480,56 @@ async function generateIdleLines() {
         .map((item) => ({
           ...item,
           text: repairBikutanSelfReferences(item.text, preferredUserName)
-        }))
-        .filter((item) => isSafeIdleUserNameUsage(item.text, preferredUserName))
-        .filter((item) => isIdleCapabilitySafeLine(item.text))
-        .filter((item) => item.text.length >= 4 && item.text.length <= 160);
-      if (lines.length < 5) throw new Error("セリフの生成数が不足しました");
+        }));
+      const isUsableIdleLine = (item) => (
+        isSafeIdleUserNameUsage(item.text, preferredUserName) &&
+        isIdleCapabilitySafeLine(item.text) &&
+        item.text.length >= 4 &&
+        item.text.length <= 160
+      );
+      // 「続き」は直前の行があって初めて成立するので、先に話題ごとのまとまりへ束ねる。
+      // 途中に使えない行が出たらそこで打ち切り、先頭が落ちたまとまりは丸ごと捨てる。
+      // 行単位でふるいにかけると、続きだけが宙に浮いて意味の通らない独り言になる。
+      const threads = [];
+      for (const item of parsedLines) {
+        if (item.continues && threads.length) threads[threads.length - 1].push(item);
+        else threads.push([item]);
+      }
+      const usableThreads = [];
+      for (const thread of threads) {
+        const usable = [];
+        for (const item of thread) {
+          if (!isUsableIdleLine(item)) break;
+          usable.push(item);
+        }
+        if (!usable.length) continue;
+        // 先頭は必ず新しい話題として始める（前のまとまりが捨てられている場合がある）。
+        usable[0] = { ...usable[0], continues: false };
+        usableThreads.push(usable);
+      }
+      const lineCount = usableThreads.reduce((total, thread) => total + thread.length, 0);
+      if (lineCount < 5) throw new Error("セリフの生成数が不足しました");
       console.log(
-        `Idle lines generated: ${lines.length} (sources付き: ${lines.filter((line) => line.sources.length).length})`
+        `Idle lines generated: ${lineCount} ` +
+        `(sources付き: ${usableThreads.flat().filter((line) => line.sources.length).length}, ` +
+        `続きもの: ${usableThreads.filter((thread) => thread.length > 1).length}本)`
       );
       // 完全一致だけでなく、似た文章や同じ出典の記事も除く。
+      // 続きものは先頭の行だけで判定する。同じ話題を掘り下げる行同士は当然似ており、
+      // 行ごとに判定すると自分の続きを重複とみなして落としてしまう。
       const queuedLines = [];
-      for (const line of lines) {
-        const key = idleKey(line);
+      for (const thread of usableThreads) {
+        const head = thread[0];
+        const key = idleKey(head);
         const duplicateInQueue = [...idleLineQueue, ...queuedLines]
           .some((queued) => {
-            const urls = new Set(idleSourceUrls(line));
+            const urls = new Set(idleSourceUrls(head));
             const sameSource = urls.size &&
               idleSourceUrls(queued).some((url) => urls.has(url));
-            return sameSource || idleSimilarity(line, queued) >= 0.68;
+            return sameSource || idleSimilarity(head, queued) >= 0.68;
           });
-        if (!key || duplicateInQueue || isRecentIdle(line)) continue;
-        queuedLines.push(line);
+        if (!key || duplicateInQueue || isRecentIdle(head)) continue;
+        queuedLines.push(...thread);
       }
       // 自動占いは毎バッチではなく1日1回、短い一言だけ差し込む。
       if (fortuneAutoEnabled) {
@@ -4469,13 +4538,21 @@ async function generateIdleLines() {
         if (lastFortuneQueuedDate !== dateStr) {
           lastFortuneQueuedDate = dateStr;
           const fortune = makeDailyFortune();
-          queuedLines.splice(Math.min(queuedLines.length, 2), 0, {
+          // 続きものの途中へ割り込ませない。話題の切れ目まで送る。
+          let insertAt = Math.min(queuedLines.length, 2);
+          while (insertAt < queuedLines.length && queuedLines[insertAt].continues) {
+            insertAt += 1;
+          }
+          queuedLines.splice(insertAt, 0, {
             text: fortune.autoText || fortune.lines?.[0] || fortune.text,
             sources: []
           });
         }
       }
-      idleLineQueue.push(...queuedLines.slice(0, 20));
+      // 20行で切ると続きものが尻切れになるので、話題の切れ目まで含めてから止める。
+      let limit = Math.min(queuedLines.length, 20);
+      while (limit < queuedLines.length && queuedLines[limit].continues) limit += 1;
+      idleLineQueue.push(...queuedLines.slice(0, limit));
     } catch (error) {
       console.error("Idle line generation failed:", error);
       idleLineQueue.push(...FALLBACK_IDLE_LINES);
@@ -4499,6 +4576,9 @@ ipcMain.handle("companion:chat", async (
 ) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
+  // 話しかけられたら、途中まで話していた独り言の続きは捨てる。
+  // 会話のあとに「さっきの話の続きですが」と戻られる方が不自然なため。
+  dropPendingThread();
   // 前の生成が残っていれば畳んでから始める。ハンズフリーで続けて
   // 話しかけられた時に、2本が同じ吹き出しへ流れ込むのを防ぐ。
   activeChatController?.abort();
@@ -4729,24 +4809,29 @@ ipcMain.handle("companion:prepare-idle-lines", async () => {
 });
 
 ipcMain.handle("companion:idle-line", async () => {
-  const diaryMemory = takeLocalDiaryMemory();
-  if (diaryMemory) return withInferredEmote(diaryMemory);
-  const characterQuestion = makeCharacterQuestion(false);
-  if (characterQuestion) return withInferredEmote(characterQuestion);
-  const growthQuestion = makeGrowthQuestion();
-  if (growthQuestion) return withInferredEmote(growthQuestion);
-  const fortuneQuestion = makeFortuneQuestion(false);
-  if (fortuneQuestion) return withInferredEmote(fortuneQuestion);
-  const workLine = Math.random() < 0.18 ? makeBikutanWorkLine(false) : undefined;
-  if (workLine) return withInferredEmote(workLine);
-  if (!idleLineQueue.length) await generateIdleLines();
-  // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
-  const allRecent = idleLineQueue.length > 0 &&
-    idleLineQueue.every((item) => isRecentIdle(item));
-  if (allRecent) await generateIdleLines();
+  // 続きものを話している最中は、日記の振り返りや質問・占いを挟まない。
+  // 話の途中で別件が割り込むと、続きの行が誰への返事か分からなくなる。
+  if (!pendingThreadLines.length) {
+    const diaryMemory = takeLocalDiaryMemory();
+    if (diaryMemory) return withInferredEmote(diaryMemory);
+    const characterQuestion = makeCharacterQuestion(false);
+    if (characterQuestion) return withInferredEmote(characterQuestion);
+    const growthQuestion = makeGrowthQuestion();
+    if (growthQuestion) return withInferredEmote(growthQuestion);
+    const fortuneQuestion = makeFortuneQuestion(false);
+    if (fortuneQuestion) return withInferredEmote(fortuneQuestion);
+    const workLine = Math.random() < 0.18 ? makeBikutanWorkLine(false) : undefined;
+    if (workLine) return withInferredEmote(workLine);
+    if (!idleLineQueue.length) await generateIdleLines();
+    // キューに残るのが最近話した行ばかりなら、新しい行を作ってから取り出す。
+    const allRecent = idleLineQueue.length > 0 &&
+      idleLineQueue.every((item) => isRecentIdle(item));
+    if (allRecent) await generateIdleLines();
+  }
   const line = takeFreshIdleLine();
   if (idleLineQueue.length < 5) generateIdleLines().catch(() => {});
-  return withInferredEmote(line);
+  // 続きがある時はrendererへ伝え、いつもの間隔を待たずに話し続けてもらう。
+  return { ...withInferredEmote(line), followUpSoon: pendingThreadLines.length > 0 };
 });
 
 ipcMain.handle("companion:answer-character-question", (_event, questionId, rawAnswer) => {

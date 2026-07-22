@@ -66,9 +66,16 @@ function parseGeneratedIdleLine(rawLine, sourceMap = new Map()) {
   let kind = "normal";
   let text = line;
   let sourceIds = [];
+  let continues = false;
 
-  if (parts.length >= 3 && /^(?:normal|news|life)$/i.test(parts[0])) {
+  if (parts.length >= 3 && /^(?:normal|news|life|cont)$/i.test(parts[0])) {
     kind = parts[0].toLowerCase();
+    if (kind === "cont") {
+      // 直前の行の続き。話題は先頭の行が持っているので、種別は通常セリフ扱いにする。
+      // ニュースの続きでも、出典は先頭の行に付いていれば足りる。
+      kind = "normal";
+      continues = true;
+    }
     const secondFieldIds = parseSourceIdField(parts[1]);
     const lastFieldIds = parseSourceIdField(parts[parts.length - 1]);
     if (secondFieldIds.length || !parts[1]) {
@@ -109,7 +116,8 @@ function parseGeneratedIdleLine(rawLine, sourceMap = new Map()) {
     sources,
     sourceIds,
     invalidSourceIds,
-    kind
+    kind,
+    continues
   };
 }
 

@@ -7,6 +7,12 @@ const {
   isUsableTranscript
 } = window.BikunaviVad;
 const { pickConversationContext } = window.BikunaviConversationContext;
+const {
+  createAudioDropMeter,
+  measureAudioGap,
+  recordProcessingTime,
+  formatDropSummary
+} = window.BikunaviAudioMeter;
 
 const canvas = document.querySelector("#stage");
 const bubble = document.querySelector("#bubble");
@@ -145,6 +151,11 @@ let preferredUserName = "あなた";
 const VOICE_INPUT_MAX_MS = 15000;
 const HANDS_FREE_PRE_ROLL_MS = 360;
 const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
+const HANDS_FREE_BUFFER_SIZE = 4096;
+// 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
+// この間隔でまとめる。累計は別に定期要約として出す。
+const AUDIO_DROP_LOG_THROTTLE_MS = 3000;
+const AUDIO_DROP_SUMMARY_MS = 5 * 60 * 1000;
 let statusFallback = "";
 
 function setStatusFallback(message) {
@@ -330,6 +341,38 @@ function toggleVoiceInput(input, button) {
   startVoiceInput(input, button).catch(console.error);
 }
 
+// 取りこぼしが「いつ」起きたかを残す。AudioWorkletへ移すべきかは、落ちた総数より
+// 会話中（描画やDOM更新が重い瞬間）に落ちているかどうかで決まる。
+function handsFreeStateLabel() {
+  const flags = [];
+  if (isThinking) flags.push("thinking");
+  if (isPreparingSpeech) flags.push("preparing");
+  if (isSpeaking) flags.push("speaking");
+  if (handsFreeUtterance) flags.push("capturing");
+  if (handsFreeTranscribing) flags.push("transcribing");
+  if (dragging) flags.push("dragging");
+  return flags.join("+") || "idle";
+}
+
+function reportAudioDrops(recorder, droppedBuffers, gapMs, label) {
+  recorder.pendingDrops += droppedBuffers;
+  const now = Date.now();
+  if (now - recorder.lastDropLogAt < AUDIO_DROP_LOG_THROTTLE_MS) return;
+  recorder.lastDropLogAt = now;
+  // 他のハンズフリー計測ログと突き合わせられるよう、warnではなくlogで出す。
+  // main側でwarnはstderr（err.log）へ振り分けられ、発話ログと分かれてしまうため。
+  console.log(
+    `Hands-free audio dropped: ${recorder.pendingDrops} buffers ` +
+    `(gap ${Math.round(gapMs)}ms) during ${label}`
+  );
+  recorder.pendingDrops = 0;
+}
+
+function logAudioMeterSummary(recorder, reason) {
+  if (!recorder?.meter?.callbacks) return;
+  console.log(`Hands-free audio meter (${reason}): ${formatDropSummary(recorder.meter)}`);
+}
+
 function releaseHandsFreeRecorder(recorder) {
   if (!recorder) return;
   try {
@@ -351,6 +394,7 @@ function stopHandsFreeListening() {
   handsFreeUtterance = undefined;
   handsFreeTranscribing = false;
   handsFreeIgnoreUntil = 0;
+  logAudioMeterSummary(recorder, "停止");
   releaseHandsFreeRecorder(recorder);
   setStatusFallback("");
   restoreHandsFreeCaptureState(utterance);
@@ -411,7 +455,9 @@ async function finishHandsFreeUtterance(utterance) {
   }
 
   console.log(
-    `Hands-free utterance: ${Math.round(durationMs)}ms, peak RMS ${Number(utterance.peakRms || 0).toFixed(3)}`
+    `Hands-free utterance: ${Math.round(durationMs)}ms, ` +
+    `peak RMS ${Number(utterance.peakRms || 0).toFixed(3)}, ` +
+    `dropped ${Number(utterance.droppedBuffers || 0)} buffers`
   );
 
   handsFreeTranscribing = true;
@@ -477,7 +523,8 @@ function processHandsFreeAudio(recorder, chunk) {
       sampleRate: recorder.sampleRate,
       generation,
       wasChatActive: chatActive,
-      peakRms: decision.level
+      peakRms: decision.level,
+      droppedBuffers: 0
     };
     console.log(
       `Hands-free detected: RMS ${decision.level.toFixed(3)}, ` +
@@ -539,7 +586,7 @@ async function startHandsFreeListening() {
     pendingAudioContext = audioContext;
     await audioContext.resume();
     const source = audioContext.createMediaStreamSource(stream);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const processor = audioContext.createScriptProcessor(HANDS_FREE_BUFFER_SIZE, 1, 1);
     const recorder = {
       stream,
       audioContext,
@@ -548,10 +595,46 @@ async function startHandsFreeListening() {
       sampleRate: audioContext.sampleRate,
       detector: createVoiceActivityDetector(),
       preRoll: [],
-      preRollSamples: 0
+      preRollSamples: 0,
+      meter: createAudioDropMeter({
+        sampleRate: audioContext.sampleRate,
+        bufferSize: HANDS_FREE_BUFFER_SIZE
+      }),
+      pendingDrops: 0,
+      lastDropLogAt: 0,
+      lastSummaryAt: Date.now()
     };
     processor.onaudioprocess = (event) => {
+      // 取りこぼし計測を先に済ませる。processHandsFreeAudioが早期returnする
+      // 状態（考え中など）でも、バッファが落ちた事実は記録しておきたい。
+      //
+      // 時刻は playbackTime を優先する。これはバッファ境界の音声クロックなので、
+      // 落ちた分がちょうどバッファ長の整数倍として現れる。currentTime は
+      // 「メインスレッドへ配送された時点」の値でジッタが乗り、詰まりと
+      // 取りこぼしを区別しにくい。
+      const label = handsFreeStateLabel();
+      const usePlaybackTime = Number.isFinite(event.playbackTime) && event.playbackTime > 0;
+      const audioTime = usePlaybackTime ? event.playbackTime : audioContext.currentTime;
+      if (!recorder.clockLogged) {
+        recorder.clockLogged = true;
+        console.log(
+          `Hands-free audio meter started: ${Math.round(recorder.sampleRate)}Hz, ` +
+          `buffer ${HANDS_FREE_BUFFER_SIZE} (${recorder.meter.expectedGapMs.toFixed(1)}ms/回), ` +
+          `clock ${usePlaybackTime ? "playbackTime" : "currentTime"}`
+        );
+      }
+      const { droppedBuffers, gapMs } = measureAudioGap(recorder.meter, audioTime, label);
+      if (droppedBuffers) {
+        if (handsFreeUtterance) handsFreeUtterance.droppedBuffers += droppedBuffers;
+        reportAudioDrops(recorder, droppedBuffers, gapMs, label);
+      }
+      const startedAt = performance.now();
       processHandsFreeAudio(recorder, new Float32Array(event.inputBuffer.getChannelData(0)));
+      recordProcessingTime(recorder.meter, performance.now() - startedAt, label);
+      if (Date.now() - recorder.lastSummaryAt >= AUDIO_DROP_SUMMARY_MS) {
+        recorder.lastSummaryAt = Date.now();
+        logAudioMeterSummary(recorder, "定期");
+      }
     };
     source.connect(processor);
     processor.connect(audioContext.destination);

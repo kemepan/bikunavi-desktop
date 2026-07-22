@@ -4486,6 +4486,9 @@ async function generateIdleLines() {
   return idleLineGeneration;
 }
 
+// 生成中の会話。ハンズフリーで話しかけられた時に畳むため、1本だけ保持する。
+let activeChatController;
+
 ipcMain.handle("companion:chat", async (
   _event,
   rawMessage,
@@ -4496,6 +4499,11 @@ ipcMain.handle("companion:chat", async (
 ) => {
   const message = String(rawMessage ?? "").trim().slice(0, 4000);
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
+  // 前の生成が残っていれば畳んでから始める。ハンズフリーで続けて
+  // 話しかけられた時に、2本が同じ吹き出しへ流れ込むのを防ぐ。
+  activeChatController?.abort();
+  const chatController = new AbortController();
+  activeChatController = chatController;
   // 考えている間の相づち（本回答の声が始まると自動で引っ込む）
   maybePlayAizuchi();
   const contextKind = String(rawContextKind || "").trim().slice(0, 40);
@@ -4654,10 +4662,16 @@ ipcMain.handle("companion:chat", async (
         stream.lastSentPartial = "";
         stream.spokenOffset = 0;
         stream.speech = undefined;
-      }
+      },
+      chatController.signal
     );
   } catch (error) {
     stream.speech?.cancel();
+    if (conversation.isChatAbortError(error)) {
+      // 利用者が話しかけて割り込んだ。失敗ではないので、エラー文言も
+      // 会話履歴も残さず、rendererには中断だけ伝える。
+      return { text: "", sources: [], aborted: true };
+    }
     console.error("Chat failed:", error);
     const busy = /(?:at capacity|overloaded|resource[_ ]exhausted|temporarily unavailable|HTTP\s*(?:429|503)|\b(?:429|503)\b)/i
       .test(String(error?.message || error || ""));
@@ -4667,6 +4681,8 @@ ipcMain.handle("companion:chat", async (
         : "うまく考えられませんでした。トレイメニューの「会話AI」で使うAIと、そのログイン状態（またはAPIキー）を確認してください。",
       sources: []
     };
+  } finally {
+    if (activeChatController === chatController) activeChatController = undefined;
   }
   // 読み上げ済み位置から先の残りを流し込み、セッションを締める
   if (stream.speech) {
@@ -4916,6 +4932,11 @@ ipcMain.handle("companion:open-url", async (_event, rawUrl) => {
 ipcMain.on("companion:stop-speech", () => {
   stopSpeech();
   stopAizuchi();
+});
+
+// 生成中に話しかけられた時、rendererから畳むよう要求される。
+ipcMain.on("companion:cancel-chat", () => {
+  activeChatController?.abort();
 });
 
 ipcMain.on("companion:thinking-sound-start", () => {

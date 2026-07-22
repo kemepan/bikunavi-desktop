@@ -7,6 +7,7 @@ const SEND_CHANNELS = new Set([
   "companion:drag-end",
   "companion:auto-move",
   "companion:stop-speech",
+  "companion:cancel-chat",
   "companion:focus-window",
   "companion:thinking-sound-start",
   "companion:thinking-sound-stop",

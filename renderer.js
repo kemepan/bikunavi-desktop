@@ -425,6 +425,16 @@ function interruptSpeechForHandsFree() {
   isSpeaking = false;
 }
 
+// 話しかけられたら、読み上げ中なら止め、生成中なら畳む。
+// 中断した回答はmain側で履歴にも残らないので、聞き直しにも出てこない。
+function interruptChatForHandsFree() {
+  if (isThinking || isPreparingSpeech) {
+    bikunavi.send("companion:cancel-chat");
+    console.log("Hands-free interrupted a chat in progress");
+  }
+  interruptSpeechForHandsFree();
+}
+
 function restoreHandsFreeCaptureState(utterance) {
   const userIsEditing = document.activeElement instanceof HTMLInputElement &&
     Boolean(document.activeElement.closest("#bubble"));
@@ -497,12 +507,9 @@ async function finishHandsFreeUtterance(utterance) {
 
 function processHandsFreeAudio(recorder, chunk) {
   if (recorder !== handsFreeRecorder || !handsFreeEnabled || systemSleeping) return;
-  // 回答生成中は次の会話をまだ開始できない。読み上げ中の割り込みは、
-  // 回答本文が確定してrendererが次の入力を受けられる段階から有効にする。
   if (
     voiceInputActive ||
     handsFreeTranscribing ||
-    isThinking ||
     Date.now() < handsFreeIgnoreUntil
   ) {
     recorder.detector.reset();
@@ -512,7 +519,10 @@ function processHandsFreeAudio(recorder, chunk) {
 
   if (!handsFreeUtterance) appendHandsFreePreRoll(recorder, chunk);
   const elapsedMs = chunk.length / recorder.sampleRate * 1000;
-  const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, isSpeaking
+  // 読み上げ中・生成中はびくたん自身の声や環境音を拾いやすいので、高い閾値で待つ。
+  // ここを越えた時だけ、読み上げの停止や生成の中断まで踏み込む。
+  const guardedAgainstSelf = isSpeaking || isThinking || isPreparingSpeech;
+  const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, guardedAgainstSelf
     ? { minStartRms: HANDS_FREE_SPEAKING_THRESHOLD, startMs: 420 }
     : undefined);
 
@@ -531,7 +541,7 @@ function processHandsFreeAudio(recorder, chunk) {
       `threshold ${decision.startThreshold.toFixed(3)}, noise ${decision.noiseFloor.toFixed(3)}`
     );
     clearHandsFreePreRoll(recorder);
-    interruptSpeechForHandsFree();
+    interruptChatForHandsFree();
     chatActive = true;
     lineHistoryActive = false;
     setEmote("joy");
@@ -1664,6 +1674,16 @@ async function runChat(rawMessage) {
         contextSources,
         contextKind
       );
+    if (rawChatResponse?.aborted) {
+      // 生成中に話しかけられて畳んだ。回答も履歴も残さず静かに戻る。
+      // 続きは、いま録っている発話の文字起こしが終わってから始まる。
+      pendingQuestion = "";
+      isThinking = false;
+      isPreparingSpeech = false;
+      isSpeaking = false;
+      showChatBubble();
+      return;
+    }
     const response = normalizeSpeechItem(rawChatResponse);
     if (customizationQuestion) pendingCharacterCustomization = undefined;
     chatEntries.push({
@@ -1697,7 +1717,9 @@ async function runChat(rawMessage) {
     // main側の先行読み上げ（ストリーミング中に話し始めるやつ）が動いている
     // 場合は、こちらから読み上げを始めない（二重再生防止）。発話状態は
     // companion:speech-started / speech-ended イベント経由で同期される。
-    if (!rawChatResponse?.alreadySpeaking) {
+    // 中断が間に合わず回答が確定した直後でも、まだ話している最中なら
+    // 声を被せない。本文の表示だけ済ませ、次の発話の番を待つ。
+    if (!rawChatResponse?.alreadySpeaking && !handsFreeUtterance) {
       bikunavi.invoke("companion:speak", response.text, "answer")
         .then((speechId) => {
           if (!speechId) return;

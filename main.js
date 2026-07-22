@@ -48,6 +48,7 @@ const {
   selectDiaryMemory
 } = require("./diary-memory-utils");
 const { roundWindowCoordinate } = require("./movement-utils");
+const { isStaleIdleLine } = require("./idle-freshness-utils");
 const {
   cleanChatPunctuation,
   isGreetingOnly,
@@ -457,7 +458,32 @@ function dropPendingThread() {
   pendingThreadLines = [];
 }
 
+// 時間帯をまたいで残った「深夜0時を過ぎましたね」のような行を、
+// 話す前にキューから外す。時間に触れていない行は残す。
+function dropStaleIdleLines() {
+  const now = Date.now();
+  const slot = getJstTimeContext().slot;
+  const kept = [];
+  let dropping = false;
+  for (const item of idleLineQueue) {
+    if (item.continues) {
+      // 続きものは、頭が落ちたら後続も落とす。途中の行だけが古びた時もそこで打ち切る。
+      if (!dropping && isStaleIdleLine(item, { now, slot })) dropping = true;
+      if (!dropping) kept.push(item);
+      continue;
+    }
+    dropping = isStaleIdleLine(item, { now, slot });
+    if (!dropping) kept.push(item);
+  }
+  const removed = idleLineQueue.length - kept.length;
+  if (!removed) return;
+  idleLineQueue.length = 0;
+  idleLineQueue.push(...kept);
+  console.log(`Idle lines dropped as stale: ${removed} (現在の時間帯: ${slot})`);
+}
+
 function takeFreshIdleLine() {
+  dropStaleIdleLines();
   if (
     pendingThreadLines.length &&
     Date.now() - pendingThreadServedAt > PENDING_THREAD_MAX_GAP_MS
@@ -4562,7 +4588,13 @@ async function generateIdleLines() {
       // 20行で切ると続きものが尻切れになるので、話題の切れ目まで含めてから止める。
       let limit = Math.min(queuedLines.length, 20);
       while (limit < queuedLines.length && queuedLines[limit].continues) limit += 1;
-      idleLineQueue.push(...queuedLines.slice(0, limit));
+      // 作り置きは数時間キューに残る。話す時に鮮度を見られるよう、
+      // 生成時の時間帯と時刻を各行へ刻んでおく。
+      const generatedAt = Date.now();
+      const generatedSlot = getJstTimeContext().slot;
+      idleLineQueue.push(...queuedLines
+        .slice(0, limit)
+        .map((line) => ({ ...line, generatedAt, slot: generatedSlot })));
     } catch (error) {
       console.error("Idle line generation failed:", error);
       idleLineQueue.push(...FALLBACK_IDLE_LINES);

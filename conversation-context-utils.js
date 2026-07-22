@@ -14,9 +14,15 @@
     latestChatEntry,
     now = Date.now(),
     ambientMaxAgeMs = 90000,
-    chatMaxAgeMs = 5 * 60 * 1000
+    chatMaxAgeMs = 5 * 60 * 1000,
+    directMaxAgeMs = 10 * 60 * 1000
   } = {}) {
-    if (String(displayedLineItem?.text || "").trim()) {
+    // 表示しっぱなしのセリフを、何時間経っても「いま返信された先」として
+    // 渡さない。古い独り言へ話を寄せると、目の前の発言が無視される。
+    const displayedTime = validTime(displayedLineItem?.time);
+    const displayedIsFresh = !displayedTime ||
+      (now - displayedTime >= 0 && now - displayedTime < directMaxAgeMs);
+    if (String(displayedLineItem?.text || "").trim() && displayedIsFresh) {
       return { item: displayedLineItem, direct: true };
     }
 

@@ -57,3 +57,26 @@ const now = 1_000_000;
 }
 
 console.log("conversation-context-utils: OK");
+
+// 表示しっぱなしの独り言を、何時間も経ってから「返信先」として使わない。
+{
+  const now = Date.UTC(2026, 6, 23, 6, 0, 0);
+  const stale = {
+    text: "ふと気になってことば帳を開いてみたんですが。",
+    time: now - 6 * 60 * 60 * 1000
+  };
+  const picked = pickConversationContext({ displayedLineItem: stale, now });
+  assert.equal(picked.direct, false);
+  assert.equal(picked.item, undefined);
+
+  const fresh = { text: "ことば帳を開いてみたんですが。", time: now - 30000 };
+  const pickedFresh = pickConversationContext({ displayedLineItem: fresh, now });
+  assert.equal(pickedFresh.direct, true);
+  assert.equal(pickedFresh.item, fresh);
+
+  // 表示時刻を持たない項目は、これまでどおり直接返信として扱う。
+  const untimed = { text: "時刻を持たないセリフ。" };
+  assert.equal(pickConversationContext({ displayedLineItem: untimed, now }).direct, true);
+}
+
+console.log("conversation-context-utils（返信先の鮮度）: OK");

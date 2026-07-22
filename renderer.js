@@ -1212,7 +1212,9 @@ function showBubble(item) {
   const validSources = (speechItem.sources || [])
     .filter((source) => /^https?:\/\//.test(source?.url || ""));
   displayedLineSources = validSources;
-  displayedLineItem = speechItem;
+  // 表示した時刻を残す。何時間も前のセリフを「いま返信された先」として
+  // 会話AIへ渡さないための判断材料になる。
+  displayedLineItem = { ...speechItem, time: Date.now() };
   const sourceList = createSourceLinks(validSources);
   if (sourceList) bubble.append(sourceList);
   appendReplayAction(speechItem.text);

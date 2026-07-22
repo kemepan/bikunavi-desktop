@@ -2699,7 +2699,7 @@ function activeProviderId() {
 // onDelta: ストリーミング対応プロバイダ（API系）ではテキスト受信ごとに呼ばれる。
 // onAttemptStart: 自動フォールバックで別プロバイダを試す直前に呼ばれる
 // （受信済みの途中テキストを捨てて表示をやり直すための合図）。
-async function runAssistant(prompt, onDelta, onAttemptStart) {
+async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
   const config = conversationConfig();
   if (conversationProvider !== "auto") {
     const providerId = conversation.resolveProviderId(conversationProvider, config);
@@ -2707,7 +2707,7 @@ async function runAssistant(prompt, onDelta, onAttemptStart) {
       throw new Error("選択中の会話AIが使えません。トレイメニューの「会話AI」を確認してください。");
     }
     onAttemptStart?.();
-    return conversation.runProvider(providerId, prompt, config, onDelta);
+    return conversation.runProvider(providerId, prompt, config, onDelta, signal);
   }
   // 自動モードは、失敗（未ログイン・タイムアウト等）したら次の候補へフォールバックする
   const available = conversation.detectProviders(config).filter((provider) => provider.available);
@@ -2718,8 +2718,10 @@ async function runAssistant(prompt, onDelta, onAttemptStart) {
   for (const provider of available) {
     try {
       onAttemptStart?.();
-      return await conversation.runProvider(provider.id, prompt, config, onDelta);
+      return await conversation.runProvider(provider.id, prompt, config, onDelta, signal);
     } catch (error) {
+      // 利用者が話しかけて中断した時に、次のAIで同じ質問を蒸し返さない。
+      if (conversation.isChatAbortError(error)) throw error;
       console.error(`Conversation provider ${provider.id} failed:`, error?.message || error);
       lastError = error;
     }

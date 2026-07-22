@@ -155,8 +155,11 @@ const VOICE_INPUT_MAX_MS = 15000;
 const HANDS_FREE_PRE_ROLL_MS = 360;
 const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
 const HANDS_FREE_BUFFER_SIZE = 4096;
-// 続きものの次の行までの間。読み終えて一拍おいてから続ける。
-const THREAD_FOLLOW_UP_MS = 7000;
+// 続きものの次の行までの間。吹き出しを出したまま差し替えるので、
+// 消して出し直していた頃より短くてよい。
+const THREAD_FOLLOW_UP_MS = 3500;
+// マイクを押したままハンズフリーを切り替えるまでの時間。
+const MIC_LONG_PRESS_MS = 600;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
 // この間隔でまとめる。累計は別に定期要約として出す。
 const AUDIO_DROP_LOG_THROTTLE_MS = 3000;
@@ -283,7 +286,7 @@ async function finishVoiceInput() {
 
 async function startVoiceInput(input, button) {
   if (handsFreeEnabled) {
-    showStatusMessage("ハンズフリー会話が待機中です");
+    showStatusMessage("ハンズフリー会話が待機中です（マイク長押しでOFF）");
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -673,6 +676,23 @@ async function startHandsFreeListening() {
     handsFreeStartPromise = undefined;
   });
   return handsFreeStartPromise;
+}
+
+// マイクの長押しからハンズフリーを切り替える。トレイメニューまで
+// 行かなくてよいようにするための入口で、状態の反映はmain経由で揃える。
+function toggleHandsFreeFromMic() {
+  const next = !handsFreeEnabled;
+  if (next) stopVoiceInput();
+  bikunavi.invoke("companion:set-hands-free-enabled", next)
+    .then(() => {
+      showStatusMessage(next
+        ? "ハンズフリー会話をONにしました（長押しでOFF）"
+        : "ハンズフリー会話をOFFにしました");
+    })
+    .catch((error) => {
+      console.error("Hands-free toggle failed:", error);
+      showStatusMessage("ハンズフリー会話を切り替えられませんでした");
+    });
 }
 
 function applyHandsFreeSetting(enabled) {
@@ -1519,15 +1539,43 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   mic.type = "button";
   mic.className = "voice-input-button";
   mic.classList.toggle("is-handsfree", handsFreeEnabled);
-  mic.title = handsFreeEnabled
-    ? "ハンズフリー会話が待機中です"
-    : navigator.mediaDevices?.getUserMedia
-      ? "音声を録音して入力"
-      : "この環境では録音できません";
-  mic.disabled = busy || preparingSpeech || handsFreeEnabled || !navigator.mediaDevices?.getUserMedia;
-  mic.setAttribute("aria-label", handsFreeEnabled ? "ハンズフリー会話が待機中" : "音声で入力");
-  mic.setAttribute("aria-pressed", "false");
-  mic.addEventListener("click", () => {
+  const canRecord = Boolean(navigator.mediaDevices?.getUserMedia);
+  mic.title = !canRecord
+    ? "この環境では録音できません"
+    : handsFreeEnabled
+      ? "ハンズフリー会話が待機中（長押しでOFF）"
+      : "クリックで録音／長押しでハンズフリーON";
+  // ハンズフリー中も押せるようにしておく。無効化するとpointerイベントが
+  // 飛ばず、長押しでOFFに戻せなくなる。
+  mic.disabled = busy || preparingSpeech || !canRecord;
+  mic.setAttribute("aria-label", handsFreeEnabled
+    ? "ハンズフリー会話が待機中。長押しで解除"
+    : "音声で入力。長押しでハンズフリー会話");
+  mic.setAttribute("aria-pressed", handsFreeEnabled ? "true" : "false");
+
+  let micLongPressTimer;
+  let micLongPressFired = false;
+  const startMicLongPress = () => {
+    clearTimeout(micLongPressTimer);
+    micLongPressFired = false;
+    if (!canRecord) return;
+    micLongPressTimer = setTimeout(() => {
+      micLongPressFired = true;
+      toggleHandsFreeFromMic();
+    }, MIC_LONG_PRESS_MS);
+  };
+  const cancelMicLongPress = () => clearTimeout(micLongPressTimer);
+  mic.addEventListener("pointerdown", startMicLongPress);
+  mic.addEventListener("pointerup", cancelMicLongPress);
+  mic.addEventListener("pointerleave", cancelMicLongPress);
+  mic.addEventListener("pointercancel", cancelMicLongPress);
+  mic.addEventListener("click", (event) => {
+    // 長押しで切り替えた直後は、指を離した時のクリックまで拾わない。
+    if (micLongPressFired) {
+      micLongPressFired = false;
+      event.preventDefault();
+      return;
+    }
     toggleVoiceInput(input, mic);
   });
   form.append(input);
@@ -1905,7 +1953,15 @@ async function runIdleChatter() {
     systemSleeping ||
     idleChatterBusy ||
     !model
-  ) return;
+  ) {
+    // 続きを出すつもりで残しておいた吹き出しを、宙ぶらりんにしない。
+    // 実際に消すかどうかはhideBubble側がホバー等を見て判断する。
+    if (threadFollowUpPending) {
+      threadFollowUpPending = false;
+      hideBubble(1200);
+    }
+    return;
+  }
 
   idleChatterBusy = true;
   try {
@@ -1951,8 +2007,8 @@ async function runIdleChatter() {
       currentSpeechHoldMs = 900;
       isSpeaking = false;
       resumeAmbientState();
-      hideBubble();
       if (threadFollowUpPending) scheduleThreadFollowUp();
+      else hideBubble();
     }, displayDuration);
   } catch (error) {
     console.error(error);
@@ -2333,9 +2389,10 @@ bikunavi.on("companion:speech-ended", (speechId) => {
       }, Math.max(holdMs, 9000));
     }
     resumeAmbientState();
-    hideBubble(holdMs);
-    // 続きものは、いつもの間隔を待たずに次の行へ進む。
+    // 続きものの途中は吹き出しを消さない。消して出し直すと、同じ話題の
+    // 続きでも別々の発言に見えてしまう。次の行は本文だけ差し替える。
     if (threadFollowUpPending) scheduleThreadFollowUp();
+    else hideBubble(holdMs);
   }
 });
 

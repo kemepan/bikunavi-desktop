@@ -14,6 +14,9 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 rsync -a --delete --exclude=/dist --exclude=/.git "$SRC/" "$DEST/"
 chmod +x "$DEST/scripts/start-bikunavi-desktop.sh" "$DEST/native/now-playing"
+if [ -f "$DEST/native/speech-recognizer.app/Contents/MacOS/speech-recognizer" ]; then
+  chmod +x "$DEST/native/speech-recognizer.app/Contents/MacOS/speech-recognizer"
+fi
 
 # 初回だけ従来の利用データを開発用へ複製する。以後は互いに独立して保存する。
 if [ ! -f "$DEV_DATA/state.json" ] && [ -f "$RELEASE_DATA/state.json" ]; then

@@ -11,6 +11,7 @@
 | whisper.cpp バイナリ | `native/stt/darwin-arm64/whisper-cli`、`native/stt/darwin-x64/whisper-cli` | MIT（whisper.cpp）。配布時にライセンス文同梱 |
 | Whisper モデル | `models/ggml-base.bin` | MIT（OpenAI Whisper）。配布時にライセンス文同梱 |
 | now-playing | `native/now-playing`（`.m` ソース同梱） | 自作 |
+| macOS Speech補助ツール | `native/speech-recognizer.app`（`.m` ソース同梱） | 自作。Apple Speech frameworkを利用 |
 | npm 依存（pixi.js / pixi-live2d-display / @pixi/unsafe-eval / Electron） | `node_modules/` | すべて MIT（packager は BSD-2）。パッケージ時にライセンス表記を同梱するのが安全 |
 
 ## 参照するが同梱しないもの

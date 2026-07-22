@@ -1,6 +1,12 @@
 // PIXI と PIXI.live2d は index.html の <script> で読み込むブラウザビルドを使う。
 // Node 連携は preload.js が公開する window.bikunavi 経由のみ。
 const { Live2DModel } = PIXI.live2d;
+const {
+  calculateRms,
+  createVoiceActivityDetector,
+  isUsableTranscript
+} = window.BikunaviVad;
+const { pickConversationContext } = window.BikunaviConversationContext;
 
 const canvas = document.querySelector("#stage");
 const bubble = document.querySelector("#bubble");
@@ -127,15 +133,33 @@ let voiceInputButton;
 let voiceInputTargetInput;
 let voiceRecorder;
 let voiceRecordingTimer;
+let handsFreeEnabled = false;
+let handsFreeRecorder;
+let handsFreeStartPromise;
+let handsFreeUtterance;
+let handsFreeTranscribing = false;
+let handsFreeGeneration = 0;
+let handsFreeIgnoreUntil = 0;
 let chatDraft = "";
 let preferredUserName = "あなた";
 const VOICE_INPUT_MAX_MS = 15000;
+const HANDS_FREE_PRE_ROLL_MS = 360;
+const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
+let statusFallback = "";
+
+function setStatusFallback(message) {
+  const previous = statusFallback;
+  statusFallback = String(message || "");
+  if (!status.textContent || status.textContent === previous) {
+    status.textContent = statusFallback;
+  }
+}
 
 function showStatusMessage(message, duration = 2600) {
   status.textContent = message;
   if (duration > 0) {
     setTimeout(() => {
-      if (status.textContent === message) status.textContent = "";
+      if (status.textContent === message) status.textContent = statusFallback;
     }, duration);
   }
 }
@@ -236,12 +260,16 @@ async function finishVoiceInput() {
     showStatusMessage(error?.message || "文字起こしに失敗しました");
   } finally {
     voiceInputTargetInput?.focus();
-    if (status.textContent === "文字起こし中…") status.textContent = "";
+    if (status.textContent === "文字起こし中…") status.textContent = statusFallback;
     scheduleChatIdleReset();
   }
 }
 
 async function startVoiceInput(input, button) {
+  if (handsFreeEnabled) {
+    showStatusMessage("ハンズフリー会話が待機中です");
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
     showStatusMessage("この環境では録音できません");
     return;
@@ -300,6 +328,262 @@ function toggleVoiceInput(input, button) {
     return;
   }
   startVoiceInput(input, button).catch(console.error);
+}
+
+function releaseHandsFreeRecorder(recorder) {
+  if (!recorder) return;
+  try {
+    recorder.processor.disconnect();
+    recorder.source.disconnect();
+  } catch (_error) {
+    // ignore disconnect races
+  }
+  recorder.processor.onaudioprocess = null;
+  for (const track of recorder.stream.getTracks()) track.stop();
+  recorder.audioContext.close().catch(() => {});
+}
+
+function stopHandsFreeListening() {
+  handsFreeGeneration += 1;
+  const recorder = handsFreeRecorder;
+  const utterance = handsFreeUtterance;
+  handsFreeRecorder = undefined;
+  handsFreeUtterance = undefined;
+  handsFreeTranscribing = false;
+  handsFreeIgnoreUntil = 0;
+  releaseHandsFreeRecorder(recorder);
+  setStatusFallback("");
+  restoreHandsFreeCaptureState(utterance);
+}
+
+function clearHandsFreePreRoll(recorder) {
+  recorder.preRoll = [];
+  recorder.preRollSamples = 0;
+}
+
+function appendHandsFreePreRoll(recorder, chunk) {
+  recorder.preRoll.push(chunk);
+  recorder.preRollSamples += chunk.length;
+  const maxSamples = Math.ceil(recorder.sampleRate * HANDS_FREE_PRE_ROLL_MS / 1000);
+  while (recorder.preRoll.length > 1 && recorder.preRollSamples > maxSamples) {
+    recorder.preRollSamples -= recorder.preRoll.shift().length;
+  }
+}
+
+function interruptSpeechForHandsFree() {
+  if (!isSpeaking && !currentSpeechId) return;
+  bikunavi.send("companion:stop-speech");
+  clearTimeout(speechWatchdogTimer);
+  clearTimeout(chatterEndTimer);
+  clearTimeout(responseSpeechTimer);
+  currentSpeechId = undefined;
+  currentSpeechKind = undefined;
+  isSpeaking = false;
+}
+
+function restoreHandsFreeCaptureState(utterance) {
+  const userIsEditing = document.activeElement instanceof HTMLInputElement &&
+    Boolean(document.activeElement.closest("#bubble"));
+  if (
+    utterance?.wasChatActive ||
+    userIsEditing ||
+    handsFreeUtterance ||
+    isThinking ||
+    isSpeaking
+  ) return;
+  chatActive = false;
+  bikunavi.send("companion:hover", isHovered);
+  resumeAmbientState();
+  if (!isHovered) hideBubble(1200);
+}
+
+async function finishHandsFreeUtterance(utterance) {
+  if (!utterance?.chunks?.length || utterance.generation !== handsFreeGeneration) {
+    restoreHandsFreeCaptureState(utterance);
+    return;
+  }
+  const samples = mergeAudioChunks(utterance.chunks);
+  const durationMs = samples.length / utterance.sampleRate * 1000;
+  if (durationMs < 420) {
+    showStatusMessage("もう少し長く話してみてください");
+    restoreHandsFreeCaptureState(utterance);
+    return;
+  }
+
+  console.log(
+    `Hands-free utterance: ${Math.round(durationMs)}ms, peak RMS ${Number(utterance.peakRms || 0).toFixed(3)}`
+  );
+
+  handsFreeTranscribing = true;
+  showStatusMessage("文字起こし中…", 0);
+  let chatStarted = false;
+  try {
+    const wav = encodeWav(samples, utterance.sampleRate);
+    const result = await bikunavi.invoke("companion:transcribe-audio", {
+      audio: wav,
+      format: "wav",
+      sampleRate: utterance.sampleRate
+    });
+    if (
+      utterance.generation !== handsFreeGeneration ||
+      !handsFreeEnabled ||
+      systemSleeping
+    ) return;
+    const text = String(result?.text || "").trim();
+    if (!isUsableTranscript(text, { handsFree: true })) {
+      showStatusMessage(result?.message || "うまく聞き取れませんでした");
+      return;
+    }
+
+    showStatusMessage(`「${shortenForBubble(text, 42)}」`, 1200);
+    handsFreeTranscribing = false;
+    await runChat(text);
+    chatStarted = true;
+  } catch (error) {
+    console.error("Hands-free transcription failed:", error);
+    showStatusMessage(error?.message || "文字起こしに失敗しました");
+  } finally {
+    if (utterance.generation === handsFreeGeneration) handsFreeTranscribing = false;
+    if (status.textContent === "文字起こし中…") status.textContent = statusFallback;
+    if (!chatStarted) restoreHandsFreeCaptureState(utterance);
+  }
+}
+
+function processHandsFreeAudio(recorder, chunk) {
+  if (recorder !== handsFreeRecorder || !handsFreeEnabled || systemSleeping) return;
+  // 回答生成中は次の会話をまだ開始できない。読み上げ中の割り込みは、
+  // 回答本文が確定してrendererが次の入力を受けられる段階から有効にする。
+  if (
+    voiceInputActive ||
+    handsFreeTranscribing ||
+    isThinking ||
+    Date.now() < handsFreeIgnoreUntil
+  ) {
+    recorder.detector.reset();
+    clearHandsFreePreRoll(recorder);
+    return;
+  }
+
+  if (!handsFreeUtterance) appendHandsFreePreRoll(recorder, chunk);
+  const elapsedMs = chunk.length / recorder.sampleRate * 1000;
+  const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, isSpeaking
+    ? { minStartRms: HANDS_FREE_SPEAKING_THRESHOLD, startMs: 420 }
+    : undefined);
+
+  if (decision.started) {
+    const generation = handsFreeGeneration;
+    handsFreeUtterance = {
+      chunks: recorder.preRoll.slice(),
+      sampleRate: recorder.sampleRate,
+      generation,
+      wasChatActive: chatActive,
+      peakRms: decision.level
+    };
+    console.log(
+      `Hands-free detected: RMS ${decision.level.toFixed(3)}, ` +
+      `threshold ${decision.startThreshold.toFixed(3)}, noise ${decision.noiseFloor.toFixed(3)}`
+    );
+    clearHandsFreePreRoll(recorder);
+    interruptSpeechForHandsFree();
+    chatActive = true;
+    lineHistoryActive = false;
+    setEmote("joy");
+    showStatusMessage("聞いています…", 0);
+  } else if (handsFreeUtterance) {
+    handsFreeUtterance.chunks.push(chunk);
+    handsFreeUtterance.peakRms = Math.max(handsFreeUtterance.peakRms, decision.level);
+  }
+
+  if (decision.ended && handsFreeUtterance) {
+    const utterance = handsFreeUtterance;
+    handsFreeUtterance = undefined;
+    recorder.detector.reset();
+    clearHandsFreePreRoll(recorder);
+    finishHandsFreeUtterance(utterance).catch(console.error);
+  }
+}
+
+async function startHandsFreeListening() {
+  if (
+    !handsFreeEnabled ||
+    systemSleeping ||
+    handsFreeRecorder ||
+    handsFreeStartPromise
+  ) return handsFreeStartPromise;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showStatusMessage("この環境ではハンズフリー会話を使えません");
+    await bikunavi.invoke("companion:set-hands-free-enabled", false).catch(() => {});
+    return undefined;
+  }
+
+  const generation = ++handsFreeGeneration;
+  let acquiredStream;
+  let pendingAudioContext;
+  handsFreeStartPromise = (async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+    acquiredStream = stream;
+    if (!handsFreeEnabled || systemSleeping || generation !== handsFreeGeneration) {
+      for (const track of stream.getTracks()) track.stop();
+      acquiredStream = undefined;
+      return;
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContextClass();
+    pendingAudioContext = audioContext;
+    await audioContext.resume();
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const recorder = {
+      stream,
+      audioContext,
+      source,
+      processor,
+      sampleRate: audioContext.sampleRate,
+      detector: createVoiceActivityDetector(),
+      preRoll: [],
+      preRollSamples: 0
+    };
+    processor.onaudioprocess = (event) => {
+      processHandsFreeAudio(recorder, new Float32Array(event.inputBuffer.getChannelData(0)));
+    };
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+    handsFreeRecorder = recorder;
+    acquiredStream = undefined;
+    pendingAudioContext = undefined;
+    setStatusFallback("🎙 ハンズフリー待機中");
+    showStatusMessage("ハンズフリー会話を開始しました", 2200);
+  })().catch(async (error) => {
+    for (const track of acquiredStream?.getTracks?.() || []) track.stop();
+    pendingAudioContext?.close().catch(() => {});
+    if (generation !== handsFreeGeneration) return;
+    console.error("Hands-free start failed:", error);
+    handsFreeEnabled = false;
+    setStatusFallback("");
+    showStatusMessage(error?.name === "NotAllowedError"
+      ? "マイク入力が許可されませんでした"
+      : "ハンズフリー会話を開始できませんでした");
+    await bikunavi.invoke("companion:set-hands-free-enabled", false).catch(() => {});
+  }).finally(() => {
+    handsFreeStartPromise = undefined;
+  });
+  return handsFreeStartPromise;
+}
+
+function applyHandsFreeSetting(enabled) {
+  const next = Boolean(enabled);
+  const changed = handsFreeEnabled !== next;
+  handsFreeEnabled = next;
+  if (next) startHandsFreeListening().catch(console.error);
+  else stopHandsFreeListening();
+  if (changed && bubble.classList.contains("has-chat") && !isThinking) showChatBubble();
 }
 
 function saveHistorySoon() {
@@ -1136,11 +1420,14 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   const mic = document.createElement("button");
   mic.type = "button";
   mic.className = "voice-input-button";
-  mic.title = navigator.mediaDevices?.getUserMedia
-    ? "音声を録音して入力"
-    : "この環境では録音できません";
-  mic.disabled = busy || preparingSpeech || !navigator.mediaDevices?.getUserMedia;
-  mic.setAttribute("aria-label", "音声で入力");
+  mic.classList.toggle("is-handsfree", handsFreeEnabled);
+  mic.title = handsFreeEnabled
+    ? "ハンズフリー会話が待機中です"
+    : navigator.mediaDevices?.getUserMedia
+      ? "音声を録音して入力"
+      : "この環境では録音できません";
+  mic.disabled = busy || preparingSpeech || handsFreeEnabled || !navigator.mediaDevices?.getUserMedia;
+  mic.setAttribute("aria-label", handsFreeEnabled ? "ハンズフリー会話が待機中" : "音声で入力");
   mic.setAttribute("aria-pressed", "false");
   mic.addEventListener("click", () => {
     toggleVoiceInput(input, mic);
@@ -1250,18 +1537,20 @@ async function runChat(rawMessage) {
   if (!message || isSpeaking || isThinking || isPreparingSpeech) return;
   // 「考え中」表示へ切り替えると displayedLineItem が消えるため、先に返信先を固定する。
   // ホバーで復元した古い独り言でも、入力欄から送った場合は明示的な返信として扱う。
-  const directReplyItem = displayedLineItem?.text
-    ? normalizeSpeechItem(displayedLineItem)
-    : undefined;
   const lastLine = lineHistory[lineHistory.length - 1];
-  const recentLineItem = lastLine && Date.now() - lastLine.time < 90000
-    ? normalizeSpeechItem(lastLine)
+  const latestChatEntry = chatEntries[chatEntries.length - 1];
+  const pickedContext = pickConversationContext({
+    displayedLineItem,
+    lastAmbientLine: lastLine,
+    latestChatEntry
+  });
+  const replyContextItem = pickedContext.item
+    ? normalizeSpeechItem(pickedContext.item)
     : undefined;
-  const replyContextItem = directReplyItem || recentLineItem;
   const contextLine = replyContextItem?.text || "";
   const contextSources = replyContextItem?.sources || [];
   const contextKind = replyContextItem?.kind || "";
-  const isDirectReply = Boolean(directReplyItem);
+  const isDirectReply = pickedContext.direct;
   stopVoiceInput();
   chatDraft = "";
   chatActive = true;
@@ -1719,6 +2008,9 @@ async function start() {
         speechVolume = Number(settings.speechVolume);
         updateVolumeControl();
       }
+      if (typeof settings?.handsFreeEnabled === "boolean") {
+        handsFreeEnabled = settings.handsFreeEnabled;
+      }
     } catch (error) {
       console.error("Settings load failed:", error);
     }
@@ -1779,6 +2071,7 @@ async function start() {
     pomodoroState = await bikunavi.invoke("companion:pomodoro-state");
     if (pomodoroState.active) showPomodoroBubble(pomodoroState);
     resumeAmbientState();
+    if (handsFreeEnabled) startHandsFreeListening().catch(console.error);
     console.log("サイト版の挙動でびくたんを起動しました");
     window.addEventListener("resize", () => {
       fitModel();
@@ -1892,6 +2185,11 @@ bikunavi.on("companion:speech-ended", (speechId) => {
   currentSpeechId = undefined;
   currentSpeechKind = undefined;
   isSpeaking = false;
+  if (handsFreeEnabled && handsFreeRecorder && !handsFreeUtterance) {
+    handsFreeIgnoreUntil = Date.now() + 280;
+    handsFreeRecorder.detector.reset();
+    clearHandsFreePreRoll(handsFreeRecorder);
+  }
   if (speechKind === "aizuchi" && isThinking) {
     setEmote("thinking");
   }
@@ -1915,6 +2213,13 @@ bikunavi.on("companion:speech-started", (payload) => {
   currentSpeechKind = payload?.kind || "answer";
   isSpeaking = Boolean(currentSpeechId);
   if (!isSpeaking) return;
+  if (handsFreeEnabled && handsFreeRecorder && !handsFreeUtterance) {
+    // スピーカーから出たびくたん自身の声の立ち上がりを、人の発話と誤認しない。
+    // その後は高めの閾値で待機し、長い回答への割り込みは受け付ける。
+    handsFreeIgnoreUntil = Date.now() + 850;
+    handsFreeRecorder.detector.reset();
+    clearHandsFreePreRoll(handsFreeRecorder);
+  }
   if (currentSpeechKind === "aizuchi" && isThinking) {
     setEmote("joy");
   } else if (currentSpeechKind === "answer" && isThinking) {
@@ -2003,6 +2308,9 @@ bikunavi.on("companion:settings-changed", (settings) => {
     speechVolume = Number(settings.speechVolume);
     updateVolumeControl();
   }
+  if (typeof settings?.handsFreeEnabled === "boolean") {
+    applyHandsFreeSetting(settings.handsFreeEnabled);
+  }
 });
 
 bikunavi.on("companion:clear-history", () => {
@@ -2023,6 +2331,7 @@ bikunavi.on("companion:show-line-history", () => {
 bikunavi.on("companion:system-sleep", (sleeping) => {
   systemSleeping = Boolean(sleeping);
   if (systemSleeping) {
+    stopHandsFreeListening();
     stopThinkingSound();
     clearTimeout(chatterEndTimer);
     clearTimeout(responseSpeechTimer);
@@ -2035,6 +2344,7 @@ bikunavi.on("companion:system-sleep", (sleeping) => {
     return;
   }
   bikunavi.invoke("companion:prepare-idle-lines").catch(console.error);
+  if (handsFreeEnabled) startHandsFreeListening().catch(console.error);
   resumeAmbientState();
   if (pomodoroState.active && !chatActive && !dragging) {
     showPomodoroBubble(pomodoroState);
@@ -2128,6 +2438,11 @@ canvas.addEventListener("pointercancel", () => {
     if (pomodoroState.active) showPomodoroBubble(pomodoroState);
     else hideBubble(1500);
   }
+});
+
+window.addEventListener("beforeunload", () => {
+  stopHandsFreeListening();
+  stopVoiceInput();
 });
 
 start();

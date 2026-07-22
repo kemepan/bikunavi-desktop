@@ -244,12 +244,11 @@ function runGeminiCli(prompt, config) {
   );
 }
 
-async function runGeminiApi(prompt, config, onDelta) {
+async function runGeminiApiWithModel(prompt, config, onDelta, model) {
   const apiKey = geminiApiKey(config);
   if (!apiKey) {
     throw new Error("Gemini APIキーが設定されていないか、~/.gemini/.env の権限が安全ではありません。");
   }
-  const model = process.env.BIKUNAVI_GEMINI_MODEL || "gemini-3.1-flash-lite";
   const streaming = typeof onDelta === "function";
   const controller = new AbortController();
   // ストリーミングは受信完了まで時間がかかるため、非ストリーミングより長めに待つ
@@ -351,6 +350,29 @@ async function runGeminiApi(prompt, config, onDelta) {
     .trim();
   if (!text) throw new Error("Gemini APIから返答を受け取れませんでした。");
   return text;
+}
+
+function isGeminiCapacityError(error) {
+  return /(?:at capacity|overloaded|resource[_ ]exhausted|temporarily unavailable|HTTP\s*(?:429|503)|\b(?:429|503)\b)/i
+    .test(String(error?.message || error || ""));
+}
+
+async function runGeminiApi(prompt, config, onDelta) {
+  const configuredModel = String(process.env.BIKUNAVI_GEMINI_MODEL || "").trim();
+  const models = configuredModel
+    ? [configuredModel]
+    : ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+  let lastError;
+  for (const [index, model] of models.entries()) {
+    try {
+      return await runGeminiApiWithModel(prompt, config, onDelta, model);
+    } catch (error) {
+      lastError = error;
+      if (!isGeminiCapacityError(error) || index >= models.length - 1) throw error;
+      console.warn(`Gemini model busy (${model}); trying ${models[index + 1]}.`);
+    }
+  }
+  throw lastError;
 }
 
 async function runClaudeApi(prompt, config, onDelta) {

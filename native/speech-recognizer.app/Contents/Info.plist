@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>online.bikunitan.bikutan.speech-recognizer</string>
+  <key>CFBundleName</key>
+  <string>びくたん音声認識</string>
+  <key>CFBundleDisplayName</key>
+  <string>びくたん</string>
+  <key>CFBundleExecutable</key>
+  <string>speech-recognizer</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>びくたんへ話しかけるためにマイクを使用します。</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>話しかけた内容をMacの音声認識で文字に変換するために使用します。</string>
+</dict>
+</plist>

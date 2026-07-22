@@ -10,6 +10,9 @@ import { packager } from "@electron/packager";
 const projectDirectory = fileURLToPath(new URL("..", import.meta.url));
 const arch = process.argv.includes("--arm64") ? "arm64" : "universal";
 const outputDirectoryName = `びくたん-darwin-${arch}`;
+// 同梱するWhisperモデルはこれ1つだけ。models/ はgit管理外で、精度比較用に
+// ggml-small-q5_1.bin（約181MB）などを置くことがあるため、明示的に絞り込む。
+const bundledWhisperModel = "ggml-base.bin";
 
 function plistPaths(root) {
   const results = [];
@@ -58,22 +61,33 @@ function assertExecutableArchitecture(executablePath, expectedArchitecture) {
 
 function verifyDistributionAssets() {
   const arm64Whisper = path.join(projectDirectory, "native", "stt", "darwin-arm64", "whisper-cli");
-  if (fs.existsSync(arm64Whisper)) assertExecutableArchitecture(arm64Whisper, "arm64");
-  if (arch !== "universal") return;
-
-  assertExecutableArchitecture(arm64Whisper, "arm64");
-  assertExecutableArchitecture(
-    path.join(projectDirectory, "native", "stt", "darwin-x64", "whisper-cli"),
-    "x86_64"
+  const speechRecognizer = path.join(
+    projectDirectory,
+    "native",
+    "speech-recognizer.app",
+    "Contents",
+    "MacOS",
+    "speech-recognizer"
   );
+  assertExecutableArchitecture(speechRecognizer, "arm64");
+  if (fs.existsSync(arm64Whisper)) assertExecutableArchitecture(arm64Whisper, "arm64");
+  // 同梱モデルを1つに絞ったので、arm64ビルドでも欠品を先に落とす。
   for (const requiredPath of [
-    path.join(projectDirectory, "models", "ggml-base.bin"),
+    path.join(projectDirectory, "models", bundledWhisperModel),
     path.join(projectDirectory, "vendor", "live2dcubismcore.min.js")
   ]) {
     if (!fs.existsSync(requiredPath)) {
       throw new Error(`配布に必要なファイルがありません: ${path.relative(projectDirectory, requiredPath)}`);
     }
   }
+  if (arch !== "universal") return;
+
+  assertExecutableArchitecture(speechRecognizer, "x86_64");
+  assertExecutableArchitecture(arm64Whisper, "arm64");
+  assertExecutableArchitecture(
+    path.join(projectDirectory, "native", "stt", "darwin-x64", "whisper-cli"),
+    "x86_64"
+  );
 }
 
 verifyDistributionAssets();
@@ -92,14 +106,16 @@ const outputPaths = await packager({
   appCopyright: "Copyright © 2026 びくに. All rights reserved.",
   icon: path.join(projectDirectory, "assets", "app-icon.icns"),
   usageDescription: {
-    Microphone: "音声入力を文字に変換して、びくたんと会話するためにマイクを使用します。"
+    Microphone: "音声入力を文字に変換して、びくたんと会話するためにマイクを使用します。",
+    SpeechRecognition: "話しかけた内容をMacの音声認識で文字に変換するために使用します。"
   },
   ignore: [
     /^\/dist(\/|$)/,
     /^\/docs(\/|$)/,
     /^\/launchd(\/|$)/,
     /^\/\.gitignore$/,
-    /\.log$/
+    /\.log$/,
+    new RegExp(`^/models/(?!${bundledWhisperModel.replace(/\./g, "\\.")}$)`)
   ],
   ...(arch === "universal" ? {
     osxUniversal: {

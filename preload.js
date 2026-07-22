@@ -24,6 +24,7 @@ const INVOKE_CHANNELS = new Set([
   "companion:pomodoro-action",
   "companion:toggle-sound-mute",
   "companion:set-speech-volume",
+  "companion:set-hands-free-enabled",
   "companion:open-url",
   "companion:copy-text",
   "companion:save-link",

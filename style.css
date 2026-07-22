@@ -655,9 +655,33 @@ body {
   mask: none;
 }
 
+.chat-form button.voice-input-button.is-handsfree {
+  color: white;
+  border-color: rgb(28 132 112 / 38%);
+  background: #218d78;
+  box-shadow: 0 0 0 3px rgb(33 141 120 / 14%);
+}
+
+.chat-form button.voice-input-button.is-handsfree::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c9ffe8;
+  box-shadow: 0 0 0 0 rgb(201 255 232 / 55%);
+  animation: handsfree-listening 1.8s ease-out infinite;
+}
+
 .chat-form button.voice-input-button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.chat-form button.voice-input-button.is-handsfree:disabled {
+  opacity: 1;
 }
 
 .chat-form button:active {
@@ -680,4 +704,16 @@ body {
 
 #status:empty {
   display: none;
+}
+
+@keyframes handsfree-listening {
+  60%, 100% {
+    box-shadow: 0 0 0 5px rgb(201 255 232 / 0%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-form button.voice-input-button.is-handsfree::after {
+    animation: none;
+  }
 }

@@ -1,6 +1,6 @@
 # びくたん Desktop — 開発履歴・引き継ぎ
 
-最終更新: 2026-07-11
+最終更新: 2026-07-22
 
 ## 目的
 
@@ -219,13 +219,27 @@ README は初見向けの概要、`DEVELOPMENT_NOTES.md` は実装履歴、`docs
 
 | ファイル | 役割 |
 |---|---|
-| `main.js` | Electronウィンドウ、Tray、移動、サイズ、Codex CLI呼び出し |
-| `renderer.js` | Live2D描画、表情、物理、会話UI、履歴、ドラッグ判定 |
+| `main.js` | Electronウィンドウ、Tray、移動、サイズ、会話AI呼び出し、読み上げ、文字起こし |
+| `renderer.js` | Live2D描画、表情、物理、会話UI、履歴、ドラッグ判定、ハンズフリー録音 |
+| `preload.js` | contextBridge。許可したIPCチャンネルだけを `window.bikunavi` へ公開 |
 | `style.css` | 透明画面、吹き出し、会話欄 |
-| `index.html` | Canvas・吹き出し・Cubism Core読込 |
+| `index.html` | Canvas・吹き出し・Cubism Core・ブラウザ側ユーティリティ読込 |
+| `conversation-providers.js` | 会話AIの抽象化（Codex / Claude Code / Gemini CLI / Claude API / Gemini API） |
+| `conversation-context-utils.js` | 発言の返信先（表示中のセリフ・直近の自動セリフ・直近の回答）の選択 |
+| `conversation-quality-utils.js` | 回答の記号整形、挨拶のみ判定、訂正発言の判定、呼び名の連呼抑制 |
+| `vad-utils.js` | 音声区間検知（RMS・環境ノイズ追従）と、使えない文字起こし結果の除外 |
+| `identity-utils.js` / `capability-utils.js` / `source-utils.js` / `emote-utils.js` | 呼び名の修復、能力境界、情報源、表情選択 |
+| `speech-utils.js` / `speech-provider-utils.js` / `stream-utils.js` | 文分割、読み上げプロバイダ、ストリーミング組み立て |
+| `holiday-utils.js` / `diary-memory-utils.js` / `data-edit-utils.js` / `movement-utils.js` | 祝日、日記の振り返り、データ管理画面、自動移動 |
+| `native/now-playing.m` → `native/now-playing` | 再生中の曲取得（ユニバーサルバイナリを同梱） |
+| `native/speech-recognizer.m` → `native/speech-recognizer.app` | Apple Speechでの文字起こし（TCC権限のためLSUIElementの.appとして同梱） |
+| `native/stt/<platform>-<arch>/whisper-cli` | フォールバック用whisper.cpp（git管理外） |
+| `models/ggml-base.bin` | Whisperモデル（git管理外・パッケージへは同梱） |
 | `assets/bikunavi_desktop/` | サイト稼働版Live2D一式 |
 | `vendor/live2dcubismcore.min.js` | 公式配布先から取得するCubism Core（git管理外） |
 | `scripts/fetch-cubism-core.mjs` | Cubism Core取得 |
+| `scripts/build-speech-helper.sh` | `speech-recognizer.app` のユニバーサルビルドとad-hoc署名 |
+| `scripts/package-universal.mjs` | 配布用.app生成。同梱物の検証も行う |
 | `launchd/online.bikunitan.bikunavi-desktop.plist.template` | LaunchAgentテンプレート |
 
 ## 起動
@@ -310,6 +324,45 @@ npm start
    - note記事下書きはGit管理外の `docs/private/note/` に保存（〔〕とスクショを差し替えて公開）
    - 公開手順とリリースノート: `docs/公開手順-v0.1.0.md` / `docs/リリースノート-v0.1.0.md`（gh CLI認証済み、コマンドを順に実行するだけ）
 5. **Windows 版**（Mac版の反応を見てから）: now-playing の Windows 実装、VOICEVOX パス、スタートアップ登録、win32 パッケージ。`native/stt/` は win32-x64 スロット設計済み
+
+## v0.3 ハンズフリー会話（2026-07-22 時点・開発中）
+
+トレイ「声・読み上げ」の**「ハンズフリー会話（試験中）」は初期値OFF**。ONの間だけマイクを常時待機する。
+
+### 流れ
+
+1. `renderer.js` が `getUserMedia`（echoCancellation / noiseSuppression / autoGainControl 有効）で常時録音する
+2. `vad-utils.js` の検知器が各バッファのRMSから発話の開始・終了を決める
+3. 確定した区間をWAV化し、`companion:transcribe-audio` でmain processへ渡す
+4. macOSでは `native/speech-recognizer.app`（Apple Speech）を優先し、失敗時だけ同梱Whisperへ落ちる
+5. 音声ファイルは成否にかかわらず `finally` で削除する
+
+### Apple Speechを別 .app にした理由
+
+`SFSpeechRecognizer` の権限（TCC）はバンドル単位で、usage description を持つ独立したバンドルから要求するのが確実なため、`LSUIElement` の小さな .app として同梱し `open -W -n` で起動する。結果は標準出力ではなく引数で渡した一時JSONファイルで受け取る（`open` はアプリの標準出力を中継しないため）。
+
+- タイムアウトはヘルパー側35秒・main側40秒。ヘルパーが先に自分で畳むので、`open` をkillしても本体が残らない
+- `kAFAssistantErrorDomain` の 1110（発話なし）は**正常な空結果**として扱い、Whisperへ渡さない。環境音からWhisperが架空の文を作るのを防ぐため
+
+### 実機で決めた数値（`vad-utils.js`）
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| 開始しきい値 | 0.045 | 0.035では生活音を拾いすぎた |
+| 開始に必要な継続 | 360ms | 300msでは短い物音で発火した |
+| 継続しきい値 | 0.018 | 文中の小さい声で切れないように |
+| 無音での確定 | 700ms | 850msは待たされる感じ、600ms以下は文中で分割する |
+| プリロール | 360ms | 発話の立ち上がりを欠かさないため |
+| 読み上げ中の開始しきい値 | 0.09 / 420ms | びくたん自身の声を人の発話と誤認しないため |
+
+自己音声対策として、読み上げ開始後850ms・終了後280msは検知を止め、検知器とプリロールをリセットする。
+
+### 残っていること
+
+- **ハンズフリーの実機テストが途中で中断している。** VADの発話検知とApple Speech経路の単発確認までは済み、長時間の常用と自己音声の誤検知はこれから
+- ストリーミング回答の**生成中**に割り込む処理（現状は確定済み回答の読み上げ中のみ割り込める）
+- `ScriptProcessorNode` → `AudioWorkletNode` 移行。常時待機になったことで、描画スレッドを毎バッファ占有する構造の影響が大きくなった
+- `DEVELOPMENT_NOTES.md` の実装履歴は v0.1.1 / v0.2 分を飛ばして v0.3 へ来ている。バージョン別の変更点は `docs/PROJECT_STATUS.md` を正とする
 
 ## やりたい機能（大きめ・要検討）
 

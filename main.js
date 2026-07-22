@@ -48,6 +48,12 @@ const {
   selectDiaryMemory
 } = require("./diary-memory-utils");
 const { roundWindowCoordinate } = require("./movement-utils");
+const {
+  cleanChatPunctuation,
+  isGreetingOnly,
+  looksLikeCorrection,
+  recentlyUsedUserName
+} = require("./conversation-quality-utils");
 
 const CAPABILITY_BOUNDARY_PROMPT = [
   "能力の境界を厳守してください。びくたんに体や手はなく、飲み物を淹れる、物を運ぶ、掃除する、買い物するなど現実の作業はできません。",
@@ -94,6 +100,7 @@ const DEFAULT_STATE = {
   speechRate: 190,
   speechVolume: 100,
   soundMuted: false,
+  handsFreeEnabled: false,
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
@@ -174,6 +181,7 @@ function collectState() {
   persistedState.speechRate = speechRate;
   persistedState.speechVolume = speechVolume;
   persistedState.soundMuted = soundMuted;
+  persistedState.handsFreeEnabled = handsFreeEnabled;
   persistedState.thinkingSoundEnabled = thinkingSoundEnabled;
   persistedState.fortuneAutoEnabled = fortuneAutoEnabled;
   persistedState.autoMoveEnabled = autoMoveEnabled;
@@ -225,6 +233,7 @@ let speechRate = [150, 190, 230].includes(persistedState.speechRate)
   : 190;
 let speechVolume = normalizeSpeechVolume(persistedState.speechVolume);
 let soundMuted = Boolean(persistedState.soundMuted);
+let handsFreeEnabled = Boolean(persistedState.handsFreeEnabled);
 let thinkingSoundEnabled = persistedState.thinkingSoundEnabled !== false;
 let autoMoveEnabled = Boolean(persistedState.autoMoveEnabled);
 let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
@@ -464,8 +473,18 @@ const fortuneQuestionAutoEligibleAt = Date.now() + 60 * 60 * 1000;
 const characterQuestions = loadCharacterQuestions();
 const growthQuestions = loadGrowthQuestions();
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
+const appleSpeechAppPath = path.join(__dirname, "native", "speech-recognizer.app");
+const appleSpeechHelperPath = path.join(
+  appleSpeechAppPath,
+  "Contents",
+  "MacOS",
+  "speech-recognizer"
+);
 const sttBinaryDirectory = path.join(__dirname, "native", "stt", `${process.platform}-${process.arch}`);
 const sttDefaultModelPath = path.join(__dirname, "models", "ggml-base.bin");
+// small-q5_1は精度比較用に保持できるが、実機で認識に5〜11秒かかった。
+// 通常はLive感を優先してbaseを使い、環境変数で指定した時だけ切り替える。
+const sttHighAccuracyModelPath = path.join(__dirname, "models", "ggml-small-q5_1.bin");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
@@ -1129,6 +1148,13 @@ function setSoundMuted(muted) {
   saveStateSoon();
 }
 
+function setHandsFreeEnabled(enabled) {
+  handsFreeEnabled = Boolean(enabled);
+  companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+  tray?.setContextMenu(buildTrayMenu());
+  saveStateSoon();
+}
+
 function clearPomodoroTimer() {
   if (pomodoroTimer) {
     clearInterval(pomodoroTimer);
@@ -1556,6 +1582,19 @@ function buildTrayMenu() {
     {
       label: "声・読み上げ",
       submenu: [
+        {
+          label: "ハンズフリー会話（試験中）",
+          type: "checkbox",
+          checked: handsFreeEnabled,
+          click: (item) => setHandsFreeEnabled(item.checked)
+        },
+        {
+          label: process.platform === "darwin"
+            ? "音声認識: macOS Speech優先（不可時はWhisper）"
+            : "音声認識は同梱Whisperで端末内処理",
+          enabled: false
+        },
+        { type: "separator" },
         {
           label: "すべての音をミュート",
           type: "checkbox",
@@ -3074,7 +3113,8 @@ function firstExistingPath(paths) {
 function whisperModelPath() {
   return firstExistingPath([
     process.env.BIKUNAVI_WHISPER_MODEL,
-    sttDefaultModelPath
+    sttDefaultModelPath,
+    sttHighAccuracyModelPath
   ].filter(Boolean));
 }
 
@@ -3099,9 +3139,18 @@ function cleanWhisperOutput(output) {
 
 function runWhisperTranscriptionWithExecutable(executable, model, audioPath) {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
     const child = spawn(
       executable,
-      ["-m", model, "-f", audioPath, "-l", "ja", "-nt"],
+      [
+        "-m", model,
+        "-f", audioPath,
+        "-l", "ja",
+        "-nt",
+        "-np",
+        "-sns",
+        "--prompt", "びくたんとの自然な日本語の会話。ポモドーロ、Gemini、VOICEVOX、Live2D。"
+      ],
       { stdio: ["ignore", "pipe", "pipe"] }
     );
     let output = "";
@@ -3124,10 +3173,84 @@ function runWhisperTranscriptionWithExecutable(executable, model, audioPath) {
       clearTimeout(timeout);
       const text = cleanWhisperOutput(output);
       if (code === 0) {
-        resolve({ text, message: text ? "" : "文字起こし結果が空でした。" });
+        resolve({
+          text,
+          message: text ? "" : "文字起こし結果が空でした。",
+          model: path.basename(model),
+          elapsedMs: Date.now() - startedAt
+        });
       } else {
         reject(new Error(errors.trim() || "音声認識に失敗しました。"));
       }
+    });
+  });
+}
+
+function runAppleSpeechTranscription(audioPath) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const resultPath = path.join(
+      app.getPath("temp"),
+      `bikunavi-apple-speech-${process.pid}-${Date.now()}.json`
+    );
+    const child = spawn("/usr/bin/open", [
+      "-W",
+      "-n",
+      appleSpeechAppPath,
+      "--args",
+      audioPath,
+      resultPath
+    ], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let output = "";
+    let errors = "";
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fs.promises.unlink(resultPath).catch(() => {});
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(reject, new Error("macOS音声認識がタイムアウトしました。"));
+    }, 40000);
+    child.stdout.on("data", (chunk) => {
+      if (output.length < 100000) output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      if (errors.length < 100000) errors += chunk.toString();
+    });
+    child.on("error", (error) => finish(reject, error));
+    child.on("close", async (code) => {
+      let parsed;
+      try {
+        const resultOutput = await fs.promises.readFile(resultPath, "utf8");
+        parsed = JSON.parse(resultOutput.trim());
+      } catch (_error) {
+        try {
+          parsed = JSON.parse(output.trim());
+        } catch (_outputError) {
+          parsed = undefined;
+        }
+      }
+      if (code === 0 && parsed && typeof parsed.text === "string") {
+        finish(resolve, {
+          text: parsed.text.trim(),
+          message: parsed.text.trim() ? "" : "文字起こし結果が空でした。",
+          engine: "macos-speech",
+          onDevice: Boolean(parsed.onDevice),
+          confidence: Number(parsed.confidence) || 0,
+          elapsedMs: Date.now() - startedAt
+        });
+        return;
+      }
+      finish(
+        reject,
+        new Error(parsed?.error || errors.trim() || `macOS音声認識が終了しました（${code}）。`)
+      );
     });
   });
 }
@@ -3157,6 +3280,21 @@ async function runWhisperTranscription(audioPath) {
     }
   }
   throw lastError || new Error("音声認識に失敗しました。");
+}
+
+async function runSpeechTranscription(audioPath) {
+  const requestedEngine = String(process.env.BIKUNAVI_STT_ENGINE || "").trim().toLowerCase();
+  const appleAvailable = process.platform === "darwin" &&
+    fs.existsSync(appleSpeechAppPath) &&
+    fs.existsSync(appleSpeechHelperPath);
+  if (requestedEngine !== "whisper" && appleAvailable) {
+    try {
+      return await runAppleSpeechTranscription(audioPath);
+    } catch (error) {
+      console.warn("macOS Speech failed; falling back to Whisper:", error?.message || error);
+    }
+  }
+  return runWhisperTranscription(audioPath);
 }
 
 function readCharacterSheet() {
@@ -4005,13 +4143,13 @@ function extractJsonObject(text) {
 function parseChatResponse(rawResponse, sourceMap, userMessage = "") {
   const parsed = extractJsonObject(rawResponse);
   if (!parsed || typeof parsed.answer !== "string") {
-    const text = sanitizeCapabilityResponse(
+    const text = cleanChatPunctuation(sanitizeCapabilityResponse(
       sanitizeSpokenSourceIds(
         repairBikutanSelfReferences(rawResponse, getPreferredUserName()),
         [],
         sourceMap
       )
-    ).trim();
+    ));
     return {
       text,
       emote: selectChatEmote("", text, userMessage),
@@ -4020,13 +4158,13 @@ function parseChatResponse(rawResponse, sourceMap, userMessage = "") {
   }
 
   const sourceIds = Array.isArray(parsed.sourceIds) ? parsed.sourceIds : [];
-  const text = sanitizeCapabilityResponse(
+  const text = cleanChatPunctuation(sanitizeCapabilityResponse(
     sanitizeSpokenSourceIds(
       repairBikutanSelfReferences(parsed.answer, getPreferredUserName()),
       sourceIds,
       sourceMap
     )
-  ).trim();
+  ));
   const idSources = sourceIds
     .map((id) => String(id).replace(/[\[\]]/g, "").trim())
     .filter(Boolean)
@@ -4358,8 +4496,9 @@ ipcMain.handle("companion:chat", async (
   if (!message) return { text: "何でも話しかけてください。", sources: [] };
   // 考えている間の相づち（本回答の声が始まると自動で引っ込む）
   maybePlayAizuchi();
+  const contextKind = String(rawContextKind || "").trim().slice(0, 40);
   const diaryContextBlocked =
-    String(rawContextKind || "") === "diary-memory" &&
+    contextKind === "diary-memory" &&
     persistedState.diaryMemoryAiEnabled !== true;
   const contextLine = diaryContextBlocked
     ? ""
@@ -4394,6 +4533,13 @@ ipcMain.handle("companion:chat", async (
   const characterCustomization = formatCharacterCustomization();
   const preferredUserName = getPreferredUserName();
   const relationshipMemory = formatRelationshipMemory();
+  const userNameWasRecentlyUsed = recentlyUsedUserName(
+    conversationHistory,
+    preferredUserName,
+    2
+  );
+  const greetingOnly = isGreetingOnly(message);
+  const correctionLike = looksLikeCorrection(message);
   const prompt = [
     "あなたはデスクトップ常駐AIコンシェルジュ「びくたん」です。",
     "以下のキャラクターシートを一貫して演じてください。例文をそのまま繰り返さず、性格・価値観・口調として反映してください。",
@@ -4404,17 +4550,19 @@ ipcMain.handle("companion:chat", async (
     relationshipMemory
       ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`
       : "",
-    "キャラクター性を保ちながら、結論から簡潔に答えてください。ただし普段の会話は要約見出しのように冷たく始めず、最初の一文に好奇心、嬉しさ、軽いツッコミのどれかを短くにじませてください。",
-    "通常は明るめ、成功や完了は一段嬉しそうに、謝罪・危険・深刻な話題では冗談を止めて落ち着いて答えてください。",
+    "雑談では、ユーザーが実際に言った内容をまず受け止め、その範囲で返してください。作業の進み具合、感情、体調、見えない周囲の様子を勝手に補完しないでください。",
+    "普段は明るく自然な温度で、短い相づちに大げさな称賛や感嘆符を重ねないでください。成功や本当に嬉しい報告は一段嬉しそうに、謝罪・危険・深刻な話題では落ち着いて答えてください。",
+    "ユーザーが短く報告しただけなら、1〜2文の反応だけでも構いません。毎回アドバイスや「何か手伝えますか？」を足さないでください。質問で終わるのは、意味の確認が必要な時か、本当に自然に深掘りしたい時だけにしてください。",
+    "音声入力には聞き間違いがあります。初めて見る不自然な単語や固有名詞の意味を創作せず、「○○って聞こえたけど、合ってますか？」と短く確認してください。",
     "下の「直近の会話」に出てくる自分の言い回し・例え・話題・締めの文をそのまま繰り返さないでください。同じ趣旨でも毎回違う角度や表現で答えてください。",
     preferredUserName
-      ? `名前の区別は厳守してください。「${preferredUserName}」は会話相手であるユーザーだけの呼び名です。この表記を一字も変更・省略・訂正せず、相手を呼ぶ時は必ず「${preferredUserName}」のまま使ってください。びくたん自身を「${preferredUserName}」と呼ぶのは禁止です。びくたんの一人称は「びくたん」または主語省略だけです。名前を呼ばれると嬉しいという好みを尊重し、毎回ではなく自然な場面で相手を呼んでください。`
+      ? `「${preferredUserName}」はユーザーだけの呼び名で、びくたんの一人称は「びくたん」または主語省略です。びくたん自身を「${preferredUserName}」と呼ばないでください。呼びかけは3〜4往復に1回ほどのアクセントにし、毎回の回答を名前から始めないでください。${userNameWasRecentlyUsed ? `直近の回答で呼んでいるため、今回は「${preferredUserName}」を使わないでください。` : "今回の内容に自然なら、1回だけ呼んで構いません。"}`
       : "ユーザーの呼び名はまだ決まっていません。『あなた』を連呼せず、自然に主語を省いてください。",
-    preferredUserName
-      ? `「${preferredUserName}」と呼びかける場合は、直後に相手の話への好奇心や嬉しさが伝わる短い反応を続けてください。ただし「おっ」など同じ接頭辞を定型で毎回付けず、内容に合わせて変えてください。`
+    greetingOnly
+      ? "今回は挨拶だけなので、明るく短く挨拶を返してください。過去の食事、作業、ニュースなどの具体的な話題を急に持ち出さないでください。"
       : "",
-    preferredUserName
-      ? `禁止例: 「${preferredUserName}は雨音が好きです」のように、びくたん自身の好み・行動・気持ちの主語へユーザー名を置かないでください。その場合は「びくたんは雨音が好きです」と書いてください。`
+    correctionLike
+      ? "ユーザーは直前の理解を訂正しています。短く訂正を受け入れ、新しく示された意味で会話を続けてください。間違った前提を引きずらないでください。"
       : "",
     (() => {
       const t = getJstTimeContext();
@@ -4435,7 +4583,7 @@ ipcMain.handle("companion:chat", async (
         return `「何してるの？」のように今の様子を聞かれたら、例えば${samples}のような、アプリ内で完結するささやかな様子をひとつ挙げて答えてください。例をそのまま使わず、自分の言葉で少し変えてください。`;
       })(),
     CAPABILITY_BOUNDARY_PROMPT,
-    "吹き出し表示のため、回答は原則180文字以内にしてください。",
+    "吹き出し表示のため、雑談は原則1〜3文、150文字以内にしてください。",
     "出力は必ずJSONだけにしてください。形式は {\"answer\":\"吹き出しに出す回答\",\"emote\":\"joy\",\"sourceIds\":[\"A1\"],\"sources\":[{\"title\":\"ページ名\",\"url\":\"https://...\",\"source\":\"サイト名\"}]} です。",
     "emote には回答の気分に合う表情を1つ入れてください: joy（にこにこ・普段の会話・質問・挨拶）、wink（茶目っ気・冗談）、proud（キリッと断言・頼られて張り切る時）、surprised（驚いた時）、troubled（謝罪・うまくできなかった時・困った時）、sad（悲しい話・寂しい話・しんみりした話題）、normal（危険の注意・深刻な話だけ）。迷った時はjoyにし、普段の説明をnormalにしないでください。",
     "本文 answer にはURLを直接書かず、URLは sourceIds または sources に入れてください。使った情報源がなければ sourceIds と sources は空配列にしてください。",
@@ -4450,6 +4598,8 @@ ipcMain.handle("companion:chat", async (
       : "",
     isDirectReply
       ? `ユーザーは、次のびくたんのセリフと同じ吹き出しにある入力欄から直接返信しました。これは新しい話題ではなく、必ずこのセリフへの返答・質問・ツッコミとして理解してください。短い「知らない」「教えて」「そうなの？」なども、このセリフを目的語として補って答えてください。別の話題へ切り替えないでください。\n\n返信先のセリフ:\n「${contextLine}」`
+      : contextLine && contextKind === "recent-answer"
+        ? `直前の会話で、びくたんは次のように答えました。ユーザーの発言が「それって？」「なんで？」「どういう意味？」などの短い続きなら、この回答への質問として理解してください。新しい話題が明示されている場合は、無理に前の回答へ結びつけないでください。\n\n直前の回答:\n「${contextLine}」`
       : contextLine
         ? `直前にびくたんが話していた自動セリフ:\n「${contextLine}」\nユーザーの発言がこのセリフへの返答・質問・ツッコミに見える場合は、この文脈を踏まえて答えてください。無関係な話題なら、このセリフには触れないでください。`
         : "",
@@ -4507,8 +4657,12 @@ ipcMain.handle("companion:chat", async (
   } catch (error) {
     stream.speech?.cancel();
     console.error("Chat failed:", error);
+    const busy = /(?:at capacity|overloaded|resource[_ ]exhausted|temporarily unavailable|HTTP\s*(?:429|503)|\b(?:429|503)\b)/i
+      .test(String(error?.message || error || ""));
     return {
-      text: "うまく考えられませんでした。トレイメニューの「会話AI」で使うAIと、そのログイン状態（またはAPIキー）を確認してください。",
+      text: busy
+        ? "Geminiが今ちょっと混んでいるみたいです。少し待って、もう一度話しかけてください。"
+        : "うまく考えられませんでした。トレイメニューの「会話AI」で使うAIと、そのログイン状態（またはAPIキー）を確認してください。",
       sources: []
     };
   }
@@ -4711,15 +4865,23 @@ ipcMain.handle("companion:transcribe-audio", async (_event, payload) => {
   await fs.promises.mkdir(audioDir, { recursive: true });
   const audioPath = path.join(audioDir, `voice-${Date.now()}.${format}`);
   await fs.promises.writeFile(audioPath, buffer);
-  const result = await runWhisperTranscription(audioPath);
-  if (result.text) {
+  try {
+    const result = await runSpeechTranscription(audioPath);
+    console.log(
+      `Speech transcription: ${result.engine || result.model || "unknown engine"}, ` +
+      `${Number(result.elapsedMs) || 0}ms` +
+      (result.engine === "macos-speech"
+        ? `, ${result.onDevice ? "on-device" : "network"}, confidence ${result.confidence.toFixed(3)}`
+        : "")
+    );
+    return {
+      ...result,
+      format,
+      sampleRate: Number(payload?.sampleRate) || undefined
+    };
+  } finally {
     fs.promises.unlink(audioPath).catch(() => {});
   }
-  return {
-    ...result,
-    format,
-    sampleRate: Number(payload?.sampleRate) || undefined
-  };
 });
 
 ipcMain.handle("companion:speak", (_event, text, kind = "answer") => {
@@ -4751,6 +4913,7 @@ ipcMain.handle("companion:open-url", async (_event, rawUrl) => {
 
 ipcMain.on("companion:stop-speech", () => {
   stopSpeech();
+  stopAizuchi();
 });
 
 ipcMain.on("companion:thinking-sound-start", () => {
@@ -4768,11 +4931,17 @@ function getRendererSettings() {
     idleIntervalMs,
     preferredUserName: getPreferredUserName(),
     soundMuted,
-    speechVolume
+    speechVolume,
+    handsFreeEnabled
   };
 }
 
 ipcMain.handle("companion:settings", () => getRendererSettings());
+
+ipcMain.handle("companion:set-hands-free-enabled", (_event, enabled) => {
+  setHandsFreeEnabled(enabled);
+  return getRendererSettings();
+});
 
 ipcMain.handle("companion:toggle-sound-mute", () => {
   setSoundMuted(!soundMuted);

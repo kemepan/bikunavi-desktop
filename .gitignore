@@ -11,6 +11,9 @@ native/stt/*/whisper-cli
 native/stt/*/whisper-cli.exe
 native/stt/*/main
 native/stt/*/main.exe
+# native/speech-recognizer.app は now-playing と同じく、ビルド済みバイナリを .m ソースごと同梱する。
+# 旧ルール `/native/speech-recognizer` は .app 化する前の実行ファイルを隠していたもの。
+# その残骸を削除したので不要になった（現在のビルド出力は .app だけ）。
 *.log
 *.tmp
 *.wav

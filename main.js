@@ -534,6 +534,9 @@ const growthQuestionAutoEligibleAt = Date.now() + 30 * 60 * 1000;
 const fortuneQuestionAutoEligibleAt = Date.now() + 60 * 60 * 1000;
 const characterQuestions = loadCharacterQuestions();
 const growthQuestions = loadGrowthQuestions();
+// トレイの「表示」をOFFにした意思。自動セリフ・スリープ復帰の挨拶・初回案内が
+// 勝手にウィンドウを出し直さないようにする。アプリを再起動すれば表示へ戻る。
+let companionHiddenByUser = false;
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
 const appleSpeechAppPath = path.join(__dirname, "native", "speech-recognizer.app");
 const appleSpeechHelperPath = path.join(
@@ -779,12 +782,16 @@ function createWindow() {
     sendWindowEdgeState();
   });
   companionWindow.once("ready-to-show", () => {
+    if (companionHiddenByUser) return;
     if (companionWindow && !companionWindow.isDestroyed()) companionWindow.showInactive();
   });
   // macOSの透明・フレームレス窓では ready-to-show が発火しないことがあり、
   // その場合ウィンドウが永久に不可視のままになるため、時間で強制表示する。
   const showFallbackTimer = setTimeout(() => {
-    if (companionWindow && !companionWindow.isDestroyed() && !companionWindow.isVisible()) {
+    if (
+      !companionHiddenByUser &&
+      companionWindow && !companionWindow.isDestroyed() && !companionWindow.isVisible()
+    ) {
       console.log("ready-to-show did not fire; showing window via fallback");
       companionWindow.showInactive();
     }
@@ -1080,6 +1087,7 @@ function showFortuneQuestionNow() {
   const item = makeFortuneQuestion(true);
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
+  companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
@@ -1355,6 +1363,7 @@ function buildTrayMenu() {
       type: "checkbox",
       checked: companionWindow?.isVisible() ?? false,
       click: (item) => {
+        companionHiddenByUser = !item.checked;
         if (!companionWindow) createWindow();
         else if (item.checked) companionWindow.showInactive();
         else companionWindow.hide();
@@ -1883,6 +1892,7 @@ function openChatInput() {
   clearInterval(autoMoveTimer);
   const sendOpenChat = () => {
     if (!companionWindow || companionWindow.isDestroyed()) return;
+    companionHiddenByUser = false;
     companionWindow.show();
     companionWindow.focus();
     companionWindow.webContents.send("companion:open-chat");
@@ -3748,6 +3758,7 @@ function showCharacterQuestionNow() {
   if (!item) return;
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
+  companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
@@ -3759,6 +3770,7 @@ function showCharacterQuestionReview(questionId) {
   if (!question || !previousAnswer) return;
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
+  companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", {
@@ -3855,6 +3867,7 @@ function showGrowthQuestionNow(type) {
   if (!item) return;
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
+  companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
@@ -3863,7 +3876,9 @@ function showGrowthQuestionNow(type) {
 function showAmbientLine(item) {
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
   if (!companionWindow) return;
-  companionWindow.show();
+  // 非表示にしている間は、自動セリフやスリープ復帰の挨拶で出し直さない。
+  // 送信自体は続けるので、再表示した時には最新のセリフが載っている。
+  if (!companionHiddenByUser) companionWindow.show();
   companionWindow.webContents.send("companion:ambient-line", withInferredEmote(item));
 }
 

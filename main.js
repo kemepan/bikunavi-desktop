@@ -1371,7 +1371,7 @@ function buildTrayMenu() {
       }
     },
     {
-      label: "会話欄を開く（⌘⇧B）",
+      label: "💬 会話欄を開く（⌘⇧B）",
       click: openChatInput
     },
     { type: "separator" },
@@ -1590,9 +1590,9 @@ function buildTrayMenu() {
     },
     { type: "separator" },
     {
-      label: "設定",
+      label: "⚙️ 設定",
       submenu: [{
-      label: `会話AI（${conversation.providerLabel(activeProviderId()) || "未設定"}）`,
+      label: `🤖 会話AI（${conversation.providerLabel(activeProviderId()) || "未設定"}）`,
       submenu: [
         {
           label: "自動（見つかったAIを使う）",
@@ -1652,7 +1652,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "声・読み上げ",
+      label: "🔊 声・読み上げ",
       submenu: [
         {
           label: "ハンズフリー会話（試験中）",
@@ -1756,7 +1756,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "ふるまい・話しかけ頻度",
+      label: "🎚 ふるまい・話しかけ頻度",
       submenu: [
         {
           label: "自動移動",
@@ -1813,7 +1813,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "表示・サイズ",
+      label: "🖥 表示・サイズ",
       submenu: [
         {
           label: "いつも手前",
@@ -1849,7 +1849,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "データ管理",
+      label: "🗂 データ管理",
       submenu: [
         {
           label: "覚えている内容を見る・消す…",

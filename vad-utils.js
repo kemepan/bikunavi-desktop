@@ -16,8 +16,14 @@
   function createVoiceActivityDetector(options = {}) {
     const config = {
       minStartRms: Number(options.minStartRms) || 0.045,
+      // 環境ノイズで押し上げられる開始しきい値の上限。
+      // 実測では発話RMSの中央値が約0.107で、雑音時のしきい値が0.106まで
+      // 上がっていた（＝普通の声がちょうど埋もれる高さ）。ここで頭を打たせる。
+      maxStartRms: Number(options.maxStartRms) || 0.075,
       minContinueRms: Number(options.minContinueRms) || 0.018,
-      noiseMultiplier: Number(options.noiseMultiplier) || 4,
+      // 雑音の中で声を拾えないより、たまに空振りする方がまし。
+      // 空振りは「発話なし」判定と文字起こしの除外で落ちる。
+      noiseMultiplier: Number(options.noiseMultiplier) || 3,
       continueNoiseMultiplier: Number(options.continueNoiseMultiplier) || 1.8,
       startMs: Number(options.startMs) || 360,
       minSpeechMs: Number(options.minSpeechMs) || 420,
@@ -52,7 +58,12 @@
       const startMs = Number.isFinite(requestedStartMs)
         ? Math.max(config.startMs, requestedStartMs)
         : config.startMs;
-      const startThreshold = Math.max(minStartRms, noiseFloor * config.noiseMultiplier);
+      // 上限は下限より下がらないようにする（読み上げ中など、呼び出し側が
+      // わざと高いしきい値を指定してくる場合があるため）。
+      const startThreshold = Math.min(
+        Math.max(minStartRms, config.maxStartRms),
+        Math.max(minStartRms, noiseFloor * config.noiseMultiplier)
+      );
       const continueThreshold = Math.max(
         config.minContinueRms,
         noiseFloor * config.continueNoiseMultiplier
@@ -60,6 +71,9 @@
       let started = false;
       let ended = false;
       let reason = "";
+      // 声らしい大きさなのに開始に至らなかった音。拾えなかった時は今まで何も
+      // 記録が残らず、しきい値の調整が勘になっていたので、惜しい音を数える。
+      let nearMiss = false;
 
       if (!active) {
         // 発話候補より十分小さい音だけで環境ノイズをゆっくり追従する。
@@ -71,6 +85,8 @@
         if (level >= startThreshold) {
           aboveMs += elapsedMs;
         } else {
+          // 下限は超えているのに、ノイズで上がったしきい値に届かなかった音。
+          nearMiss = level >= config.minStartRms;
           aboveMs = Math.max(0, aboveMs - elapsedMs * 1.6);
         }
         if (aboveMs >= startMs) {
@@ -104,6 +120,7 @@
         started,
         ended,
         reason,
+        nearMiss,
         level,
         noiseFloor,
         startThreshold,

@@ -163,6 +163,8 @@ const MIC_LONG_PRESS_MS = 600;
 // 暫定値。実測は0.19〜0.98で、低い側（0.19 / 0.34）が怪しかった。
 // out.log の「Hands-free transcript accepted」で頻度を見ながら調整する。
 const HANDS_FREE_UNCERTAIN_CONFIDENCE = 0.45;
+// 惜しい音のログを間引く間隔。
+const HANDS_FREE_NEAR_MISS_LOG_MS = 5000;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
 // この間隔でまとめる。累計は別に定期要約として出す。
 const AUDIO_DROP_LOG_THROTTLE_MS = 3000;
@@ -569,6 +571,19 @@ function processHandsFreeAudio(recorder, chunk) {
   } else if (handsFreeUtterance) {
     handsFreeUtterance.chunks.push(chunk);
     handsFreeUtterance.peakRms = Math.max(handsFreeUtterance.peakRms, decision.level);
+  } else if (decision.nearMiss && !guardedAgainstSelf) {
+    // 「話したのに拾ってくれない」を後から確かめられるようにする。
+    // 連続するので間引いて、しきい値と環境ノイズを添えて残す。
+    recorder.nearMissCount += 1;
+    if (Date.now() - recorder.lastNearMissLogAt >= HANDS_FREE_NEAR_MISS_LOG_MS) {
+      recorder.lastNearMissLogAt = Date.now();
+      console.log(
+        `Hands-free near miss: ${recorder.nearMissCount}回, ` +
+        `RMS ${decision.level.toFixed(3)} < threshold ${decision.startThreshold.toFixed(3)}, ` +
+        `noise ${decision.noiseFloor.toFixed(3)}`
+      );
+      recorder.nearMissCount = 0;
+    }
   }
 
   if (decision.ended && handsFreeUtterance) {
@@ -626,6 +641,8 @@ async function startHandsFreeListening() {
       detector: createVoiceActivityDetector(),
       preRoll: [],
       preRollSamples: 0,
+      nearMissCount: 0,
+      lastNearMissLogAt: 0,
       meter: createAudioDropMeter({
         sampleRate: audioContext.sampleRate,
         bufferSize: HANDS_FREE_BUFFER_SIZE

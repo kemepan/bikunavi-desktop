@@ -546,10 +546,9 @@ const appleSpeechHelperPath = path.join(
   "speech-recognizer"
 );
 const sttBinaryDirectory = path.join(__dirname, "native", "stt", `${process.platform}-${process.arch}`);
+// 同梱するWhisperモデルはbaseだけ。別のモデルを試す時は
+// BIKUNAVI_WHISPER_MODEL で指定する（small-q5_1は実機で5〜11秒かかり削除済み）。
 const sttDefaultModelPath = path.join(__dirname, "models", "ggml-base.bin");
-// small-q5_1は精度比較用に保持できるが、実機で認識に5〜11秒かかった。
-// 通常はLive感を優先してbaseを使い、環境変数で指定した時だけ切り替える。
-const sttHighAccuracyModelPath = path.join(__dirname, "models", "ggml-small-q5_1.bin");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
@@ -3188,8 +3187,7 @@ function firstExistingPath(paths) {
 function whisperModelPath() {
   return firstExistingPath([
     process.env.BIKUNAVI_WHISPER_MODEL,
-    sttDefaultModelPath,
-    sttHighAccuracyModelPath
+    sttDefaultModelPath
   ].filter(Boolean));
 }
 

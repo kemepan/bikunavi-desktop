@@ -131,7 +131,8 @@ models/ggml-base.bin
 メモ:
 
 - `ggml-base.bin` は軽いが、書き起こし精度はまだ粗い。
-- 精度改善候補は `small` / `medium`。
+- macOSではApple Speechが本命になったため、Whisperは非対応環境とフォールバック用。
+- 別のモデルを試す時は `BIKUNAVI_WHISPER_MODEL` で指定する（`small-q5_1` は実機で5〜11秒かかり、2026-07-23に削除した）。
 - 配布版では Homebrew 依存にできないため、OS/CPU別の同梱バイナリ方針を決める必要がある。
 
 ## 既知の注意点

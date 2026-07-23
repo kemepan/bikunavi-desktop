@@ -1376,9 +1376,10 @@ function buildTrayMenu() {
     },
     { type: "separator" },
     {
+      // 🍅 はタイマー実行中のメニューバー表示と揃えている。
       label: pomodoroState.active
-        ? `ポモドーロ: ${pomodoroState.label} ${formatPomodoroTime(pomodoroState.remaining)}${pomodoroState.running ? "" : " 一時停止中"}`
-        : "ポモドーロ",
+        ? `🍅 ポモドーロ: ${pomodoroState.label} ${formatPomodoroTime(pomodoroState.remaining)}${pomodoroState.running ? "" : " 一時停止中"}`
+        : "🍅 ポモドーロ",
       submenu: [
         {
           label: "90分 作業を開始",
@@ -1422,7 +1423,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "びくたん占い",
+      label: "🔮 びくたん占い",
       submenu: [
         {
           label: "今日の占い",

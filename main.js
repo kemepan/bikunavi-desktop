@@ -1756,7 +1756,7 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "🎚 ふるまい・話しかけ頻度",
+      label: "💃 ふるまい・話しかけ頻度",
       submenu: [
         {
           label: "自動移動",

@@ -79,7 +79,6 @@ let dragging = false;
 let isHovered = false;
 let isSpeaking = false;
 let isThinking = false;
-let isPreparingSpeech = false;
 let chatActive = false;
 let pendingQuestion = "";
 let pendingCharacterCustomization;
@@ -358,7 +357,6 @@ function toggleVoiceInput(input, button) {
 function handsFreeStateLabel() {
   const flags = [];
   if (isThinking) flags.push("thinking");
-  if (isPreparingSpeech) flags.push("preparing");
   if (isSpeaking) flags.push("speaking");
   if (handsFreeUtterance) flags.push("capturing");
   if (handsFreeTranscribing) flags.push("transcribing");
@@ -440,7 +438,7 @@ function interruptSpeechForHandsFree() {
 // 話しかけられたら、読み上げ中なら止め、生成中なら畳む。
 // 中断した回答はmain側で履歴にも残らないので、聞き直しにも出てこない。
 function interruptChatForHandsFree() {
-  if (isThinking || isPreparingSpeech) {
+  if (isThinking) {
     bikunavi.send("companion:cancel-chat");
     console.log("Hands-free interrupted a chat in progress");
   }
@@ -543,7 +541,7 @@ function processHandsFreeAudio(recorder, chunk) {
   const elapsedMs = chunk.length / recorder.sampleRate * 1000;
   // 読み上げ中・生成中はびくたん自身の声や環境音を拾いやすいので、高い閾値で待つ。
   // ここを越えた時だけ、読み上げの停止や生成の中断まで踏み込む。
-  const guardedAgainstSelf = isSpeaking || isThinking || isPreparingSpeech;
+  const guardedAgainstSelf = isSpeaking || isThinking;
   const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, guardedAgainstSelf
     ? { minStartRms: HANDS_FREE_SPEAKING_THRESHOLD, startMs: 420 }
     : undefined);
@@ -1444,7 +1442,7 @@ function shortenForBubble(text, limit) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
 }
 
-function showChatBubble(busy = false, carriedSources = [], preparingSpeech = false, carriedLine = undefined) {
+function showChatBubble(busy = false, carriedSources = [], carriedLine = undefined) {
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
@@ -1529,7 +1527,7 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
     }
   }
 
-  if (pendingCharacterCustomization && !busy && !preparingSpeech) {
+  if (pendingCharacterCustomization && !busy) {
     const choiceButtons = createChoiceButtons(pendingCharacterCustomization);
     if (choiceButtons) bubble.append(choiceButtons);
   }
@@ -1538,19 +1536,17 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   form.className = "chat-form";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = preparingSpeech
-    ? "声を準備中…"
-    : pendingCharacterCustomization
-      ? "びくたんへの答えを書く…"
-      : "びくたんに話しかける…";
+  input.placeholder = pendingCharacterCustomization
+    ? "びくたんへの答えを書く…"
+    : "びくたんに話しかける…";
   input.maxLength = 4000;
-  input.disabled = busy || preparingSpeech;
-  if (!busy && !preparingSpeech) input.value = chatDraft;
+  input.disabled = busy;
+  if (!busy) input.value = chatDraft;
   input.setAttribute("aria-label", "びくたんへのメッセージ");
   const send = document.createElement("button");
   send.type = "submit";
-  send.textContent = busy ? "…" : preparingSpeech ? "声…" : "送信";
-  send.disabled = busy || preparingSpeech;
+  send.textContent = busy ? "…" : "送信";
+  send.disabled = busy;
   const mic = document.createElement("button");
   mic.type = "button";
   mic.className = "voice-input-button";
@@ -1563,7 +1559,7 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
       : "クリックで録音／長押しでハンズフリーON";
   // ハンズフリー中も押せるようにしておく。無効化するとpointerイベントが
   // 飛ばず、長押しでOFFに戻せなくなる。
-  mic.disabled = busy || preparingSpeech || !canRecord;
+  mic.disabled = busy || !canRecord;
   mic.setAttribute("aria-label", handsFreeEnabled
     ? "ハンズフリー会話が待機中。長押しで解除"
     : "音声で入力。長押しでハンズフリー会話");
@@ -1596,7 +1592,7 @@ function showChatBubble(busy = false, carriedSources = [], preparingSpeech = fal
   });
   form.append(input);
   form.append(mic);
-  if (pendingCharacterCustomization && !busy && !preparingSpeech) {
+  if (pendingCharacterCustomization && !busy) {
     const defer = document.createElement("button");
     defer.type = "button";
     defer.textContent = "あとで";
@@ -1660,11 +1656,11 @@ function closeChat() {
 
 function scheduleChatIdleReset() {
   clearTimeout(chatIdleTimer);
-  if (!chatActive || isThinking || isPreparingSpeech || voiceInputActive) return;
+  if (!chatActive || isThinking || voiceInputActive) return;
   chatIdleTimer = setTimeout(() => {
     // 長い読み上げの途中で会話モードを閉じると、口パクだけ先に止まってしまう。
     // 音声が終わるまでは会話を維持し、終わってから改めて30秒待つ。
-    if (isSpeaking || isThinking || isPreparingSpeech || voiceInputActive) {
+    if (isSpeaking || isThinking || voiceInputActive) {
       scheduleChatIdleReset();
       return;
     }
@@ -1696,7 +1692,7 @@ function stopThinkingSound() {
 
 async function runChat(rawMessage, { uncertain = false } = {}) {
   const message = rawMessage.trim();
-  if (!message || isSpeaking || isThinking || isPreparingSpeech) return;
+  if (!message || isSpeaking || isThinking) return;
   // 「考え中」表示へ切り替えると displayedLineItem が消えるため、先に返信先を固定する。
   // ホバーで復元した古い独り言でも、入力欄から送った場合は明示的な返信として扱う。
   const lastLine = lineHistory[lineHistory.length - 1];
@@ -1752,7 +1748,6 @@ async function runChat(rawMessage, { uncertain = false } = {}) {
       // 続きは、いま録っている発話の文字起こしが終わってから始まる。
       pendingQuestion = "";
       isThinking = false;
-      isPreparingSpeech = false;
       isSpeaking = false;
       showChatBubble();
       return;
@@ -1778,7 +1773,6 @@ async function runChat(rawMessage, { uncertain = false } = {}) {
     isThinking = false;
     // 回答テキストと入力欄を先に表示する。VOICEVOXの音声生成は数秒かかる場合が
     // あるため、ここでは待たず、次の会話操作を塞がない。
-    isPreparingSpeech = false;
     showChatBubble();
     setEmote(response.emote || "joy");
     // emoteはnormalizeSpeechItemでANSWER_EMOTES検証済み。明るい表情だけ喜びモーション付き
@@ -1826,7 +1820,6 @@ async function runChat(rawMessage, { uncertain = false } = {}) {
     saveHistorySoon();
     pendingQuestion = "";
     isThinking = false;
-    isPreparingSpeech = false;
     isSpeaking = false;
     showChatBubble();
     setEmote("troubled");
@@ -1921,7 +1914,7 @@ function enterCharacter() {
       ? displayedLineItem
       : undefined;
     const readingLine = visibleLine || latestAmbientLineItem;
-    showChatBubble(false, readingLine?.sources || [], false, readingLine);
+    showChatBubble(false, readingLine?.sources || [], readingLine);
     model?.motion("Wave", 0);
   }
 }

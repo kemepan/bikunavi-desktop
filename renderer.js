@@ -1910,6 +1910,29 @@ function resumeAmbientState() {
   }
 }
 
+// クリック透過モード中、カーソルがびくたん本体・吹き出し・操作UIの上に
+// 来た時だけウィンドウがクリックを受け取り、それ以外は後ろへ通す。
+// 当たり判定は companion:cursor（mainのポーリング）で毎フレーム更新される。
+let clickThroughEnabled = false;
+let mouseIgnoreState; // undefined = 未確定。次のカーソル更新で必ず送る。
+
+function updateMouseCapture(inside) {
+  if (!clickThroughEnabled) return;
+  const ignore = !inside;
+  if (ignore === mouseIgnoreState) return;
+  mouseIgnoreState = ignore;
+  bikunavi.send("companion:set-mouse-ignore", ignore);
+}
+
+function applyClickThroughSetting(enabled) {
+  const next = Boolean(enabled);
+  if (next === clickThroughEnabled) return;
+  clickThroughEnabled = next;
+  // 切り替え直後は状態を未確定に戻し、次のカーソル更新で必ず送り直す。
+  // OFF側のウィンドウ復帰は main が受け持つ。
+  mouseIgnoreState = undefined;
+}
+
 function enterCharacter() {
   if (isHovered || dragging) return;
   isHovered = true;
@@ -2223,6 +2246,9 @@ async function start() {
       if (typeof settings?.handsFreeEnabled === "boolean") {
         handsFreeEnabled = settings.handsFreeEnabled;
       }
+      if (typeof settings?.clickThroughEnabled === "boolean") {
+        applyClickThroughSetting(settings.clickThroughEnabled);
+      }
     } catch (error) {
       console.error("Settings load failed:", error);
     }
@@ -2300,6 +2326,7 @@ bikunavi.on("companion:cursor", (point) => {
   const insideCharacter = characterHitBounds?.contains(point.x, point.y) ?? false;
   const inside = insideCharacter || isPointInActiveBubble(point) ||
     isPointInPomodoroQuick(point) || isPointInSoundControls(point);
+  updateMouseCapture(inside);
   if (suppressHoverUntilLeave) {
     if (!inside) suppressHoverUntilLeave = false;
     model.focus(point.x, point.y);
@@ -2525,6 +2552,9 @@ bikunavi.on("companion:settings-changed", (settings) => {
   }
   if (typeof settings?.handsFreeEnabled === "boolean") {
     applyHandsFreeSetting(settings.handsFreeEnabled);
+  }
+  if (typeof settings?.clickThroughEnabled === "boolean") {
+    applyClickThroughSetting(settings.clickThroughEnabled);
   }
 });
 

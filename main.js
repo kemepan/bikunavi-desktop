@@ -102,6 +102,7 @@ const DEFAULT_STATE = {
   speechVolume: 100,
   soundMuted: false,
   handsFreeEnabled: false,
+  clickThroughEnabled: false,
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
@@ -183,6 +184,7 @@ function collectState() {
   persistedState.speechVolume = speechVolume;
   persistedState.soundMuted = soundMuted;
   persistedState.handsFreeEnabled = handsFreeEnabled;
+  persistedState.clickThroughEnabled = clickThroughEnabled;
   persistedState.thinkingSoundEnabled = thinkingSoundEnabled;
   persistedState.fortuneAutoEnabled = fortuneAutoEnabled;
   persistedState.autoMoveEnabled = autoMoveEnabled;
@@ -235,6 +237,8 @@ let speechRate = [150, 190, 230].includes(persistedState.speechRate)
 let speechVolume = normalizeSpeechVolume(persistedState.speechVolume);
 let soundMuted = Boolean(persistedState.soundMuted);
 let handsFreeEnabled = Boolean(persistedState.handsFreeEnabled);
+// びくたん本体・吹き出し以外の透明な部分でクリックを後ろのウィンドウへ通す。
+let clickThroughEnabled = Boolean(persistedState.clickThroughEnabled);
 let thinkingSoundEnabled = persistedState.thinkingSoundEnabled !== false;
 let autoMoveEnabled = Boolean(persistedState.autoMoveEnabled);
 let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
@@ -1224,6 +1228,24 @@ function setHandsFreeEnabled(enabled) {
   saveStateSoon();
 }
 
+// クリック透過の適用。ignore=trueで後ろへ通す。forwardはホバー検知のために
+// マウス移動だけは受け取り続ける（実際の当たり判定はmainのカーソルポーリング）。
+function applyMouseIgnore(ignore) {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  if (ignore) companionWindow.setIgnoreMouseEvents(true, { forward: true });
+  else companionWindow.setIgnoreMouseEvents(false);
+}
+
+function setClickThroughEnabled(enabled) {
+  clickThroughEnabled = Boolean(enabled);
+  // OFFにしたらウィンドウ全体で必ずクリックを受け取る状態へ戻す。
+  // ONの間は、rendererがカーソル位置に応じて companion:set-mouse-ignore を送る。
+  if (!clickThroughEnabled) applyMouseIgnore(false);
+  companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+  tray?.setContextMenu(buildTrayMenu());
+  saveStateSoon();
+}
+
 function clearPomodoroTimer() {
   if (pomodoroTimer) {
     clearInterval(pomodoroTimer);
@@ -1822,6 +1844,12 @@ function buildTrayMenu() {
             companionWindow?.setAlwaysOnTop(item.checked);
             saveStateSoon();
           }
+        },
+        {
+          label: "びくたん以外へクリックを通す",
+          type: "checkbox",
+          checked: clickThroughEnabled,
+          click: (item) => setClickThroughEnabled(item.checked)
         },
         { type: "separator" },
         { label: "サイズ", type: "header" },
@@ -2744,6 +2772,12 @@ ipcMain.on("companion:auto-move", () => {
 ipcMain.on("companion:hover", (_event, hovered) => {
   characterHovered = Boolean(hovered);
   if (characterHovered) clearInterval(autoMoveTimer);
+});
+
+// クリック透過中、rendererがカーソルの位置に応じて切り替えを求める。
+ipcMain.on("companion:set-mouse-ignore", (_event, ignore) => {
+  if (!clickThroughEnabled) return;
+  applyMouseIgnore(Boolean(ignore));
 });
 
 // アクセサリ型アプリはクリックだけではアクティブにならないことがあるため、
@@ -5106,7 +5140,8 @@ function getRendererSettings() {
     preferredUserName: getPreferredUserName(),
     soundMuted,
     speechVolume,
-    handsFreeEnabled
+    handsFreeEnabled,
+    clickThroughEnabled
   };
 }
 

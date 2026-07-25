@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const {
   calculateRms,
+  classifyTranscriptConfidence,
   createVoiceActivityDetector,
   isUsableTranscript
 } = require("../vad-utils");
@@ -97,3 +98,39 @@ console.log("vad-utils: OK");
 }
 
 console.log("vad-utils（ノイズ耐性）: OK");
+
+// 聞き取りの確信度は3段階。極端に低いものは環境音とみなして会話へ送らない。
+{
+  // 確信度を返さない経路（Whisper）を巻き込まない。0を「低い」とみなすと全損する。
+  assert.equal(classifyTranscriptConfidence(0), "trusted");
+  assert.equal(classifyTranscriptConfidence(undefined), "trusted");
+  assert.equal(classifyTranscriptConfidence(null), "trusted");
+  assert.equal(classifyTranscriptConfidence(NaN), "trusted");
+  assert.equal(classifyTranscriptConfidence("なし"), "trusted");
+  assert.equal(classifyTranscriptConfidence(-1), "trusted");
+
+  // 2026-07-25の実測。環境音の誤認識で、文字数は信頼の根拠にならない。
+  for (const value of [0.003, 0.004, 0.005, 0.021, 0.035, 0.056, 0.068, 0.092, 0.129]) {
+    assert.equal(classifyTranscriptConfidence(value), "ignore", `confidence=${value}`);
+  }
+  // 同じく実測。ここは聞き返して確かめる帯。
+  for (const value of [0.283, 0.3, 0.334, 0.362, 0.408, 0.418]) {
+    assert.equal(classifyTranscriptConfidence(value), "confirm", `confidence=${value}`);
+  }
+  for (const value of [0.45, 0.573, 0.918, 0.982, 1]) {
+    assert.equal(classifyTranscriptConfidence(value), "trusted", `confidence=${value}`);
+  }
+
+  // 境界はしきい値そのものを含まない側で切り替わる。
+  assert.equal(classifyTranscriptConfidence(0.149), "ignore");
+  assert.equal(classifyTranscriptConfidence(0.15), "confirm");
+  assert.equal(classifyTranscriptConfidence(0.449), "confirm");
+
+  // しきい値は較正できる。
+  assert.equal(classifyTranscriptConfidence(0.2, { ignoreBelow: 0.3 }), "ignore");
+  assert.equal(classifyTranscriptConfidence(0.5, { confirmBelow: 0.6 }), "confirm");
+  // 逆転した指定でも、確実な帯を巻き込まない（ignoreは常にconfirm以下から）。
+  assert.equal(classifyTranscriptConfidence(0.5, { ignoreBelow: 0.9, confirmBelow: 0.2 }), "trusted");
+}
+
+console.log("vad-utils（確信度の3段階）: OK");

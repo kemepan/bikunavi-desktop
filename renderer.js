@@ -3,6 +3,7 @@
 const { Live2DModel } = PIXI.live2d;
 const {
   calculateRms,
+  classifyTranscriptConfidence,
   createVoiceActivityDetector,
   isUsableTranscript
 } = window.BikunaviVad;
@@ -159,10 +160,8 @@ const HANDS_FREE_BUFFER_SIZE = 4096;
 const THREAD_FOLLOW_UP_MS = 3500;
 // マイクを押したままハンズフリーを切り替えるまでの時間。
 const MIC_LONG_PRESS_MS = 600;
-// これを下回る聞き取りは、断定せず聞き返してもらう。
-// 暫定値。実測は0.19〜0.98で、低い側（0.19 / 0.34）が怪しかった。
-// out.log の「Hands-free transcript accepted」で頻度を見ながら調整する。
-const HANDS_FREE_UNCERTAIN_CONFIDENCE = 0.45;
+// 聞き取りの確信度のしきい値は vad-utils.js の classifyTranscriptConfidence が持つ。
+// 較正は out.log の「Hands-free transcript ignore / confirm / trusted」を見て行う。
 // 惜しい音のログを間引く間隔。
 const HANDS_FREE_NEAR_MISS_LOG_MS = 5000;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
@@ -503,19 +502,24 @@ async function finishHandsFreeUtterance(utterance) {
       return;
     }
 
-    // 聞き取りが怪しい時は、断定して答えず聞き返してもらう。
-    // 手入力や単発録音は本人が目で確かめてから送るので、常時待機の時だけ。
+    // 確信度で3段階に分ける。手入力や単発録音は本人が目で確かめてから
+    // 送るので、この判定は常時待機の時だけ。
     const confidence = Number(result?.confidence) || 0;
-    const uncertain = confidence > 0 && confidence < HANDS_FREE_UNCERTAIN_CONFIDENCE;
+    const grade = classifyTranscriptConfidence(confidence);
     console.log(
-      `Hands-free transcript accepted: ${text.length}文字, ` +
-      `confidence ${confidence ? confidence.toFixed(3) : "なし"}` +
-      (uncertain ? "（聞き返す）" : "")
+      `Hands-free transcript ${grade}: ${text.length}文字, ` +
+      `confidence ${confidence ? confidence.toFixed(3) : "なし"}`
     );
+    if (grade === "ignore") {
+      // 環境音の誤認識とみなして会話へ送らない。話していないのに聞き返されると
+      // それ自体が noise になるため、短い表示だけ出して黙る。
+      showStatusMessage("うまく聞き取れませんでした");
+      return;
+    }
 
     showStatusMessage(`「${shortenForBubble(text, 42)}」`, 1200);
     handsFreeTranscribing = false;
-    await runChat(text, { uncertain });
+    await runChat(text, { uncertain: grade === "confirm" });
     chatStarted = true;
   } catch (error) {
     console.error("Hands-free transcription failed:", error);

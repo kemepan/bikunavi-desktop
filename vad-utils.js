@@ -136,6 +136,32 @@
     };
   }
 
+  // 聞き取りの確信度を3段階に分ける。
+  //
+  // Apple Speechは環境音にも文字を返し、その時のconfidenceは極端に低い
+  // （2026-07-25の実測で 11文字/0.005、7文字/0.005、5文字/0.003 など。
+  // 文字数は信頼の根拠にならない）。この帯は断定して答えるのも丁寧に
+  // 聞き返すのも噛み合わないので、会話へ送らず黙って捨てる。
+  //
+  // - ignore : 環境音とみなして捨てる
+  // - confirm: 聞こえた言葉を挙げて一度だけ確認する
+  // - trusted: そのまま答える
+  function classifyTranscriptConfidence(rawConfidence, options = {}) {
+    const ignoreBelow = Number.isFinite(Number(options.ignoreBelow))
+      ? Number(options.ignoreBelow)
+      : 0.15;
+    const confirmBelow = Number.isFinite(Number(options.confirmBelow))
+      ? Number(options.confirmBelow)
+      : 0.45;
+    const confidence = Number(rawConfidence);
+    // 確信度を返さない経路（Whisper、macOS側が値を持たない場合）は判定しない。
+    // 0を「低い」とみなすと、その経路の聞き取りを丸ごと捨ててしまう。
+    if (!Number.isFinite(confidence) || confidence <= 0) return "trusted";
+    if (confidence < Math.min(ignoreBelow, confirmBelow)) return "ignore";
+    if (confidence < confirmBelow) return "confirm";
+    return "trusted";
+  }
+
   function isUsableTranscript(rawText, options = {}) {
     const text = String(rawText || "").replace(/\s+/g, " ").trim();
     if (!text) return false;
@@ -168,5 +194,10 @@
     return true;
   }
 
-  return { calculateRms, createVoiceActivityDetector, isUsableTranscript };
+  return {
+    calculateRms,
+    classifyTranscriptConfidence,
+    createVoiceActivityDetector,
+    isUsableTranscript
+  };
 });

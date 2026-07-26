@@ -989,6 +989,9 @@ function normalizeSpeechItem(item) {
 
 function createChoiceButtons(item) {
   if (!item?.choices?.length) return undefined;
+  // 出た／出ないを後から追えるようにする。押せたかまでは分からないので、
+  // 実際に描いた時だけ残す。
+  console.log(`Choice buttons shown: [${item.choices.join("] [")}]`);
   const container = document.createElement("div");
   container.className = "choice-buttons";
   for (const choice of item.choices) {

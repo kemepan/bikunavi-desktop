@@ -4609,7 +4609,10 @@ async function generateIdleLines() {
       console.log(
         `Idle lines generated: ${lineCount} ` +
         `(sources付き: ${usableThreads.flat().filter((line) => line.sources.length).length}, ` +
-        `続きもの: ${usableThreads.filter((thread) => thread.length > 1).length}本)`
+        `続きもの: ${usableThreads.filter((thread) => thread.length > 1).length}本, ` +
+        // 実際に選択肢が付くのは表示時だが、このバッチに問いかけが何行あるかを
+        // ここで数えておくと「今日は選択肢が出るはず」が事前に分かる。
+        `選択肢が付く行: ${usableThreads.flat().filter((line) => suggestReplyChoices(line.text).length).length})`
       );
       // 完全一致だけでなく、似た文章や同じ出典の記事も除く。
       // 続きものは先頭の行だけで判定する。同じ話題を掘り下げる行同士は当然似ており、

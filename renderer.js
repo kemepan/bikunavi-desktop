@@ -1376,6 +1376,9 @@ function getIdleSpeechHoldMs(item) {
   const speechItem = normalizeSpeechItem(item);
   const hasSources = speechItem.sources.some((source) => /^https?:\/\//.test(source?.url || ""));
   if (hasSources) return 30000;
+  // 選択肢を出したセリフは、押す時間を残す。短い問いかけは既定の0.9秒だと
+  // 読み終わる前にボタンごと消えてしまう。
+  if (speechItem.choices.length) return 20000;
   if (speechItem.text.length >= 70) return 18000;
   return 900;
 }
@@ -1553,8 +1556,13 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
     }
   }
 
-  if (pendingCharacterCustomization && !busy) {
-    const choiceButtons = createChoiceButtons(pendingCharacterCustomization);
+  // ホバーで入力欄付きの表示へ切り替わっても、選択肢は残す。
+  // 押そうとマウスを近づけた瞬間に消えると、ボタンとして使えない。
+  if (!busy) {
+    const choiceSource = pendingCharacterCustomization?.choices?.length
+      ? pendingCharacterCustomization
+      : carriedLine;
+    const choiceButtons = createChoiceButtons(choiceSource);
     if (choiceButtons) bubble.append(choiceButtons);
   }
 

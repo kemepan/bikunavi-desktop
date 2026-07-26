@@ -86,7 +86,8 @@ let pendingCharacterCustomization;
 let chatEntryIndex = -1;
 const chatEntries = [];
 const lineHistory = [];
-const savedLinkUrls = new Set();
+// 記事URL → "good" / "bad"。ボタンの見た目を復元するために持つ。
+const sourceRatings = new Map();
 let lineHistoryIndex = -1;
 let lineHistoryActive = false;
 let currentEmote = { ...EMOTES.default };
@@ -1165,28 +1166,47 @@ function createSourceLinks(sources) {
       event.stopPropagation();
       bikunavi.invoke("companion:open-url", source.url).catch(console.error);
     });
-    const save = document.createElement("button");
-    save.type = "button";
-    save.className = "source-save";
-    const updateSavedState = () => {
-      const saved = savedLinkUrls.has(source.url);
-      save.textContent = saved ? "★" : "☆";
-      save.title = saved ? "気になる記事に保存済み" : "気になる記事に保存";
-      save.setAttribute("aria-label", save.title);
+    // グッドは「気になる記事」へ残り、この分野を次から多めに集める。
+    // バッドは似た話題を持ち込まないための記録。もう一度押すと取り消す。
+    const good = document.createElement("button");
+    const bad = document.createElement("button");
+    const updateRatingState = () => {
+      const rating = sourceRatings.get(source.url) || "";
+      good.className = `source-rate${rating === "good" ? " is-active" : ""}`;
+      bad.className = `source-rate${rating === "bad" ? " is-active" : ""}`;
+      good.textContent = "👍";
+      bad.textContent = "👎";
+      good.title = rating === "good"
+        ? "気になる記事に保存済み（もう一度押すと取り消し）"
+        : "気になる。この分野を多めに集める";
+      bad.title = rating === "bad"
+        ? "興味なしにした（もう一度押すと取り消し）"
+        : "興味なし。似た話題を減らす";
+      good.setAttribute("aria-label", good.title);
+      bad.setAttribute("aria-label", bad.title);
+      good.setAttribute("aria-pressed", rating === "good" ? "true" : "false");
+      bad.setAttribute("aria-pressed", rating === "bad" ? "true" : "false");
     };
-    updateSavedState();
-    save.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    const rate = async (rating) => {
       try {
-        const result = await bikunavi.invoke("companion:save-link", source);
-        if (result?.saved) savedLinkUrls.add(source.url);
-        updateSavedState();
+        const result = await bikunavi.invoke("companion:rate-source", source, rating);
+        if (result?.rating) sourceRatings.set(source.url, result.rating);
+        else sourceRatings.delete(source.url);
+        updateRatingState();
       } catch (error) {
-        console.error("Source save failed:", error);
+        console.error("Source rating failed:", error);
       }
-    });
-    item.append(link, save);
+    };
+    for (const [button, rating] of [[good, "good"], [bad, "bad"]]) {
+      button.type = "button";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        rate(rating).catch(console.error);
+      });
+    }
+    updateRatingState();
+    item.append(link, good, bad);
     sourceList.append(item);
   }
   return sourceList;
@@ -2273,12 +2293,14 @@ async function start() {
       console.error("Settings load failed:", error);
     }
     try {
-      const savedLinks = await bikunavi.invoke("companion:saved-links");
-      for (const link of Array.isArray(savedLinks) ? savedLinks : []) {
-        if (typeof link?.url === "string") savedLinkUrls.add(link.url);
+      const ratings = await bikunavi.invoke("companion:source-ratings");
+      for (const item of Array.isArray(ratings) ? ratings : []) {
+        if (typeof item?.url === "string" && item.rating) {
+          sourceRatings.set(item.url, item.rating);
+        }
       }
     } catch (error) {
-      console.error("Saved links load failed:", error);
+      console.error("Source ratings load failed:", error);
     }
     try {
       const saved = await bikunavi.invoke("companion:load-history");

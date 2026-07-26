@@ -55,6 +55,12 @@ const {
   extractLearnedTerms
 } = require("./idle-vocabulary-utils");
 const {
+  applyRating,
+  filterByRating,
+  migrateSavedLinks,
+  normalizeRatings
+} = require("./source-rating-utils");
+const {
   cleanChatPunctuation,
   isGreetingOnly,
   looksLikeCorrection,
@@ -135,6 +141,7 @@ const DEFAULT_STATE = {
   diaryMemoryAiEnabled: false,
   diaryMemoryMentions: { lastMentionDate: "", keys: [] },
   savedLinks: [],
+  sourceRatings: [],
   conversationProvider: "auto",
   anthropicApiKey: "",
   voicevoxGuideShown: false,
@@ -3083,7 +3090,10 @@ ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
       persistedState.diaryMemoryMentions = { lastMentionDate: "", keys: [] };
       break;
     case "savedLinks":
+      // グッド／バッドの評価もここで消える。何に興味があるかの記録なので、
+      // 「気になる記事を消す」で残らないようにする。
       persistedState.savedLinks = [];
+      persistedState.sourceRatings = [];
       break;
     case "history":
       clearChatHistories();
@@ -3096,6 +3106,7 @@ ipcMain.handle("companion:data-clear", (_event, rawCategory) => {
       persistedState.dailyDiaries = [];
       persistedState.diaryMemoryMentions = { lastMentionDate: "", keys: [] };
       persistedState.savedLinks = [];
+      persistedState.sourceRatings = [];
       persistedState.fortuneThemes = [];
       clearChatHistories();
       break;
@@ -3597,33 +3608,38 @@ function takeLocalDiaryMemory({ includeUserName = true, date = new Date() } = {}
   return item;
 }
 
-function getSavedLinks() {
-  if (!Array.isArray(persistedState.savedLinks)) persistedState.savedLinks = [];
-  const seenUrls = new Set();
-  persistedState.savedLinks = persistedState.savedLinks
-    .map((entry) => {
-      const source = sanitizeSources([entry])[0];
-      if (!source || seenUrls.has(source.url)) return undefined;
-      seenUrls.add(source.url);
-      return { ...source, savedAt: Number(entry?.savedAt) || Date.now() };
-    })
-    .filter(Boolean)
-    .slice(-30);
-  return persistedState.savedLinks;
+// 記事への評価（グッド／バッド）。旧「☆保存」は初回だけグッドとして引き継ぐ。
+function getSourceRatings() {
+  if (Array.isArray(persistedState.savedLinks) && persistedState.savedLinks.length) {
+    persistedState.sourceRatings = migrateSavedLinks(
+      persistedState.savedLinks,
+      persistedState.sourceRatings
+    );
+    // 移行元は空にする。二重に数えないため。
+    persistedState.savedLinks = [];
+    saveStateSoon();
+  } else if (!Array.isArray(persistedState.sourceRatings)) {
+    persistedState.sourceRatings = [];
+  } else {
+    persistedState.sourceRatings = normalizeRatings(persistedState.sourceRatings);
+  }
+  return persistedState.sourceRatings;
 }
 
-function saveLink(source) {
+// 「気になる記事」はグッドを付けたものを見返す場所。
+function getSavedLinks() {
+  return filterByRating(getSourceRatings(), "good");
+}
+
+function rateSource(source, rating) {
   const safeSource = sanitizeSources([source])[0];
-  if (!safeSource) return { saved: false, count: getSavedLinks().length };
-  const links = getSavedLinks();
-  const existing = links.find((entry) => entry.url === safeSource.url);
-  if (!existing) {
-    links.push({ ...safeSource, savedAt: Date.now() });
-    links.splice(0, Math.max(0, links.length - 30));
-    saveStateSoon();
-    tray?.setContextMenu(buildTrayMenu());
-  }
-  return { saved: true, count: links.length };
+  if (!safeSource) return { rating: "", count: getSavedLinks().length };
+  const result = applyRating(getSourceRatings(), safeSource, rating);
+  if (!result.changed) return { rating: "", count: getSavedLinks().length };
+  persistedState.sourceRatings = result.ratings;
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+  return { rating: result.rating, count: getSavedLinks().length };
 }
 
 function removeSavedLink(rawUrl) {
@@ -5212,9 +5228,12 @@ ipcMain.handle("companion:copy-text", (_event, rawText) => {
   return true;
 });
 
-ipcMain.handle("companion:save-link", (_event, source) => saveLink(source));
+ipcMain.handle("companion:rate-source", (_event, source, rating) => rateSource(source, rating));
 
 ipcMain.handle("companion:saved-links", () => getSavedLinks());
+// 起動時にボタンの状態（👍／👎）を復元するため、評価そのものを渡す。
+ipcMain.handle("companion:source-ratings", () => getSourceRatings()
+  .map(({ url, rating }) => ({ url, rating })));
 
 ipcMain.handle("companion:remove-saved-link", (_event, rawUrl) => removeSavedLink(rawUrl));
 

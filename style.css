@@ -442,23 +442,45 @@ body {
   border-radius: 999px 0 0 999px;
 }
 
-.source-links button.source-save {
+/* グッド／バッド。狭い吹き出しに2つ並ぶので、幅を詰めて中央のボタンだけ
+   角丸を落とし、3つでひと続きに見せる。 */
+.source-links button.source-rate {
   flex: none;
-  width: 27px;
+  width: 25px;
   padding: 0;
   border-left: 0;
+  border-radius: 0;
+  color: #6b6b74;
+  background: #f2f2f5;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.source-links button.source-rate:last-child {
   border-radius: 0 999px 999px 0;
-  color: #89611f;
-  background: #f8f0dc;
-  font-size: 13px;
+}
+
+.source-links button.source-rate.is-active {
+  opacity: 1;
+}
+
+.source-links button.source-rate.is-active:first-of-type {
+  color: #1f6b4f;
+  background: #ddf0e4;
+}
+
+.source-links button.source-rate.is-active:last-child {
+  color: #7a3b3b;
+  background: #f2dede;
 }
 
 .source-links button:hover {
   background: #eadcf2;
 }
 
-.source-links button.source-save:hover {
-  background: #efe0b9;
+.source-links button.source-rate:hover {
+  opacity: 1;
+  background: #e6e6ec;
 }
 
 .chat-message {

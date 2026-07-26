@@ -112,8 +112,23 @@
     ].join("\n");
   }
 
+  // 同じ記事が媒体違いで何度も流れてくる（Yahoo!ニュース経由など）。
+  // 括弧の全半角や配信元の付き方だけが違うので、そこを均して見比べる。
+  function normalizeHeadlineKey(rawTitle) {
+    const title = String(rawTitle || "");
+    if (!title.trim()) return "";
+    return title
+      // 末尾の「 - 配信元」を落とす。同じ記事が別媒体名で来るため。
+      .replace(/\s[-–—|｜]\s*[^-–—|｜]{1,40}$/, "")
+      .replace(/[（）()「」『』【】\[\]]/g, "")
+      .replace(/[\s　]+/g, "")
+      .toLowerCase()
+      .slice(0, 80);
+  }
+
   return {
     extractTopicTerms,
+    normalizeHeadlineKey,
     formatTopicPreference,
     shouldAvoidHeadline,
     summarizeTopicPreference

@@ -88,3 +88,27 @@ assert.deepEqual(extractTopicTerms(undefined), []);
 }
 
 console.log("topic-preference-utils: OK");
+
+// 同じ記事が媒体違いで流れてくるのを同一と見なす（実データで2件重複していた）。
+{
+  const { normalizeHeadlineKey } = require("../topic-preference-utils");
+  const a = "少女マンガの美男美女が纏う雰囲気を表現したフリーフォント「シャランラ」（窓の杜） - Yahoo!ニュース";
+  const b = "少女マンガの美男美女が纏う雰囲気を表現したフリーフォント「シャランラ」 (窓の杜) - Yahoo!ニュース";
+  assert.equal(normalizeHeadlineKey(a), normalizeHeadlineKey(b));
+
+  // 配信元だけが違う場合も同じ記事として扱う。
+  assert.equal(
+    normalizeHeadlineKey("新しいフォントが公開された - GIGAZINE"),
+    normalizeHeadlineKey("新しいフォントが公開された - 窓の杜")
+  );
+
+  // 別の記事まで同一視しない。
+  assert.notEqual(
+    normalizeHeadlineKey("新しいフォントが公開された - GIGAZINE"),
+    normalizeHeadlineKey("新しいアイコンが公開された - GIGAZINE")
+  );
+  assert.equal(normalizeHeadlineKey(""), "");
+  assert.equal(normalizeHeadlineKey(undefined), "");
+}
+
+console.log("topic-preference-utils（見出しの重複）: OK");

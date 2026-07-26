@@ -62,6 +62,7 @@ const {
 } = require("./source-rating-utils");
 const {
   formatTopicPreference,
+  normalizeHeadlineKey,
   shouldAvoidHeadline,
   summarizeTopicPreference
 } = require("./topic-preference-utils");
@@ -4358,10 +4359,19 @@ async function fetchLatestTopics() {
   const designNews = [];
   const sourceItems = [];
   const topicPreference = summarizeTopicPreference(getSourceRatings());
+  // 同じ記事がYahoo!ニュース経由などで二重に流れてくる。見出しで弾く。
+  const seenHeadlines = new Set();
   let avoidedHeadlines = 0;
+  let duplicateHeadlines = 0;
 
   const addSources = (kind, items) => {
     for (const item of items) {
+      const headlineKey = normalizeHeadlineKey(item.title);
+      if (headlineKey && seenHeadlines.has(headlineKey)) {
+        duplicateHeadlines += 1;
+        continue;
+      }
+      if (headlineKey) seenHeadlines.add(headlineKey);
       if (
         shouldAvoidHeadline(item, topicPreference) &&
         Math.random() >= TOPIC_EXPLORATION_RATE
@@ -4432,7 +4442,12 @@ async function fetchLatestTopics() {
 
   const designNewsTask = (async () => {
     const query = encodeURIComponent(
-      "UIデザイン OR UXデザイン OR Webデザイン OR グラフィックデザイン OR タイポグラフィ OR フォント OR 配色 OR デザインツール when:2d"
+      // フレーズ検索にして、一般名詞での取り違えを防ぐ。
+      // 「フォント」「配色」は日常語で、サッカーの加入ムービーやファッション記事が
+      // 大量に混ざっていた（2026-07-26に実測。12件中4件がデザイン記事ではなかった）。
+      // 「Figma」も日本語圏ではフィギュアの「figma」と衝突するため入れない。
+      '"UIデザイン" OR "UXデザイン" OR "Webデザイン" OR "グラフィックデザイン" ' +
+      'OR "タイポグラフィ" OR "フリーフォント" OR "デザインシステム" OR "ロゴデザイン" when:3d'
     );
     const response = await fetch(
       `https://news.google.com/rss/search?q=${query}&hl=ja&gl=JP&ceid=JP:ja`,
@@ -4470,7 +4485,8 @@ async function fetchLatestTopics() {
   latestTopicSources = new Map(sourceItems.map((item) => [item.id, item]));
   console.log(
     `Topics fetched: ai=${aiNews.length} design=${designNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}` +
-    (avoidedHeadlines ? ` (苦手として除外: ${avoidedHeadlines})` : "")
+    (avoidedHeadlines ? ` (苦手として除外: ${avoidedHeadlines})` : "") +
+    (duplicateHeadlines ? ` (重複除外: ${duplicateHeadlines})` : "")
   );
 
   const promptText = [

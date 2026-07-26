@@ -51,6 +51,10 @@ const { roundWindowCoordinate } = require("./movement-utils");
 const { isStaleIdleLine } = require("./idle-freshness-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
+  createLearnedTermLimiter,
+  extractLearnedTerms
+} = require("./idle-vocabulary-utils");
+const {
   cleanChatPunctuation,
   isGreetingOnly,
   looksLikeCorrection,
@@ -3653,7 +3657,9 @@ function formatRelationshipMemory() {
   if (learnedWords.length) {
     sections.push(
       "教わったことば・内輪の表現:",
-      ...learnedWords.slice(-12).map((item) => `- ${String(item.text || "").slice(0, 300)}`)
+      ...learnedWords.slice(-12).map((item) => `- ${String(item.text || "").slice(0, 300)}`),
+      "- 教わったことばは、話の流れに合う時だけ使ってください。使うこと自体を目的にせず、" +
+        "一度の会話や一連の独り言で同じ語を繰り返さないでください。"
     );
   }
   if (sharedMemories.length) {
@@ -4609,6 +4615,13 @@ async function generateIdleLines() {
       // 続きものは先頭の行だけで判定する。同じ話題を掘り下げる行同士は当然似ており、
       // 行ごとに判定すると自分の続きを重複とみなして落としてしまう。
       const queuedLines = [];
+      // ことば帳の語が1バッチで何度も出ないよう、話題のまとまり単位で数える。
+      // 既存の重複排除は文の類似度なので、「お昼寝したい」「お昼寝の時間」の
+      // ように文が違えば素通りしてしまう。
+      const termLimiter = createLearnedTermLimiter(
+        extractLearnedTerms(getGrowthData().learnedWords)
+      );
+      let termLimited = 0;
       for (const thread of usableThreads) {
         const head = thread[0];
         const key = idleKey(head);
@@ -4620,7 +4633,20 @@ async function generateIdleLines() {
             return sameSource || idleSimilarity(head, queued) >= 0.68;
           });
         if (!key || duplicateInQueue || isRecentIdle(head)) continue;
+        // 続きものは途中で落とすと話が宙に浮くので、まとまり全体で判断する。
+        if (!termLimiter.accept(thread.map((line) => line.text).join(""))) {
+          termLimited += 1;
+          continue;
+        }
         queuedLines.push(...thread);
+      }
+      // ことば帳の語の使われ方は、体感でなく数で見られるようにしておく。
+      const termUsage = termLimiter.describeUsage();
+      if (termUsage || termLimited) {
+        console.log(
+          `Idle vocabulary: ${termUsage || "使用なし"}` +
+          (termLimited ? `（${termLimited}話題を抑制）` : "")
+        );
       }
       // 自動占いは毎バッチではなく1日1回、短い一言だけ差し込む。
       if (fortuneAutoEnabled) {

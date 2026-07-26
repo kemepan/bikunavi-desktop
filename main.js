@@ -3644,12 +3644,15 @@ function rateSource(source, rating) {
   return { rating: result.rating, count: getSavedLinks().length };
 }
 
+// 評価そのものを消す。getSavedLinks() はグッドだけを抜き出した別配列なので、
+// そちらを削っても保存データは変わらない（評価へ移行した時に一度壊した）。
 function removeSavedLink(rawUrl) {
   const url = String(rawUrl || "");
-  const links = getSavedLinks();
-  const index = links.findIndex((entry) => entry.url === url);
+  const ratings = getSourceRatings();
+  const index = ratings.findIndex((entry) => entry.url === url);
   if (index < 0) return false;
-  links.splice(index, 1);
+  ratings.splice(index, 1);
+  persistedState.sourceRatings = ratings;
   saveStateSoon();
   tray?.setContextMenu(buildTrayMenu());
   return true;

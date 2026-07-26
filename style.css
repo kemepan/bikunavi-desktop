@@ -464,6 +464,12 @@ body {
   opacity: 1;
 }
 
+/* 押したあとは確定表示。押せなくなっても薄くしない（選んだ結果なので）。 */
+.source-links button.source-rate:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 .source-links button.source-rate.is-good.is-active {
   color: #1f6b4f;
   background: #ddf0e4;

@@ -1172,16 +1172,24 @@ function createSourceLinks(sources) {
     const bad = document.createElement("button");
     const updateRatingState = () => {
       const rating = sourceRatings.get(source.url) || "";
+      const decided = Boolean(rating);
+      // 一度押したら確定にする。押すたびに切り替わると、今どちらを選んだのか
+      // 分からなくなるため。選ばなかった側は消し、押した側だけ残す。
+      // 取り消したい時はトレイの「気になる記事」から外す。
       // 種類はクラスで明示する。:first-of-type だと「ソース」ボタンを指してしまう。
       good.className = `source-rate is-good${rating === "good" ? " is-active" : ""}`;
       bad.className = `source-rate is-bad${rating === "bad" ? " is-active" : ""}`;
       good.textContent = "👍";
       bad.textContent = "👎";
+      good.hidden = decided && rating !== "good";
+      bad.hidden = decided && rating !== "bad";
+      good.disabled = decided;
+      bad.disabled = decided;
       good.title = rating === "good"
-        ? "気になる記事に保存済み（もう一度押すと取り消し）"
+        ? "気になる記事に保存しました"
         : "気になる。この分野を多めに集める";
       bad.title = rating === "bad"
-        ? "興味なしにした（もう一度押すと取り消し）"
+        ? "興味なしにしました"
         : "興味なし。似た話題を減らす";
       good.setAttribute("aria-label", good.title);
       bad.setAttribute("aria-label", bad.title);

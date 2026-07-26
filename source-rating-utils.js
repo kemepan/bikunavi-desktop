@@ -53,7 +53,11 @@
     return normalizeRatings([...migrated, ...(existingRatings || [])]);
   }
 
-  // 同じボタンをもう一度押したら取り消し。違う側を押したら付け替える。
+  // 同じ評価をもう一度渡せば取り消し、違う側なら付け替える。
+  // ただし吹き出しのボタンは一度押したら確定で、二度は押せない
+  // （切り替わると今どちらを選んだのか分からなくなるため）。
+  // 取り消しは、グッドならトレイの「気になる記事」から外せる。
+  // バッドの個別取り消しは今はない（データ管理からまとめて消す）。
   function applyRating(ratings, source, rating) {
     if (!RATINGS.has(rating)) {
       return { ratings: normalizeRatings(ratings), rating: "", changed: false };

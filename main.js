@@ -61,6 +61,11 @@ const {
   normalizeRatings
 } = require("./source-rating-utils");
 const {
+  formatTopicPreference,
+  shouldAvoidHeadline,
+  summarizeTopicPreference
+} = require("./topic-preference-utils");
+const {
   cleanChatPunctuation,
   isGreetingOnly,
   looksLikeCorrection,
@@ -4341,6 +4346,10 @@ function shouldAttachLatestTopics(message) {
   return /ニュース|最新|最近|今日|いま|今|時事|話題|トレンド|記事|ソース|出典|URL|情報|AI|生成AI|OpenAI|生活|暮らし|家事|時短|整理|収納|掃除|ライフハック/i.test(message);
 }
 
+// 苦手と分かっている話題でも、この割合は通す。全部落とすと好みへ寄りすぎて
+// 似た話ばかりになるため、新しい発見の余地を残す。
+const TOPIC_EXPLORATION_RATE = 0.25;
+
 async function fetchLatestTopics() {
   const generalNews = [];
   const techNews = [];
@@ -4348,9 +4357,18 @@ async function fetchLatestTopics() {
   const lifestyleNews = [];
   const designNews = [];
   const sourceItems = [];
+  const topicPreference = summarizeTopicPreference(getSourceRatings());
+  let avoidedHeadlines = 0;
 
   const addSources = (kind, items) => {
     for (const item of items) {
+      if (
+        shouldAvoidHeadline(item, topicPreference) &&
+        Math.random() >= TOPIC_EXPLORATION_RATE
+      ) {
+        avoidedHeadlines += 1;
+        continue;
+      }
       const id = `${kind}${sourceItems.length + 1}`;
       const sourceItem = { id, ...item };
       sourceItems.push(sourceItem);
@@ -4451,7 +4469,8 @@ async function fetchLatestTopics() {
 
   latestTopicSources = new Map(sourceItems.map((item) => [item.id, item]));
   console.log(
-    `Topics fetched: ai=${aiNews.length} design=${designNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}`
+    `Topics fetched: ai=${aiNews.length} design=${designNews.length} life=${lifestyleNews.length} general=${generalNews.length} tech=${techNews.length}` +
+    (avoidedHeadlines ? ` (苦手として除外: ${avoidedHeadlines})` : "")
   );
 
   const promptText = [
@@ -4478,6 +4497,10 @@ async function generateIdleLines() {
     const characterSheet = readCharacterSheet();
     const characterCustomization = formatCharacterCustomization();
     const idleContentPreferences = formatIdleContentPreferences();
+    // 👍を付けた話題の傾向。データが足りなければ空文字。
+    const ratedTopicPreference = formatTopicPreference(
+      summarizeTopicPreference(getSourceRatings())
+    );
     const idleNewsMixInstruction = getIdleNewsMixInstruction();
     const preferredUserName = getPreferredUserName();
     const relationshipMemory = formatRelationshipMemory();
@@ -4498,6 +4521,9 @@ async function generateIdleLines() {
         : "",
       idleContentPreferences
         ? `<idle_content_preferences>\n${idleContentPreferences}\n</idle_content_preferences>`
+        : "",
+      ratedTopicPreference
+        ? `<rated_topic_preference>\n${ratedTopicPreference}\n</rated_topic_preference>`
         : "",
       relationshipMemory
         ? `<relationship_memory>\n${relationshipMemory}\n</relationship_memory>`

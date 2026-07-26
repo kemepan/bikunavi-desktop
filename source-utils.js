@@ -91,10 +91,19 @@ function parseGeneratedIdleLine(rawLine, sourceMap = new Map()) {
       text = parts.slice(2).join("|").trim();
     }
   } else {
+    // `T58|本文` のように、種別欄を落として先頭へIDだけ書く出力がある。
+    // 拾わないと管理IDが本文へ残り、表示にも読み上げにも漏れる（出典も失う）。
+    const leading = line.match(
+      new RegExp(`^((?:${SOURCE_ID})(?:\\s*,\\s*(?:${SOURCE_ID}))*)\\s*\\|\\s*`, "i")
+    );
     const trailing = line.match(
       new RegExp(`\\|\\s*((?:${SOURCE_ID})(?:\\s*,\\s*(?:${SOURCE_ID}))*)\\s*\\|?\\s*$`, "i")
     );
-    if (trailing) {
+    if (leading) {
+      sourceIds = parseSourceIdField(leading[1]);
+      text = line.slice(leading[0].length).trim();
+      kind = sourceIds[0]?.startsWith("L") ? "life" : "news";
+    } else if (trailing) {
       sourceIds = parseSourceIdField(trailing[1]);
       text = line.slice(0, trailing.index).trim();
       kind = sourceIds[0]?.startsWith("L") ? "life" : "news";

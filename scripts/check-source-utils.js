@@ -76,3 +76,34 @@ assert.equal(
 }
 
 console.log("source-utils: OK");
+
+// 種別欄を落として先頭へIDだけ書く出力（`T58|本文`）。管理IDを本文へ残さない。
+// 2026-07-25にセリフ履歴で実際に漏れていた形。
+{
+  const withTech = new Map([
+    ...sources,
+    ["T58", { title: "rebaseの記事", url: "https://example.com/git", source: "Tech" }]
+  ]);
+  const leaked = parseGeneratedIdleLine("T58|Gitのrebase -iは怖くないそうですよ。", withTech);
+  assert.equal(leaked.text, "Gitのrebase -iは怖くないそうですよ。");
+  assert.equal(leaked.text.includes("T58"), false);
+  // 出典も取りこぼさない（これまでは本文に混ざったままsourcesが空だった）。
+  assert.equal(leaked.sources.length, 1);
+  assert.equal(leaked.kind, "news");
+
+  // 生活ハック系のIDなら kind も揃う。
+  assert.equal(parseGeneratedIdleLine("L3|机の上を片付けました。", sources).kind, "life");
+
+  // 複数IDも拾う。
+  const multi = parseGeneratedIdleLine("A3,G7|二つの記事を見ました。", sources);
+  assert.equal(multi.text, "二つの記事を見ました。");
+  assert.equal(multi.sources.length, 2);
+}
+
+// 本文が英数字＋縦棒で始まっても、IDの形でなければ本文として残す。
+{
+  const notId = parseGeneratedIdleLine("Z9|これは管理IDではありません。", sources);
+  assert.equal(notId.text, "Z9|これは管理IDではありません。");
+}
+
+console.log("source-utils（先頭の管理ID）: OK");

@@ -1172,8 +1172,9 @@ function createSourceLinks(sources) {
     const bad = document.createElement("button");
     const updateRatingState = () => {
       const rating = sourceRatings.get(source.url) || "";
-      good.className = `source-rate${rating === "good" ? " is-active" : ""}`;
-      bad.className = `source-rate${rating === "bad" ? " is-active" : ""}`;
+      // 種類はクラスで明示する。:first-of-type だと「ソース」ボタンを指してしまう。
+      good.className = `source-rate is-good${rating === "good" ? " is-active" : ""}`;
+      bad.className = `source-rate is-bad${rating === "bad" ? " is-active" : ""}`;
       good.textContent = "👍";
       bad.textContent = "👎";
       good.title = rating === "good"

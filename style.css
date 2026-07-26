@@ -456,7 +456,7 @@ body {
   opacity: 0.55;
 }
 
-.source-links button.source-rate:last-child {
+.source-links button.source-rate.is-bad {
   border-radius: 0 999px 999px 0;
 }
 
@@ -464,12 +464,12 @@ body {
   opacity: 1;
 }
 
-.source-links button.source-rate.is-active:first-of-type {
+.source-links button.source-rate.is-good.is-active {
   color: #1f6b4f;
   background: #ddf0e4;
 }
 
-.source-links button.source-rate.is-active:last-child {
+.source-links button.source-rate.is-bad.is-active {
   color: #7a3b3b;
   background: #f2dede;
 }

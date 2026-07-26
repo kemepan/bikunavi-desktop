@@ -828,7 +828,9 @@ function createWindow() {
       x: cursor.x - windowX,
       y: cursor.y - windowY
     });
-  }, 33);
+    // クリック透過中は、この間隔がそのまま「押せるようになるまでの遅れ」に
+    // なる。小さなボタン（👍/👎 は25px）を狙う時に効くので短くしておく。
+  }, 16);
   companionWindow.on("closed", () => {
     console.log("Companion window closed");
     clearTimeout(showFallbackTimer);

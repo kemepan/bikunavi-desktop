@@ -49,6 +49,7 @@ const {
 } = require("./diary-memory-utils");
 const { roundWindowCoordinate } = require("./movement-utils");
 const { isStaleIdleLine } = require("./idle-freshness-utils");
+const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   cleanChatPunctuation,
   isGreetingOnly,
@@ -3920,6 +3921,12 @@ function withInferredEmote(rawItem) {
     ? { text: rawItem, sources: [] }
     : { ...(rawItem || {}) };
   item.emote = selectChatEmote(item.emote, item.text);
+  // 「？」で終わるセリフには、キーボードを使わずワンクリックで返せる選択肢を付ける。
+  // キャラカスタム問答など、既に選択肢を持つものは上書きしない。
+  if (!item.choices?.length) {
+    const choices = suggestReplyChoices(item.text);
+    if (choices.length) item.choices = choices;
+  }
   return item;
 }
 

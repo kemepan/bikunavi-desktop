@@ -987,23 +987,23 @@ function normalizeSpeechItem(item) {
   };
 }
 
-function createChoiceButtons(question) {
-  if (!question?.choices?.length || question.kind !== "custom-question") return undefined;
+function createChoiceButtons(item) {
+  if (!item?.choices?.length) return undefined;
   const container = document.createElement("div");
   container.className = "choice-buttons";
-  for (const choice of question.choices) {
+  for (const choice of item.choices) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = choice;
     button.addEventListener("click", () => {
-      answerWithChoice(choice);
+      answerWithChoice(choice, item);
     });
     container.append(button);
   }
   return container;
 }
 
-function answerWithChoice(choice) {
+async function answerWithChoice(choice, item) {
   // 読み上げ途中でも選択肢で即答できるよう、進行中の状態を畳んでから回答する
   clearTimeout(chatterEndTimer);
   clearTimeout(hideBubbleTimer);
@@ -1013,6 +1013,11 @@ function answerWithChoice(choice) {
   isSpeaking = false;
   chatActive = true;
   bikunavi.send("companion:hover", true);
+  // 独り言の選択肢を押した時、未回答のキャラ質問が残っていると、この返事が
+  // そちらへの回答として送られてしまう。先に「あとで」扱いにして切り離す。
+  if (item?.kind !== "custom-question" && pendingCharacterCustomization) {
+    await deferUnansweredQuestion(pendingCharacterCustomization).catch(console.error);
+  }
   runChat(choice);
 }
 

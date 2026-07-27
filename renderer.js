@@ -2335,12 +2335,18 @@ async function start() {
         const noise = Math.sin(seconds * 25) * Math.sin(seconds * 7);
         mouthOpen = Math.max(mouthOpen, noise * 0.5 + 0.4);
       } else if (!isThinking && isHovered && !chatActive) {
-        // 触られた時の口。読み上げの口パクとは形から変えて、
-        // 喋っているのではなく反応しているように見せる。
-        // 口変形 -1.0〜-0.8 / 口開閉 0.5〜1.0 を行き来する。
-        const wave = (Math.sin(seconds * 9) * Math.sin(seconds * 3.5) + 1) / 2;
-        mouthForm = -1 + wave * 0.2;
-        mouthOpen = 0.5 + wave * 0.5;
+        // 触られている間は、ふだん口を閉じたままで、たまにひと呼吸ぶんだけ開く。
+        // 動きっぱなしにすると、何も言っていないのに喋って見える。
+        // 間隔は3.6秒を軸にゆらし、機械的な繰り返しにしない。
+        const cycle = 3.6 + Math.sin(seconds * 0.31) * 0.9;
+        const phase = (seconds % cycle) / cycle;
+        const openWindow = 0.16;
+        if (phase < openWindow) {
+          // 開いて閉じるまでをひと山で。開ききった時が口変形-1.0側。
+          const ease = Math.sin((phase / openWindow) * Math.PI);
+          mouthOpen = ease * 0.8;
+          mouthForm = -1 + (1 - ease) * 0.2;
+        }
       }
       core.setParameterValueById("ParamEyeLOpen", eyeLOpen);
       core.setParameterValueById("ParamEyeROpen", eyeROpen);

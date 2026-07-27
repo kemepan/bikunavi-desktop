@@ -409,16 +409,18 @@ function pickFallbackIdleLine() {
 let currentBikutanActivity;
 // 「何してるの？」への答えの種。固定例文だと同じ答えを繰り返すため、
 // プロンプトには毎回この中からランダムに2つだけ渡す
+// 実際に持っているもの（ことば帳・思い出帳・日記・評価・見出し）か、
+// 体の動きに根ざした様子だけにする。「聞いてみたいことを考える」のような
+// 中身のない作業は、聞いている側には漠然とした報告にしか聞こえない。
 const BIKUTAN_SMALL_ACTIVITIES = [
   "ことば帳を読み返す",
-  "聞いてみたいことを考える",
   "今日の話題を集める",
   "日記の下書きを眺める",
-  "お気に入りの記事を並べ替える",
-  "覚えた言葉を小さく声に出して練習する",
+  "気になると言われた記事を読み返す",
+  "見出しを並べ替えて、どれから話すか迷う",
   "背筋を伸ばして深呼吸する",
   "好きなBGMを頭の中で流す",
-  "次のポモドーロの計画を立てる",
+  "フードの向きを直す",
   "思い出帳をぱらぱらめくる"
 ];
 
@@ -428,21 +430,18 @@ function makeBikutanWorkLine(force = false) {
   const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
   const topicCount = latestTopicSources instanceof Map ? latestTopicSources.size : 0;
   const musicPreference = getMusicGenrePreference();
+  // 「今日の予定を整えています」のように、実体のない作業を言わせない。
+  // びくたんに予定管理もノートも無く、聞いている側には中身のない報告に見える。
+  // 実際に持っているデータ（ことば帳・思い出帳・日記・評価・見出し）か、
+  // 自分の見た目の話だけにする。
+  const diaryCount = getDailyDiaries().length;
+  const ratedCount = getSourceRatings().length;
   const candidateLines = [
-    "今日の予定を少し整えています。",
-    "ことば帳を読み返しています。",
-    "フォントの用語をひとつ覚え直しています。",
-    "音楽ジャンルの名前を少し覚えています。",
-    "Live2Dまわりの用語をノートにしています。",
-    "気になったことを、少しだけ勉強しています。",
-    "気になる見出しを、あとで読めるように分けています。",
     "フードの向きを、ちょっと直しています。",
-    "びくたん用の引き出しに、気になることをしまっています。",
-    "いま少しだけ、聞いてみたいことを考えています。",
-    "相棒メモを更新しています。",
+    "髪の跳ね方が気になって、少し整えていました。",
     learnedWords.length
       ? `教えてもらった言葉を${learnedWords.length}個、ことば帳で整理しています。`
-      : "ことば帳に新しいページを用意しています。",
+      : "ことば帳はまだ真っ白なので、何か教えてもらえたら嬉しいです。",
     sharedMemories.length
       ? `思い出帳を${sharedMemories.length}件分、読み返しています。`
       : "思い出帳に、今日の余白を作っています。",
@@ -453,8 +452,14 @@ function makeBikutanWorkLine(force = false) {
       ? "この前話した好みを、びくたんの中で少し育てています。"
       : "びくたん自身の好きなものも、少しずつ学んでいます。",
     topicCount
-      ? `気になる見出しを${topicCount}枚くらい、読み返しています。`
-      : "今日は気になったことを少しメモしています。"
+      ? `気になる見出しを${topicCount}件ほど並べ直しています。`
+      : "見出しがまだ集まっていないので、少し待っているところです。",
+    diaryCount
+      ? `日記が${diaryCount}日分たまりました。読み返すと、地続きだなと思います。`
+      : "日記はまだ0日分です。今日のことから残していけたらいいですね。",
+    ratedCount
+      ? `${ratedCount}件の記事に良し悪しをもらったので、次の話題選びに使っています。`
+      : "記事の👍と👎をもらえると、次から話題を選びやすくなります。"
   ];
   for (let attempt = 0; attempt < candidateLines.length; attempt += 1) {
     const text = candidateLines[bikutanWorkLineIndex % candidateLines.length];

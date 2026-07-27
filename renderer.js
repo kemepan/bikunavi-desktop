@@ -93,6 +93,8 @@ let lineHistoryActive = false;
 let currentEmote = { ...EMOTES.default };
 let motionSequence = 0;
 let blinkTimer = 0;
+// 触られている間の口の開閉。位相を積み上げて持つ（周期を揺らしても飛ばないように）
+let hoverMouthPhase = 0;
 let hideBubbleTimer;
 let chatterEndTimer;
 let responseSpeechTimer;
@@ -2337,17 +2339,25 @@ async function start() {
       } else if (!isThinking && isHovered && !chatActive) {
         // 触られている間は、ふだん口を閉じたままで、たまにひと呼吸ぶんだけ開く。
         // 動きっぱなしにすると、何も言っていないのに喋って見える。
-        // 間隔は2.2秒を軸にゆらし、機械的な繰り返しにしない。
-        const cycle = 2.2 + Math.sin(seconds * 0.37) * 0.6;
-        const phase = (seconds % cycle) / cycle;
-        const openWindow = 0.22;
-        if (phase < openWindow) {
+        //
+        // 位相は経過時間を積み上げて進める。`seconds % cycle` だと、
+        // 周期を揺らした時に余りが飛んで、開きかけで急に閉じたりする。
+        const cycleMs = 3000 + Math.sin(seconds * 0.37) * 700;
+        hoverMouthPhase = (hoverMouthPhase + pixiApp.ticker.deltaMS / cycleMs) % 1;
+        // 周期の1/4だけ開く。実時間で0.6〜0.9秒かけて開き切って閉じるので、
+        // ぱくぱくせず、ひと呼吸ぶんの動きに見える。
+        const openWindow = 0.25;
+        if (hoverMouthPhase < openWindow) {
           // 開いて閉じるまでをひと山で。開くほど口角を上げて笑顔側へ。
           // すでに笑っている表情なら、その口角を下げない。
-          const ease = Math.sin((phase / openWindow) * Math.PI);
+          const ease = Math.sin((hoverMouthPhase / openWindow) * Math.PI);
           mouthOpen = ease * 0.8;
           mouthForm = Math.max(mouthForm, ease * 0.9);
         }
+      } else {
+        // 触っていない間は閉じた状態へ戻しておく。次に触れた時、
+        // 開きかけの途中から始まらないように。
+        hoverMouthPhase = 0;
       }
       core.setParameterValueById("ParamEyeLOpen", eyeLOpen);
       core.setParameterValueById("ParamEyeROpen", eyeROpen);

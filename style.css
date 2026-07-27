@@ -456,8 +456,14 @@ body {
   opacity: 0.55;
 }
 
-.source-links button.source-rate.is-bad {
+.source-links button.source-rate.is-bad,
+.source-links button.source-rate.is-only {
   border-radius: 0 999px 999px 0;
+}
+
+/* 片方だけ残ったら、選んだ結果として少し広げる。 */
+.source-links button.source-rate.is-only {
+  width: 34px;
 }
 
 .source-links button.source-rate.is-active {
@@ -471,13 +477,13 @@ body {
 }
 
 .source-links button.source-rate.is-good.is-active {
-  color: #1f6b4f;
-  background: #ddf0e4;
+  color: #14543c;
+  background: #c9e8d5;
 }
 
 .source-links button.source-rate.is-bad.is-active {
-  color: #7a3b3b;
-  background: #f2dede;
+  color: #6d2f2f;
+  background: #efd2d2;
 }
 
 .source-links button:hover {

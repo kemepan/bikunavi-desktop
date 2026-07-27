@@ -1025,7 +1025,8 @@ async function answerWithChoice(choice, item) {
   if (item?.kind !== "custom-question" && pendingCharacterCustomization) {
     await deferUnansweredQuestion(pendingCharacterCustomization).catch(console.error);
   }
-  runChat(choice);
+  // このボタンが付いていたセリフを、そのまま返信先として渡す。
+  runChat(choice, { replyTo: item });
 }
 
 function customQuestionAnswerChannel(question) {
@@ -1761,18 +1762,22 @@ function stopThinkingSound() {
   thinkingSoundPlaying = false;
 }
 
-async function runChat(rawMessage, { uncertain = false } = {}) {
+async function runChat(rawMessage, { uncertain = false, replyTo } = {}) {
   const message = rawMessage.trim();
   if (!message || isSpeaking || isThinking) return;
   // 「考え中」表示へ切り替えると displayedLineItem が消えるため、先に返信先を固定する。
   // ホバーで復元した古い独り言でも、入力欄から送った場合は明示的な返信として扱う。
   const lastLine = lineHistory[lineHistory.length - 1];
   const latestChatEntry = chatEntries[chatEntries.length - 1];
-  const pickedContext = pickConversationContext({
-    displayedLineItem,
-    lastAmbientLine: lastLine,
-    latestChatEntry
-  });
+  // 選択肢ボタンは、どのセリフに紐づくかを押した時点で持っている。
+  // 推測に頼ると、直前の会話が履歴に残っている時にそちらへ引っ張られる。
+  const pickedContext = String(replyTo?.text || "").trim()
+    ? { item: replyTo, direct: true }
+    : pickConversationContext({
+      displayedLineItem,
+      lastAmbientLine: lastLine,
+      latestChatEntry
+    });
   const replyContextItem = pickedContext.item
     ? normalizeSpeechItem(pickedContext.item)
     : undefined;
@@ -1780,6 +1785,10 @@ async function runChat(rawMessage, { uncertain = false } = {}) {
   const contextSources = replyContextItem?.sources || [];
   const contextKind = replyContextItem?.kind || "";
   const isDirectReply = pickedContext.direct;
+  console.log(
+    `Chat context: ${isDirectReply ? "直接返信" : contextKind || "文脈なし"}` +
+    (contextLine ? ` ← 「${contextLine.slice(0, 28)}」` : "")
+  );
   stopVoiceInput();
   chatDraft = "";
   chatActive = true;

@@ -2330,20 +2330,23 @@ async function start() {
       const eyeLOpen = eyeLSmile <= 0.5 && blinking ? 0 : eyeLOpenBase;
       const eyeROpen = eyeRSmile <= 0.5 && blinking ? 0 : eyeROpenBase;
       let mouthOpen = currentEmote.mouthOpen;
+      let mouthForm = currentEmote.mouthForm;
       if (isSpeaking) {
         const noise = Math.sin(seconds * 25) * Math.sin(seconds * 7);
         mouthOpen = Math.max(mouthOpen, noise * 0.5 + 0.4);
       } else if (!isThinking && isHovered && !chatActive) {
-        // ホバーへの反応。読み上げと同じ振幅だと喋っているように見えるので、
-        // 息づかい程度に留める。
-        const noise = Math.sin(seconds * 9) * Math.sin(seconds * 3.5);
-        mouthOpen = Math.max(mouthOpen, noise * 0.07 + 0.07);
+        // 触られた時の口。読み上げの口パクとは形から変えて、
+        // 喋っているのではなく反応しているように見せる。
+        // 口変形 -1.0〜-0.8 / 口開閉 0.5〜1.0 を行き来する。
+        const wave = (Math.sin(seconds * 9) * Math.sin(seconds * 3.5) + 1) / 2;
+        mouthForm = -1 + wave * 0.2;
+        mouthOpen = 0.5 + wave * 0.5;
       }
       core.setParameterValueById("ParamEyeLOpen", eyeLOpen);
       core.setParameterValueById("ParamEyeROpen", eyeROpen);
       core.setParameterValueById("ParamEyeLSmile", eyeLSmile);
       core.setParameterValueById("ParamEyeRSmile", eyeRSmile);
-      core.setParameterValueById("ParamMouthForm", currentEmote.mouthForm);
+      core.setParameterValueById("ParamMouthForm", mouthForm);
       core.setParameterValueById("ParamMouthOpenY", mouthOpen);
     });
 

@@ -29,8 +29,9 @@ Live2Dキャラクター「びくたん」をmacOSデスクトップに常駐さ
 - サイト版と同じLive2D物理演算、表情、モーション、呼吸、瞬き、視線追従
 - 自由入力のAIコンシェルジュ会話
 - 会話入力欄のマイクボタンによる音声入力
-  - `getUserMedia`で録音し、WAV化してローカルSTTへ渡す構成
-  - `whisper.cpp`互換バイナリとモデルが未設定の場合は録音のみ行い、文字起こしは保留
+  - `getUserMedia`で録音し、WAV化して音声認識へ渡す構成
+  - macOSではApple Speechを優先し、使えない場合は同梱の`whisper.cpp`互換バイナリへ切り替え
+  - マイクボタンの長押しで「ハンズフリー会話」。声をかけると自動で聞き取り、読み上げ中や回答の生成中でも割り込めます
 - `CHARACTER_SHEET.md` に基づくキャラクター性・口調
 - `CHARACTER_QUESTIONS.json` の問答集から時々質問し、回答を会話・自動セリフの個性へ反映
 - メニューバーの「キャラカスタム」から質問を今すぐ呼び出し可能
@@ -112,7 +113,7 @@ npm run package:universal  # Intel + Apple Silicon 両対応（配布向け）
 
 `dist/びくたん-darwin-arm64/`（または `-universal/`）に `びくたん.app` が生成されます。ad-hoc署名済みなので、この Mac 上ではダブルクリックで起動できます（他の Mac に配布する場合は正式な署名・公証が必要）。
 
-配布ZIPにはApple Silicon／Intel両方の音声認識バイナリを同梱します。ソースから自分でビルドする場合、`native/stt/<platform>-<arch>/whisper-cli` が無ければ音声入力だけ無効になります（`brew install whisper-cpp` でも代替可）。
+配布ZIPにはApple Silicon／Intel両方の音声認識バイナリと、Apple Speechを呼ぶ補助アプリ（`native/speech-recognizer.app`）を同梱します。ソースから自分でビルドする場合、`npm run build-speech-helper` で補助アプリを作れます。`native/stt/<platform>-<arch>/whisper-cli` が無くてもApple Speechが使える環境なら音声入力は動きます（`brew install whisper-cpp` でも代替可）。
 
 ## セキュリティ構成
 
@@ -129,7 +130,9 @@ npm run package:universal  # Intel + Apple Silicon 両対応（配布向け）
 
 ## 保存データと外部通信
 
-- 音声入力は同梱のWhisperでローカル処理し、録音音声を外部へ送信しません。
+- 音声入力はmacOSの音声認識（Apple Speech）を優先します。端末内認識に対応した環境では端末内だけで処理しますが、**対応していない環境ではmacOSがAppleのサーバーへ音声を送ることがあります**。端末内で完結させたい場合は環境変数 `BIKUNAVI_STT_ENGINE=whisper` を指定してください（同梱のWhisperだけを使い、録音音声を外部へ送りません）。
+- 録音した音声ファイルは、文字起こしの成否にかかわらず処理後に削除します。
+- ニュース・情報への「👍 / 👎」はこのMacの `state.json` にだけ保存し、外部へ送りません。次に集める話題の傾向としてのみ使います。
 - AI会話や自動セリフを利用すると、直近の会話、キャラクター設定への回答、ことば帳・思い出帳、取得済みニュース見出し等が、選択したAIサービスへプロンプトとして送られる場合があります。保存済み日記は初期状態では送らず、「日記を会話AIにも覚えさせる（送信）」をONにした場合だけ使います。
 - クリップボード内容は、クリップボードについて明示的に質問した場合だけAIへ渡します。
 - Claude APIキーはmacOSの安全な保存機能（Keychain連動）で暗号化し、Anthropic APIの認証以外には使用しません。暗号化を利用できない環境では安全のためAPIキーを保存しない運用を推奨します。

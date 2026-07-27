@@ -163,7 +163,7 @@ body {
   border-radius: 50%;
   box-shadow: 0 6px 12px var(--jelly-shadow);
   filter: saturate(1.06) brightness(1.025);
-  animation: pomodoro-jelly-wobble 520ms cubic-bezier(.2, .85, .2, 1) both;
+  animation: jelly-wobble 520ms cubic-bezier(.2, .85, .2, 1) both;
 }
 
 #pomodoro-quick button:focus-visible {
@@ -184,7 +184,7 @@ body {
   transition-duration: 90ms;
 }
 
-@keyframes pomodoro-jelly-wobble {
+@keyframes jelly-wobble {
   0% { transform: translateY(0) scale(1); }
   34% { transform: translateY(-3px) scale(1.12, 0.9) rotate(-1.2deg); }
   62% { transform: translateY(-1px) scale(0.98, 1.09) rotate(0.8deg); }
@@ -444,34 +444,50 @@ body {
   border-radius: 999px 0 0 999px;
 }
 
-/* グッド／バッド。狭い吹き出しに2つ並ぶので、幅を詰めて中央のボタンだけ
-   角丸を落とし、3つでひと続きに見せる。 */
+/* グッド／バッド。ポモドーロのクイックボタンと同じジェリー質感に揃える。
+   絵文字は色を変えられないので、下地の色と大きさで見分ける。 */
 .source-links button.source-rate {
+  --jelly-fill: #eceaf0;
+  --jelly-edge: rgb(80 55 100 / 16%);
+  --jelly-shadow: rgb(73 40 37 / 14%);
   flex: none;
-  width: 25px;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  margin-left: 4px;
   padding: 0;
-  border-left: 0;
-  border-radius: 0;
-  color: #5c5c66;
-  background: #f2f2f5;
-  font-size: 14px;
-  font-weight: 700;
+  border: 1px solid var(--jelly-edge);
+  border-radius: 50%;
+  background: var(--jelly-fill);
+  box-shadow: 0 2px 5px var(--jelly-shadow);
+  font-size: 13px;
   line-height: 1;
-  opacity: 0.7;
+  opacity: 0.62;
+  isolation: isolate;
+  transform: translateY(0) scale(1);
+  transform-origin: center 70%;
+  transition:
+    box-shadow 220ms ease,
+    opacity 180ms ease,
+    filter 180ms ease,
+    transform 420ms cubic-bezier(.2, .9, .2, 1);
 }
 
-.source-links button.source-rate.is-bad,
-.source-links button.source-rate.is-only {
-  border-radius: 0 999px 999px 0;
+.source-links button.source-rate.is-good {
+  --jelly-fill: #cfeedb;
+  --jelly-edge: rgb(50 112 72 / 20%);
+  --jelly-shadow: rgb(48 101 65 / 20%);
 }
 
-/* 片方だけ残ったら、選んだ結果として少し広げる。 */
-.source-links button.source-rate.is-only {
-  width: 34px;
+.source-links button.source-rate.is-bad {
+  --jelly-fill: #f4d6d6;
+  --jelly-edge: rgb(133 67 67 / 20%);
+  --jelly-shadow: rgb(108 53 53 / 20%);
 }
 
 .source-links button.source-rate.is-active {
   opacity: 1;
+  box-shadow: 0 3px 8px var(--jelly-shadow);
 }
 
 /* 押したあとは確定表示。押せなくなっても薄くしない（選んだ結果なので）。 */
@@ -480,14 +496,18 @@ body {
   opacity: 1;
 }
 
-.source-links button.source-rate.is-good.is-active {
-  color: #0f4a33;
-  background: #bfe6cd;
+.source-links button.source-rate:hover:not(:disabled),
+.source-links button.source-rate:focus-visible:not(:disabled) {
+  outline: none;
+  opacity: 1;
+  box-shadow: 0 5px 11px var(--jelly-shadow);
+  filter: saturate(1.08) brightness(1.03);
+  animation: jelly-wobble 520ms cubic-bezier(.2, .85, .2, 1) both;
 }
 
-.source-links button.source-rate.is-bad.is-active {
-  color: #7c2a2a;
-  background: #eccccc;
+.source-links button.source-rate:active:not(:disabled) {
+  box-shadow: 0 2px 5px var(--jelly-shadow);
+  transform: translateY(1px) scale(0.94, 1.04);
 }
 
 .source-links button:hover {
@@ -753,5 +773,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chat-form button.voice-input-button.is-handsfree::after {
     animation: none;
+  }
+
+  /* 評価ボタンもポモドーロと同じ扱いにする（跳ねずに色だけ変える）。 */
+  .source-links button.source-rate {
+    transition: opacity 120ms ease, box-shadow 120ms ease;
+  }
+
+  .source-links button.source-rate:hover:not(:disabled),
+  .source-links button.source-rate:focus-visible:not(:disabled) {
+    animation: none;
+    transform: none;
   }
 }

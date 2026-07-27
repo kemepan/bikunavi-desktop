@@ -1958,17 +1958,26 @@ function resumeAmbientState() {
 // 表示の演出なのでMacのローカル時刻で足りる（会話の時刻感覚はmain側がJSTで持つ）。
 const SLEEPY_FROM_HOUR = 20;
 const SLEEPY_UNTIL_HOUR = 5;
+// 誰にも触られない時間が続くと、だんだんうとうとしてくる。
+// 「待機だから薄い」ではなく「眠ってしまったから薄い」に見せるための時間。
+const DROWSY_FULL_MS = 150000;
+// 夜はこの倍だけ早く眠くなる。
+const DROWSY_NIGHT_SPEED = 2.4;
 
+let lastAwakeAt = Date.now();
+
+// 0（ぱっちり）〜1（すっかり眠い）。話しかけられていれば常に0。
 function getSleepiness() {
-  if (isHovered || dragging || chatActive || isThinking || isSpeaking) return 0;
+  const busy = isHovered || dragging || chatActive || isThinking ||
+    isSpeaking || lineHistoryActive || pomodoroState.active;
+  if (busy) {
+    lastAwakeAt = Date.now();
+    return 0;
+  }
   const hour = new Date().getHours();
-  const late = hour >= SLEEPY_FROM_HOUR || hour < SLEEPY_UNTIL_HOUR;
-  if (!late) return 0;
-  // 夜が深いほど眠くなる。20時で軽く、24〜3時あたりで最も眠い。
-  const hoursSinceStart = hour >= SLEEPY_FROM_HOUR
-    ? hour - SLEEPY_FROM_HOUR
-    : hour + (24 - SLEEPY_FROM_HOUR);
-  return Math.min(1, 0.35 + hoursSinceStart * 0.12);
+  const night = hour >= SLEEPY_FROM_HOUR || hour < SLEEPY_UNTIL_HOUR;
+  const speed = night ? DROWSY_NIGHT_SPEED : 1;
+  return Math.min(1, (Date.now() - lastAwakeAt) * speed / DROWSY_FULL_MS);
 }
 
 // 待機中だけキャラクターを薄くする。吹き出し・会話・読み上げ中は元に戻す。
@@ -1976,10 +1985,14 @@ function getSleepiness() {
 let dimWhenIdleEnabled = false;
 let appliedCharacterOpacity;
 
-function updateCharacterOpacity() {
-  const busy = isHovered || dragging || chatActive || isThinking ||
-    isSpeaking || lineHistoryActive || pomodoroState.active;
-  const next = dimWhenIdleEnabled && !busy ? DIM_IDLE_OPACITY : 1;
+function updateCharacterOpacity(sleepiness = getSleepiness()) {
+  // 眠りに合わせて薄くする。うとうとし始めた時点から少しずつ薄れ、
+  // 眠りきった時にいちばん薄くなる。話しかければ即座に戻る。
+  const raw = dimWhenIdleEnabled
+    ? 1 - sleepiness * (1 - DIM_IDLE_OPACITY)
+    : 1;
+  // 毎フレームDOMを触らないよう、見た目に差が出る幅で丸める。
+  const next = Math.round(raw * 20) / 20;
   if (next === appliedCharacterOpacity) return;
   appliedCharacterOpacity = next;
   canvas.style.opacity = String(next);
@@ -2244,7 +2257,6 @@ async function start() {
       const seconds = performance.now() / 1000;
       updatePomodoroQuickVisibility();
       updateSoundToggle();
-      updateCharacterOpacity();
       const danceActive =
         musicPlaying && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking;
       const idleGazeActive =
@@ -2286,7 +2298,9 @@ async function start() {
       // 聞く・考える・話す・待機の動きを約0.26秒で混ぜ、状態切替時のカクつきを抑える。
       // 先行読み上げ中は、回答生成が続いていても「話す」を最優先する。
       updateInteractionMotion(core, seconds, pixiApp.ticker.deltaMS, danceActive || dragging);
+      // 眠さは副作用（起きた時刻の更新）を持つので、1フレームに1回だけ求める。
       const sleepiness = getSleepiness();
+      updateCharacterOpacity(sleepiness);
       blinkTimer -= pixiApp.ticker.deltaMS;
       // 眠い時はまばたきの間隔を詰め、閉じている時間も長くする。
       if (blinkTimer <= 0) {

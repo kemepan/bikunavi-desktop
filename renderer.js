@@ -2337,15 +2337,16 @@ async function start() {
       } else if (!isThinking && isHovered && !chatActive) {
         // 触られている間は、ふだん口を閉じたままで、たまにひと呼吸ぶんだけ開く。
         // 動きっぱなしにすると、何も言っていないのに喋って見える。
-        // 間隔は3.6秒を軸にゆらし、機械的な繰り返しにしない。
-        const cycle = 3.6 + Math.sin(seconds * 0.31) * 0.9;
+        // 間隔は2.2秒を軸にゆらし、機械的な繰り返しにしない。
+        const cycle = 2.2 + Math.sin(seconds * 0.37) * 0.6;
         const phase = (seconds % cycle) / cycle;
-        const openWindow = 0.16;
+        const openWindow = 0.22;
         if (phase < openWindow) {
-          // 開いて閉じるまでをひと山で。開ききった時が口変形-1.0側。
+          // 開いて閉じるまでをひと山で。開くほど口角を上げて笑顔側へ。
+          // すでに笑っている表情なら、その口角を下げない。
           const ease = Math.sin((phase / openWindow) * Math.PI);
           mouthOpen = ease * 0.8;
-          mouthForm = -1 + (1 - ease) * 0.2;
+          mouthForm = Math.max(mouthForm, ease * 0.9);
         }
       }
       core.setParameterValueById("ParamEyeLOpen", eyeLOpen);

@@ -1185,8 +1185,10 @@ function createSourceLinks(sources) {
       // 四角く切れたままになり、選んだ結果に見えない。
       good.className = `source-rate is-good${rating === "good" ? " is-active is-only" : ""}`;
       bad.className = `source-rate is-bad${rating === "bad" ? " is-active is-only" : ""}`;
-      good.textContent = "👍";
-      bad.textContent = "👎";
+      // 絵文字はグリフの色が固定で、薄い背景に沈んで見えない。
+      // 記号ならCSSで色を付けられる（◎＝良い／✕＝だめ は日本語圏で通じる）。
+      good.textContent = "◎";
+      bad.textContent = "✕";
       good.hidden = decided && rating !== "good";
       bad.hidden = decided && rating !== "bad";
       good.disabled = decided;

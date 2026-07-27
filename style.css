@@ -452,10 +452,12 @@ body {
   padding: 0;
   border-left: 0;
   border-radius: 0;
-  color: #6b6b74;
+  color: #5c5c66;
   background: #f2f2f5;
-  font-size: 12px;
-  opacity: 0.55;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.7;
 }
 
 .source-links button.source-rate.is-bad,
@@ -479,13 +481,13 @@ body {
 }
 
 .source-links button.source-rate.is-good.is-active {
-  color: #14543c;
-  background: #c9e8d5;
+  color: #0f4a33;
+  background: #bfe6cd;
 }
 
 .source-links button.source-rate.is-bad.is-active {
-  color: #6d2f2f;
-  background: #efd2d2;
+  color: #7c2a2a;
+  background: #eccccc;
 }
 
 .source-links button:hover {

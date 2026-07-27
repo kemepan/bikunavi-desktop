@@ -1953,6 +1953,24 @@ function resumeAmbientState() {
   }
 }
 
+// 夜更けと明け方は眠そうにする。待機している時だけで、話しかけられたら
+// 普通の顔に戻る（眠そうなまま応対されると素っ気なく見えるため）。
+// 表示の演出なのでMacのローカル時刻で足りる（会話の時刻感覚はmain側がJSTで持つ）。
+const SLEEPY_FROM_HOUR = 20;
+const SLEEPY_UNTIL_HOUR = 5;
+
+function getSleepiness() {
+  if (isHovered || dragging || chatActive || isThinking || isSpeaking) return 0;
+  const hour = new Date().getHours();
+  const late = hour >= SLEEPY_FROM_HOUR || hour < SLEEPY_UNTIL_HOUR;
+  if (!late) return 0;
+  // 夜が深いほど眠くなる。20時で軽く、24〜3時あたりで最も眠い。
+  const hoursSinceStart = hour >= SLEEPY_FROM_HOUR
+    ? hour - SLEEPY_FROM_HOUR
+    : hour + (24 - SLEEPY_FROM_HOUR);
+  return Math.min(1, 0.35 + hoursSinceStart * 0.12);
+}
+
 // 待機中だけキャラクターを薄くする。吹き出し・会話・読み上げ中は元に戻す。
 // canvasへCSSで掛ける。ウィンドウのsetOpacityだと吹き出しまで薄くなる。
 let dimWhenIdleEnabled = false;
@@ -2268,13 +2286,19 @@ async function start() {
       // 聞く・考える・話す・待機の動きを約0.26秒で混ぜ、状態切替時のカクつきを抑える。
       // 先行読み上げ中は、回答生成が続いていても「話す」を最優先する。
       updateInteractionMotion(core, seconds, pixiApp.ticker.deltaMS, danceActive || dragging);
+      const sleepiness = getSleepiness();
       blinkTimer -= pixiApp.ticker.deltaMS;
-      if (blinkTimer <= 0) blinkTimer = Math.random() * 3000 + 2000;
+      // 眠い時はまばたきの間隔を詰め、閉じている時間も長くする。
+      if (blinkTimer <= 0) {
+        blinkTimer = (Math.random() * 3000 + 2000) * (1 - sleepiness * 0.45);
+      }
       const eyeLSmile = currentEmote.eyeLSmile ?? currentEmote.eyeSmile;
       const eyeRSmile = currentEmote.eyeRSmile ?? currentEmote.eyeSmile;
-      const eyeLOpenBase = currentEmote.eyeLOpen ?? currentEmote.eyeOpen;
-      const eyeROpenBase = currentEmote.eyeROpen ?? currentEmote.eyeOpen;
-      const blinking = blinkTimer < 150;
+      // まぶたを少し下ろす。完全には閉じない（寝落ちして見えないように）。
+      const sleepyEyeScale = 1 - sleepiness * 0.4;
+      const eyeLOpenBase = (currentEmote.eyeLOpen ?? currentEmote.eyeOpen) * sleepyEyeScale;
+      const eyeROpenBase = (currentEmote.eyeROpen ?? currentEmote.eyeOpen) * sleepyEyeScale;
+      const blinking = blinkTimer < 150 + sleepiness * 130;
       const eyeLOpen = eyeLSmile <= 0.5 && blinking ? 0 : eyeLOpenBase;
       const eyeROpen = eyeRSmile <= 0.5 && blinking ? 0 : eyeROpenBase;
       let mouthOpen = currentEmote.mouthOpen;

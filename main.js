@@ -1529,7 +1529,7 @@ function buildTrayMenu() {
               })()
             },
             {
-              label: "回答は会話と自動セリフへ反映されます",
+              label: "教えてくれたことは、会話や独り言に出てきます",
               enabled: false
             }
           ]
@@ -1571,7 +1571,8 @@ function buildTrayMenu() {
           label: `日記（${getDailyDiaries().length}日）`,
           submenu: [
             {
-              label: "今日の日記をAIでまとめる",
+              // AIへ今日の会話を送って要約させる操作なので、そこは隠さない。
+              label: "今日のことを日記に残す（AIがまとめます）",
               click: () => {
                 saveTodayDiary().catch((error) => {
                   console.error("Diary save failed:", error);
@@ -1589,7 +1590,7 @@ function buildTrayMenu() {
             },
             { type: "separator" },
             {
-              label: "日記を会話AIにも覚えさせる（送信）",
+              label: "日記の話もびくたんにする（外部のAIへ送ります）",
               type: "checkbox",
               checked: persistedState.diaryMemoryAiEnabled === true,
               click: (item) => {
@@ -1602,12 +1603,12 @@ function buildTrayMenu() {
               }
             },
             {
-              label: "OFFでも朝の振り返りはMac内だけで行います",
+              label: "オフのままでも、朝の振り返りはこのMacの中だけでします",
               enabled: false
             },
             { type: "separator" },
             {
-              label: "日記は最大14日分だけ保存します",
+              label: "日記は14日分だけ残ります",
               enabled: false
             }
           ]

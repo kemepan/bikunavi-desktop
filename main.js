@@ -120,6 +120,7 @@ const DEFAULT_STATE = {
   soundMuted: false,
   handsFreeEnabled: false,
   clickThroughEnabled: false,
+  dimWhenIdleEnabled: false,
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
@@ -203,6 +204,7 @@ function collectState() {
   persistedState.soundMuted = soundMuted;
   persistedState.handsFreeEnabled = handsFreeEnabled;
   persistedState.clickThroughEnabled = clickThroughEnabled;
+  persistedState.dimWhenIdleEnabled = dimWhenIdleEnabled;
   persistedState.thinkingSoundEnabled = thinkingSoundEnabled;
   persistedState.fortuneAutoEnabled = fortuneAutoEnabled;
   persistedState.autoMoveEnabled = autoMoveEnabled;
@@ -257,6 +259,8 @@ let soundMuted = Boolean(persistedState.soundMuted);
 let handsFreeEnabled = Boolean(persistedState.handsFreeEnabled);
 // びくたん本体・吹き出し以外の透明な部分でクリックを後ろのウィンドウへ通す。
 let clickThroughEnabled = Boolean(persistedState.clickThroughEnabled);
+// 待機中だけキャラクターを薄くする。吹き出しは読めないと困るので薄くしない。
+let dimWhenIdleEnabled = Boolean(persistedState.dimWhenIdleEnabled);
 let thinkingSoundEnabled = persistedState.thinkingSoundEnabled !== false;
 let autoMoveEnabled = Boolean(persistedState.autoMoveEnabled);
 let musicReactEnabled = Boolean(persistedState.musicReactEnabled);
@@ -1256,6 +1260,13 @@ function applyMouseIgnore(ignore) {
   else companionWindow.setIgnoreMouseEvents(false);
 }
 
+function setDimWhenIdleEnabled(enabled) {
+  dimWhenIdleEnabled = Boolean(enabled);
+  companionWindow?.webContents.send("companion:settings-changed", getRendererSettings());
+  tray?.setContextMenu(buildTrayMenu());
+  saveStateSoon();
+}
+
 function setClickThroughEnabled(enabled) {
   clickThroughEnabled = Boolean(enabled);
   // OFFにしたらウィンドウ全体で必ずクリックを受け取る状態へ戻す。
@@ -1870,6 +1881,12 @@ function buildTrayMenu() {
           type: "checkbox",
           checked: clickThroughEnabled,
           click: (item) => setClickThroughEnabled(item.checked)
+        },
+        {
+          label: "待機中はうすく表示",
+          type: "checkbox",
+          checked: dimWhenIdleEnabled,
+          click: (item) => setDimWhenIdleEnabled(item.checked)
         },
         { type: "separator" },
         { label: "サイズ", type: "header" },
@@ -5240,7 +5257,8 @@ function getRendererSettings() {
     soundMuted,
     speechVolume,
     handsFreeEnabled,
-    clickThroughEnabled
+    clickThroughEnabled,
+    dimWhenIdleEnabled
   };
 }
 

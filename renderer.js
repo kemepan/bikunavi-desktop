@@ -163,6 +163,9 @@ const THREAD_FOLLOW_UP_MS = 3500;
 const MIC_LONG_PRESS_MS = 600;
 // 聞き取りの確信度のしきい値は vad-utils.js の classifyTranscriptConfidence が持つ。
 // 較正は out.log の「Hands-free transcript ignore / confirm / trusted」を見て行う。
+// 待機中にキャラクターを薄くする濃さ。0だと居なくなったように見えるので、
+// 気配は残る程度にする。
+const DIM_IDLE_OPACITY = 0.4;
 // 惜しい音のログを間引く間隔。
 const HANDS_FREE_NEAR_MISS_LOG_MS = 5000;
 // 取りこぼしは起きた瞬間に状態つきで残したいが、詰まっている間は連続するので
@@ -1961,6 +1964,25 @@ function resumeAmbientState() {
   }
 }
 
+// 待機中だけキャラクターを薄くする。吹き出し・会話・読み上げ中は元に戻す。
+// canvasへCSSで掛ける。ウィンドウのsetOpacityだと吹き出しまで薄くなる。
+let dimWhenIdleEnabled = false;
+let appliedCharacterOpacity;
+
+function updateCharacterOpacity() {
+  const busy = isHovered || dragging || chatActive || isThinking ||
+    isSpeaking || lineHistoryActive || pomodoroState.active;
+  const next = dimWhenIdleEnabled && !busy ? DIM_IDLE_OPACITY : 1;
+  if (next === appliedCharacterOpacity) return;
+  appliedCharacterOpacity = next;
+  canvas.style.opacity = String(next);
+}
+
+function applyDimWhenIdleSetting(enabled) {
+  dimWhenIdleEnabled = Boolean(enabled);
+  updateCharacterOpacity();
+}
+
 // クリック透過モード中、カーソルがびくたん本体・吹き出し・操作UIの上に
 // 来た時だけウィンドウがクリックを受け取り、それ以外は後ろへ通す。
 // 当たり判定は companion:cursor（mainのポーリング）で毎フレーム更新される。
@@ -2215,6 +2237,7 @@ async function start() {
       const seconds = performance.now() / 1000;
       updatePomodoroQuickVisibility();
       updateSoundToggle();
+      updateCharacterOpacity();
       const danceActive =
         musicPlaying && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking;
       const idleGazeActive =
@@ -2299,6 +2322,9 @@ async function start() {
       }
       if (typeof settings?.clickThroughEnabled === "boolean") {
         applyClickThroughSetting(settings.clickThroughEnabled);
+      }
+      if (typeof settings?.dimWhenIdleEnabled === "boolean") {
+        applyDimWhenIdleSetting(settings.dimWhenIdleEnabled);
       }
     } catch (error) {
       console.error("Settings load failed:", error);
@@ -2608,6 +2634,9 @@ bikunavi.on("companion:settings-changed", (settings) => {
   }
   if (typeof settings?.clickThroughEnabled === "boolean") {
     applyClickThroughSetting(settings.clickThroughEnabled);
+  }
+  if (typeof settings?.dimWhenIdleEnabled === "boolean") {
+    applyDimWhenIdleSetting(settings.dimWhenIdleEnabled);
   }
 });
 

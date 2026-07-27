@@ -34,6 +34,8 @@ body {
   width: 100%;
   height: 100%;
   cursor: grab;
+  /* 待機中に薄くする時、切り替わりが唐突だと視界の端で気になる。 */
+  transition: opacity 520ms ease;
 }
 
 #stage:active {

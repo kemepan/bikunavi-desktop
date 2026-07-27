@@ -56,5 +56,22 @@
     };
   }
 
-  return { extractLearnedTerm, extractLearnedTerms, createLearnedTermLimiter };
+  // 教わった語を2つ選ぶ。組み合わせて話してもらうためのお題。
+  // 選ぶだけで、どのくらいの頻度で使うかは呼び出し側が決める。
+  function pickTermPair(terms, random = Math.random) {
+    const list = [...new Set((Array.isArray(terms) ? terms : []).filter(Boolean))];
+    if (list.length < 2) return [];
+    const first = Math.floor(random() * list.length);
+    // 2つ目は1つ目を除いた中から選ぶ。同じ語のペアにしない。
+    let second = Math.floor(random() * (list.length - 1));
+    if (second >= first) second += 1;
+    return [list[first], list[second]];
+  }
+
+  return {
+    extractLearnedTerm,
+    extractLearnedTerms,
+    createLearnedTermLimiter,
+    pickTermPair
+  };
 });

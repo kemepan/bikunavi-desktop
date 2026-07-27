@@ -64,3 +64,29 @@ assert.deepEqual(extractLearnedTerms(undefined), []);
 }
 
 console.log("idle-vocabulary-utils: OK");
+
+// 教わった語を2つ選んで、組み合わせのお題にする。
+{
+  const { pickTermPair } = require("../idle-vocabulary-utils");
+
+  // 語が足りなければ何も返さない。
+  assert.deepEqual(pickTermPair([]), []);
+  assert.deepEqual(pickTermPair(["お昼寝"]), []);
+  assert.deepEqual(pickTermPair(undefined), []);
+
+  // 同じ語のペアは作らない。乱数がどう転んでも2つは異なる。
+  const terms = ["お昼寝", "カフェラテ", "エモい"];
+  for (const value of [0, 0.34, 0.5, 0.67, 0.99]) {
+    const pair = pickTermPair(terms, () => value);
+    assert.equal(pair.length, 2, `value=${value}`);
+    assert.notEqual(pair[0], pair[1], `value=${value}`);
+    assert.ok(terms.includes(pair[0]) && terms.includes(pair[1]));
+  }
+
+  // 重複を渡しても、同じ語同士にならない。
+  assert.deepEqual(pickTermPair(["お昼寝", "お昼寝"]), []);
+  const dup = pickTermPair(["お昼寝", "お昼寝", "カフェラテ"], () => 0);
+  assert.notEqual(dup[0], dup[1]);
+}
+
+console.log("idle-vocabulary-utils（組み合わせのお題）: OK");

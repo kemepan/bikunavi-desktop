@@ -52,7 +52,8 @@ const { isStaleIdleLine } = require("./idle-freshness-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
-  extractLearnedTerms
+  extractLearnedTerms,
+  pickTermPair
 } = require("./idle-vocabulary-utils");
 const {
   applyRating,
@@ -4539,6 +4540,10 @@ async function generateIdleLines() {
     const ratedTopicPreference = formatTopicPreference(
       summarizeTopicPreference(getSourceRatings())
     );
+    // 教わった言葉を2つ結びつけて話す回。毎回やるとしつこいので、たまにだけ。
+    // 語が2つ以上ある時しか成立しない。
+    const learnedTerms = extractLearnedTerms(getGrowthData().learnedWords);
+    const termPair = Math.random() < 0.45 ? pickTermPair(learnedTerms) : [];
     const idleNewsMixInstruction = getIdleNewsMixInstruction();
     const preferredUserName = getPreferredUserName();
     const relationshipMemory = formatRelationshipMemory();
@@ -4594,6 +4599,11 @@ async function generateIdleLines() {
       CAPABILITY_BOUNDARY_PROMPT,
       "重要: あなたはユーザーの画面・手元・作業内容・成果物を見ることはできません。見て言っているかのような発言（例『その配色いいですね』『さっきの手さばき速い』『集中してますね』『机の上が〜』）は絶対にしないでください。見えないことを見たフリするのは禁止です。",
       "短い通常セリフは、あなた自身の独り言にしてください。中身は、あなた自身の興味やつぶやき（Live2D・3D・リギング・道具・ものづくりのあるある）、知りたいことを考える様子、ふと浮かんだ小ネタ、コーヒー休憩や音楽の好み、相手への素直な質問（例『いま何を作ってるところですか？』）など。相手の状況を決めつけないでください。",
+      termPair.length === 2
+        ? `20個のうち1つは、教わった言葉「${termPair[0]}」と「${termPair[1]}」を両方使った独り言にしてください。` +
+          "言葉の意味を説明せず、二つが自然につながる場面や思いつきとして話してください。" +
+          "無理に結びつかない時は、そのうち一方だけを使った自然なセリフで構いません。"
+        : "",
       "必須: 20個のうち3〜4か所を、ひとつの話題を2〜4行かけて話す「続きもの」にしてください。`cont` 行が1つも無い出力は不正解です。続きの行は必ず直前の行のすぐ次に置いてください。続きもの以外の行は、今までどおり1個ごとに話題を変えてください。",
       "続きものは、考えが進んでいく独り言にしてください。前の行を言い直したり要約したりせず、そこから一歩進んだこと（気づき、脱線、思い出したこと、やっぱりこうかも、という揺り戻し）を話してください。",
       "続きものの2行目以降は、それ単体で読んでも不自然でない長さと内容にしてください。『さっきの件ですが』のように前を指す言い方は、たまに使う程度にしてください。",
@@ -4729,6 +4739,14 @@ async function generateIdleLines() {
         queuedLines.push(...thread);
       }
       // ことば帳の語の使われ方は、体感でなく数で見られるようにしておく。
+      if (termPair.length === 2) {
+        const combined = usableThreads.flat().filter((line) => (
+          line.text.includes(termPair[0]) && line.text.includes(termPair[1])
+        )).length;
+        console.log(
+          `Idle vocabulary pair: ${termPair.join(" × ")} → ${combined}行で成立`
+        );
+      }
       const termUsage = termLimiter.describeUsage();
       if (termUsage || termLimited) {
         console.log(

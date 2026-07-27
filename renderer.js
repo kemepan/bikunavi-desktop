@@ -879,24 +879,6 @@ function updatePomodoroQuickVisibility() {
 }
 
 let soundToggleMutedRendered;
-// びくたんアイコン（assets/ui/sound-on.png / sound-off.png）が用意されていれば
-// 絵文字の代わりに使う。片方だけ置いた場合はその状態のみ画像、残りは🔊/🔇のまま。
-const soundToggleImageReady = { on: false, off: false };
-(function probeSoundToggleImages() {
-  const targets = [
-    ["on", "assets/ui/sound-on.png"],
-    ["off", "assets/ui/sound-off.png"]
-  ];
-  for (const [state, src] of targets) {
-    const probe = new Image();
-    probe.onload = () => {
-      soundToggleImageReady[state] = true;
-      soundToggleMutedRendered = undefined;
-      updateSoundToggle();
-    };
-    probe.src = src;
-  }
-})();
 
 function updateSoundToggle() {
   const visible = Boolean(isHovered && !dragging);
@@ -908,13 +890,13 @@ function updateSoundToggle() {
   // 毎フレーム呼ばれるため、ミュート表示は値が変わった時だけDOMを触る
   if (soundMuted === soundToggleMutedRendered) return;
   soundToggleMutedRendered = soundMuted;
-  const useImage = soundMuted ? soundToggleImageReady.off : soundToggleImageReady.on;
-  // ミュート切替に合わせて、びくたん本人のマスク表情も着脱する
+  // ミュート切替に合わせて、びくたん本人のマスク表情も着脱する。
+  // 状態はキャラクター側で見せるので、ボタンは音量マークに徹する
+  // （以前はびくたんアイコンを載せていたが、マスクと二重になっていた）。
   if (soundMuted) model?.expression(MASK_EXPRESSION);
   else setEmote(lastEmoteName);
   soundToggle?.classList.toggle("is-muted", soundMuted);
-  soundToggle?.classList.toggle("has-image", useImage);
-  soundToggle.textContent = useImage ? "" : (soundMuted ? "🔇" : "🔊");
+  soundToggle.textContent = soundMuted ? "🔇" : "🔊";
   soundToggle?.setAttribute("aria-pressed", soundMuted ? "true" : "false");
   soundToggle?.setAttribute(
     "aria-label",
@@ -2296,9 +2278,14 @@ async function start() {
       const eyeLOpen = eyeLSmile <= 0.5 && blinking ? 0 : eyeLOpenBase;
       const eyeROpen = eyeRSmile <= 0.5 && blinking ? 0 : eyeROpenBase;
       let mouthOpen = currentEmote.mouthOpen;
-      if (isSpeaking || (!isThinking && isHovered && !chatActive)) {
+      if (isSpeaking) {
         const noise = Math.sin(seconds * 25) * Math.sin(seconds * 7);
         mouthOpen = Math.max(mouthOpen, noise * 0.5 + 0.4);
+      } else if (!isThinking && isHovered && !chatActive) {
+        // ホバーへの反応。読み上げと同じ振幅だと喋っているように見えるので、
+        // 息づかい程度に留める。
+        const noise = Math.sin(seconds * 9) * Math.sin(seconds * 3.5);
+        mouthOpen = Math.max(mouthOpen, noise * 0.07 + 0.07);
       }
       core.setParameterValueById("ParamEyeLOpen", eyeLOpen);
       core.setParameterValueById("ParamEyeROpen", eyeROpen);

@@ -816,6 +816,20 @@ function getVisualBounds(internalModel) {
     : { minX: 0, minY: 0, maxX: originalModelWidth, maxY: originalModelHeight };
 }
 
+// 吹き出しそのものの上か（キャラとの間を埋める余白は含めない）。
+// クリック透過の判定に使う。ホバー検知と同じ広さにすると、吹き出しが
+// 出ている間だけ後ろのウィンドウを触れなくなる。
+function isPointInBubbleRect(point) {
+  if (!bubble.classList.contains("is-active")) return false;
+  const rect = bubble.getBoundingClientRect();
+  return (
+    point.x >= rect.left &&
+    point.x <= rect.right &&
+    point.y >= rect.top &&
+    point.y <= rect.bottom
+  );
+}
+
 function isPointInActiveBubble(point) {
   if (!bubble.classList.contains("is-active")) return false;
   const rect = bubble.getBoundingClientRect();
@@ -2437,7 +2451,13 @@ bikunavi.on("companion:cursor", (point) => {
   const insideCharacter = characterHitBounds?.contains(point.x, point.y) ?? false;
   const inside = insideCharacter || isPointInActiveBubble(point) ||
     isPointInPomodoroQuick(point) || isPointInSoundControls(point);
-  updateMouseCapture(inside);
+  // クリックを受け取るのは、実際に押せるものの上だけ。ホバー検知用の
+  // 広い判定（キャラと吹き出しの間の余白を含む）をそのまま使うと、
+  // 吹き出しが出ている間だけ後ろを触れなくなる。
+  updateMouseCapture(
+    insideCharacter || isPointInBubbleRect(point) ||
+    isPointInPomodoroQuick(point) || isPointInSoundControls(point)
+  );
   if (suppressHoverUntilLeave) {
     if (!inside) suppressHoverUntilLeave = false;
     model.focus(point.x, point.y);

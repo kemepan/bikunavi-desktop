@@ -107,3 +107,39 @@ console.log("source-utils: OK");
 }
 
 console.log("source-utils（先頭の管理ID）: OK");
+
+// 参照ID欄ごと省いた2列の出力（`cont|セリフ`）。種別の印を本文へ残さない。
+// 2026-07-28に「cont|びくにたんは今何してますか？」が表示されていた。
+{
+  const c = parseGeneratedIdleLine("cont|びくにたんは今何してますか？", sources);
+  assert.equal(c.text, "びくにたんは今何してますか？");
+  assert.equal(c.continues, true);
+  assert.equal(c.kind, "normal");
+
+  const n = parseGeneratedIdleLine("normal|涼しい部屋でデータの整理をしていました。", sources);
+  assert.equal(n.text, "涼しい部屋でデータの整理をしていました。");
+  assert.equal(n.continues, false);
+
+  const l = parseGeneratedIdleLine("life|机の上を片付けました。", sources);
+  assert.equal(l.text, "机の上を片付けました。");
+  assert.equal(l.kind, "life");
+
+  // 本文に縦棒が含まれるだけの行は、種別扱いしない。
+  const plain = parseGeneratedIdleLine("この記号|はそのまま残ります。", sources);
+  assert.equal(plain.text, "この記号|はそのまま残ります。");
+}
+
+console.log("source-utils（種別だけの2列）: OK");
+
+// 最後の砦: パーサで拾えない書き方でも、種別の印は表示・読み上げへ出さない。
+{
+  assert.equal(sanitizeSpokenSourceIds("cont|見落とした書き方です。", [], sources), "見落とした書き方です。");
+  assert.equal(sanitizeSpokenSourceIds("news||二重の縦棒。", [], sources), "二重の縦棒。");
+  // 本文中の「cont」は消さない。
+  assert.equal(
+    sanitizeSpokenSourceIds("contは継続の意味です。", [], sources),
+    "contは継続の意味です。"
+  );
+}
+
+console.log("source-utils（種別の印の最終防波堤）: OK");

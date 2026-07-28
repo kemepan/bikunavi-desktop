@@ -52,6 +52,10 @@ function sanitizeSpokenSourceIds(rawText, rawSourceIds = [], sourceMap = new Map
     (_match, id) => sourceLabel(sourceMap.get(String(id).toUpperCase()))
   );
 
+  // 種別の印（normal / news / life / cont）が本文の先頭へ残った場合の最後の砦。
+  // パーサ側で拾えなかった書き方をされても、利用者には見せない。
+  text = text.replace(/^(?:normal|news|life|cont)\s*\|+\s*/i, "");
+
   // JSON形式が崩れ、明示的な「参照ID A3」だけが残った場合の最終安全網。
   text = text.replace(
     new RegExp(`参照(?:ID|番号)[:：]?\\s*(?:${SOURCE_ID})`, "gi"),
@@ -67,6 +71,24 @@ function parseGeneratedIdleLine(rawLine, sourceMap = new Map()) {
   let text = line;
   let sourceIds = [];
   let continues = false;
+
+  // `cont|セリフ` のように、参照ID欄そのものを省いた2列の出力がある。
+  // 拾わないと種別の印が本文に残り、そのまま表示・読み上げされる。
+  if (parts.length === 2 && /^(?:normal|news|life|cont)$/i.test(parts[0])) {
+    kind = parts[0].toLowerCase();
+    if (kind === "cont") {
+      kind = "normal";
+      continues = true;
+    }
+    return {
+      text: sanitizeSpokenSourceIds(parts[1], [], sourceMap),
+      sources: [],
+      sourceIds: [],
+      invalidSourceIds: [],
+      kind,
+      continues
+    };
+  }
 
   if (parts.length >= 3 && /^(?:normal|news|life|cont)$/i.test(parts[0])) {
     kind = parts[0].toLowerCase();

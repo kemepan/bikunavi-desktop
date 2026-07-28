@@ -49,6 +49,10 @@ const {
 } = require("./diary-memory-utils");
 const { roundWindowCoordinate } = require("./movement-utils");
 const { isStaleIdleLine } = require("./idle-freshness-utils");
+const {
+  buildFallbackQueue,
+  selectFallbackLine
+} = require("./fallback-line-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
@@ -330,7 +334,6 @@ let idleLineGeneration;
 // 直近に話した自動セリフを覚えておき、しばらくは繰り返さない。
 const RECENT_IDLE_LIMIT = 60;
 const recentIdleItems = [];
-let fallbackIdleIndex = 0;
 let lastFortuneQueuedDate;
 let latestTopicSources = new Map();
 const BIKUTAN_WORK_INTERVAL_MS = 8 * 60 * 1000;
@@ -396,13 +399,22 @@ for (const entry of (Array.isArray(persistedState.lineHistory) ? persistedState.
   rememberRecentIdle(entry);
 }
 
+// AIなしで話す時の「いまの状況」。時間帯・音楽・ポモドーロだけ見る。
+function fallbackLineContext() {
+  return {
+    slot: getJstTimeContext().slot,
+    music: Boolean(musicPlaying),
+    // 局面は focus90 / break15 のような名前なので、前方一致で見る。
+    pomodoro: pomodoroState.active
+      ? (String(pomodoroState.phase || "").startsWith("break") ? "break" : "focus")
+      : ""
+  };
+}
+
 function pickFallbackIdleLine() {
-  for (let attempt = 0; attempt < FALLBACK_IDLE_LINES.length; attempt += 1) {
-    const candidate = FALLBACK_IDLE_LINES[fallbackIdleIndex % FALLBACK_IDLE_LINES.length];
-    fallbackIdleIndex += 1;
-    if (!isRecentIdle(candidate)) return candidate;
-  }
-  return FALLBACK_IDLE_LINES[fallbackIdleIndex++ % FALLBACK_IDLE_LINES.length];
+  const recentTexts = recentIdleItems.map((item) => item.text);
+  return selectFallbackLine(fallbackLineContext(), recentTexts) ||
+    "今日はどんな一日にしましょうか。";
 }
 
 // 直近に話した「びくたんの作業メモ」。会話で「何してるの？」と聞かれた時に
@@ -603,19 +615,6 @@ let pomodoroState = {
 };
 
 // びくたんは画面や作業内容を見られない。見たフリの観察は入れず、自分の独り言に留める。
-const FALLBACK_IDLE_LINES = [
-  "コーヒー休憩、そろそろどうですか？",
-  "Live2Dの物理、盛るとつい元気になりすぎるんですよね。",
-  "変な思いつきほど、あとで化けたりするんですよね。",
-  "名前づけって、未来の自分への手紙だと思うんです。",
-  "今何してますか？びくたんは気になる言葉を思い出していました。",
-  "びくたん、ちょっとひと息入れてもいいですか？",
-  "そろそろ何か飲みたい気分になってきました。",
-  "リギング、うまくハマると気持ちいいんですよね。",
-  "小さい自動化、地味だけど好きなんです。",
-  "今日は何を動かす日ですか？ キャラでも作業でも。",
-  "ふう、たまには伸びのひとつでも。"
-];
 
 const SIZE_PRESETS = {
   tiny: { label: "極小", width: 240, height: 455 },
@@ -4785,7 +4784,7 @@ async function generateIdleLines() {
         .map((line) => ({ ...line, generatedAt, slot: generatedSlot })));
     } catch (error) {
       console.error("Idle line generation failed:", error);
-      idleLineQueue.push(...FALLBACK_IDLE_LINES);
+      idleLineQueue.push(...buildFallbackQueue(fallbackLineContext(), 10));
     } finally {
       idleLineGeneration = undefined;
     }

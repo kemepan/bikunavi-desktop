@@ -61,6 +61,7 @@ const {
 const {
   bgmDaypart,
   describeBgmSuggestion,
+  isUsableArtistName,
   markBgmSuggested,
   pickBgm,
   shouldSuggestBgm
@@ -1520,71 +1521,48 @@ function buildTrayMenu() {
       ]
     },
     {
-      label: "🌱 びくたんと育つ",
+      label: `🌱 びくたんと育つ（${Object.keys(getCharacterAnswers()).length + Object.keys(getGrowthData().growthAnswers).length}/${characterQuestions.length + growthQuestions.length}）`,
       submenu: [
         {
-          label: `話し方を育てる（${Object.keys(getCharacterAnswers()).length}/${characterQuestions.length}）`,
-          submenu: [
-            {
-              label: getPendingCharacterQuestion()
-                ? "さっきの質問に答える"
-                : "びくたんから質問してもらう",
-              enabled: Boolean(getPendingCharacterQuestion()) ||
-                Object.keys(getCharacterAnswers()).length < characterQuestions.length,
-              click: showCharacterQuestionNow
-            },
-            {
-              label: "答えを見直す・変更する",
-              submenu: (() => {
-                const answers = getCharacterAnswers();
-                const answeredQuestions = characterQuestions
-                  .filter((question) => String(answers[question.id]?.answer || "").trim());
-                if (!answeredQuestions.length) {
-                  return [{ label: "まだ答えはありません", enabled: false }];
-                }
-                return answeredQuestions.map((question) => {
-                  const answer = String(answers[question.id].answer).replace(/\s+/g, " ").trim();
-                  const preview = answer.length > 28 ? `${answer.slice(0, 28)}…` : answer;
-                  return {
-                    label: `${question.topic}: ${preview}`,
-                    click: () => showCharacterQuestionReview(question.id)
-                  };
-                });
-              })()
-            },
-            {
-              label: "教えてくれたことは、会話や独り言に出てきます",
-              enabled: false
-            }
-          ]
+          // 何を教えるかは選ばせず、まだ聞けていないことからびくたんが選ぶ。
+          label: getPendingCharacterQuestion() || getPendingGrowthQuestion()
+            ? "さっきの質問に答える"
+            : "何か聞いてもらう",
+          click: askSomethingNow
         },
         {
-          label: `ことば・思い出（${getGrowthData().learnedWords.length}語／${getGrowthData().sharedMemories.length}件）`,
-          submenu: [
-            {
-              label: "ことばを教える",
-              click: () => showGrowthQuestionNow("word")
-            },
-            {
-              label: "一緒の思い出を残す",
-              click: () => showGrowthQuestionNow("memory")
-            },
-            {
-              label: "びくたんと好みの話をする",
-              enabled: Object.keys(getGrowthData().growthAnswers).length < growthQuestions.length,
-              click: () => showGrowthQuestionNow("self")
-            },
-            {
-              label: getMusicGenrePreference()
-                ? "好きな音楽を更新する"
-                : "好きな音楽を教える",
-              click: () => showGrowthQuestionNow("music")
-            },
-            {
-              label: "覚えたことは後日の会話で時々思い出します",
-              enabled: false
+          label: "答えを見直す・変更する",
+          submenu: (() => {
+            const answers = getCharacterAnswers();
+            const answeredQuestions = characterQuestions
+              .filter((question) => String(answers[question.id]?.answer || "").trim());
+            if (!answeredQuestions.length) {
+              return [{ label: "まだ答えはありません", enabled: false }];
             }
-          ]
+            return answeredQuestions.map((question) => {
+              const answer = String(answers[question.id].answer).replace(/\s+/g, " ").trim();
+              const preview = answer.length > 28 ? `${answer.slice(0, 28)}…` : answer;
+              return {
+                label: `${question.topic}: ${preview}`,
+                click: () => showCharacterQuestionReview(question.id)
+              };
+            });
+          })()
+        },
+        {
+          label: getMusicGenrePreference()
+            ? `好きな音楽: ${getMusicGenrePreference().slice(0, 20)}`
+            : "好きな音楽を教える",
+          click: () => showGrowthQuestionNow("music")
+        },
+        { type: "separator" },
+        {
+          label: `ことば ${getGrowthData().learnedWords.length}語 ／ 思い出 ${getGrowthData().sharedMemories.length}件`,
+          enabled: false
+        },
+        {
+          label: "教えてくれたことは、会話や独り言に出てきます",
+          enabled: false
         }
       ]
     },
@@ -2719,6 +2697,30 @@ app.whenReady().then(() => {
 // 直近に薦めたBGM。続けて押した時に同じものを返さないため。
 const recentBgmNames = [];
 
+// 好きなジャンルを教わっている時だけ、そこからアーティストを1組挙げてもらう。
+// AIが無ければ何も返さない（ジャンル名のおすすめはそのまま使える）。
+async function askArtistForPreference(preference) {
+  const genre = String(preference || "").trim();
+  if (!genre) return "";
+  try {
+    const answer = await runAssistant([
+      `ユーザーは音楽の好みを「${genre.slice(0, 60)}」と話しています。`,
+      "この好みに合う、広く知られているアーティストを1組だけ挙げてください。",
+      "条件:",
+      "- 実在が確実で、検索すればすぐ見つかるアーティストだけにしてください。",
+      "- 少しでも自信がなければ、何も書かずに空で返してください。作らないでください。",
+      "- 出力はアーティスト名だけ。説明・前置き・記号・句読点は書かないでください。"
+    ].join("\n"));
+    const name = String(answer || "").replace(/\s+/g, " ").trim();
+    // 挙がった名前は検索リンクにするので、実在しなければ利用者側で分かる。
+    // それでも明らかにおかしいものは、ここで落とす。
+    return isUsableArtistName(name) ? name : "";
+  } catch (error) {
+    console.error("Artist suggestion failed:", error?.message || error);
+    return "";
+  }
+}
+
 function rememberBgmName(name) {
   recentBgmNames.push(name);
   while (recentBgmNames.length > 6) recentBgmNames.shift();
@@ -2726,7 +2728,7 @@ function rememberBgmName(name) {
 
 // 朝・昼・夜に一度ずつ、独り言としてBGMを薦める。
 // メニューを増やさず、会話の流れの中で渡すための入口。
-function takeBgmSuggestion() {
+async function takeBgmSuggestion() {
   const slot = getJstTimeContext().slot;
   const daypart = bgmDaypart(slot);
   const { year, month, day } = getJstDateParts();
@@ -2742,14 +2744,16 @@ function takeBgmSuggestion() {
     { date, daypart }
   );
   saveStateSoon();
-  return {
-    text: describeBgmSuggestion(name, {
-      preference: getMusicGenrePreference(),
-      slot
-    }),
-    sources: [makeYoutubeSearchSource(`${name} 作業用 BGM`)],
-    kind: "bgm"
-  };
+  const preference = getMusicGenrePreference();
+  const base = describeBgmSuggestion(name, { preference, slot });
+  const sources = [makeYoutubeSearchSource(`${name} 作業用 BGM`)];
+  // 好みを教わっていれば、そのジャンルのアーティストも一組添える。
+  const artist = await askArtistForPreference(preference);
+  const text = artist
+    ? `${base}\n${artist}あたりも、その気分に合うかもしれません。`
+    : base;
+  if (artist) sources.push(makeYoutubeSearchSource(artist));
+  return { text, sources, kind: "bgm" };
 }
 
 // ポモドーロ中は独り言を止めるので、始まる時のひと言へ混ぜておく。
@@ -3944,13 +3948,14 @@ function makeCharacterQuestion(force = false) {
 
 function showCharacterQuestionNow() {
   const item = makeCharacterQuestion(true);
-  if (!item) return;
+  if (!item) return false;
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
-  if (!companionWindow) return;
+  if (!companionWindow) return false;
   companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
+  return true;
 }
 
 function showCharacterQuestionReview(questionId) {
@@ -4023,7 +4028,9 @@ function makeGrowthQuestion(forceType) {
 
   const { growthAnswers } = getGrowthData();
   const types = ["word", "memory", "self"];
-  let type = forceType || types[(Number(persistedState.growthQuestionTurn) || 0) % types.length];
+  // "any" は「種類は問わないが、いま聞きたい」の意味。順番どおりに回す。
+  const rotated = types[(Number(persistedState.growthQuestionTurn) || 0) % types.length];
+  let type = (!forceType || forceType === "any") ? rotated : forceType;
   let pending;
   if (type === "music") {
     const question = growthQuestions.find((item) => item.id === MUSIC_GENRE_QUESTION_ID);
@@ -4051,15 +4058,40 @@ function makeGrowthQuestion(forceType) {
   return growthQuestionItem(getPendingGrowthQuestion());
 }
 
+// 「何を教えるか」をユーザーに選ばせず、まだ埋まっていないものから
+// びくたん側が選んで聞く。メニューを入力フォームの一覧にしないため。
+function askSomethingNow() {
+  const answered = Object.keys(getCharacterAnswers()).length;
+  const characterLeft = Math.max(0, characterQuestions.length - answered);
+  const { growthAnswers } = getGrowthData();
+  const growthLeft = Math.max(
+    0,
+    growthQuestions.filter((item) => !growthAnswers[item.id]?.answer).length
+  );
+
+  // 残っている数で重みを付ける。多く残っている方から聞く確率を上げ、
+  // どちらかに偏って埋まらないようにする。
+  const total = characterLeft + growthLeft;
+  if (total > 0 && Math.random() < characterLeft / total) {
+    if (showCharacterQuestionNow()) return;
+  }
+  // びくたん自身の話（word / memory / self）は makeGrowthQuestion が
+  // 順番に回してくれるので、種類は指定しない。
+  if (showGrowthQuestionNow()) return;
+  // 話し方の質問が残っていれば、そちらへ回す。
+  showCharacterQuestionNow();
+}
+
 function showGrowthQuestionNow(type) {
-  const item = makeGrowthQuestion(type);
-  if (!item) return;
+  const item = makeGrowthQuestion(type || "any");
+  if (!item) return false;
   if (!companionWindow || companionWindow.isDestroyed()) createWindow();
-  if (!companionWindow) return;
+  if (!companionWindow) return false;
   companionHiddenByUser = false;
   companionWindow.show();
   companionWindow.focus();
   companionWindow.webContents.send("companion:custom-question", item);
+  return true;
 }
 
 function showAmbientLine(item) {
@@ -5150,7 +5182,7 @@ ipcMain.handle("companion:idle-line", async () => {
     const diaryMemory = takeLocalDiaryMemory();
     if (diaryMemory) return withInferredEmote(diaryMemory);
     // BGMは朝昼夜に一度ずつ。数が少ないので、埋もれないよう前の方で返す。
-    const bgmSuggestion = takeBgmSuggestion();
+    const bgmSuggestion = await takeBgmSuggestion();
     if (bgmSuggestion) return withInferredEmote(bgmSuggestion);
     const characterQuestion = makeCharacterQuestion(false);
     if (characterQuestion) return withInferredEmote(characterQuestion);

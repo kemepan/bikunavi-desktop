@@ -86,6 +86,23 @@
     return `${name}はどうでしょう。`;
   }
 
+  // AIが挙げたアーティスト名を受け取れるか判断する。
+  //
+  // 実在しない名前を作られるのが最大のリスクなので、疑わしいものは通さない。
+  // 通した名前はYouTube検索リンクにするので、実在しなければ利用者側で分かる。
+  function isUsableArtistName(rawName) {
+    const name = String(rawName || "").replace(/\s+/g, " ").trim();
+    if (!name) return false;
+    // 名前だけを期待している。説明文が返ってきたら使わない。
+    if (name.length > 40) return false;
+    if (/[。、！？\n]/.test(name)) return false;
+    // 「〜だと思います」「わかりません」のような返答は名前ではない。
+    if (/(思います|でしょう|かもしれ|わかりません|不明|存在しな)/.test(name)) return false;
+    // 前置きが付いたまま返ってくることがある。
+    if (/^(はい|例えば|たとえば|おすすめ|回答)/.test(name)) return false;
+    return true;
+  }
+
   // 朝・昼・夜の3枠に丸める。1日に何度も薦めないための単位。
   function bgmDaypart(slot) {
     if (slot === "早朝" || slot === "朝") return "朝";
@@ -115,6 +132,7 @@
     matches,
     pickBgm,
     describeBgmSuggestion,
+    isUsableArtistName,
     bgmDaypart,
     shouldSuggestBgm,
     markBgmSuggested

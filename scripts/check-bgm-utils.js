@@ -97,3 +97,23 @@ console.log("bgm-utils: OK");
 }
 
 console.log("bgm-utils（1日3回まで）: OK");
+
+// AIが挙げたアーティスト名を、そのまま信じない。
+{
+  const { isUsableArtistName } = require("../bgm-utils");
+  // 名前らしいものは通す。
+  assert.equal(isUsableArtistName("Nujabes"), true);
+  assert.equal(isUsableArtistName("坂本龍一"), true);
+  assert.equal(isUsableArtistName("Bill Evans Trio"), true);
+
+  // 説明文が返ってきたら使わない。
+  assert.equal(isUsableArtistName("Nujabesがおすすめです。"), false);
+  assert.equal(isUsableArtistName("そのジャンルなら、たくさんいると思います"), false);
+  assert.equal(isUsableArtistName("わかりません"), false);
+  assert.equal(isUsableArtistName("はい、例えばこちらです"), false);
+  assert.equal(isUsableArtistName("A".repeat(60)), false);
+  assert.equal(isUsableArtistName(""), false);
+  assert.equal(isUsableArtistName(undefined), false);
+}
+
+console.log("bgm-utils（アーティスト名の検査）: OK");

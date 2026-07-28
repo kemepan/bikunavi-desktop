@@ -42,14 +42,30 @@ int main(void) {
     EKAuthorizationStatus before =
       [EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
 
-    dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    __block BOOL granted = NO;
-    __block NSString *failure = nil;
-
-    void (^handler)(BOOL, NSError *) = ^(BOOL ok, NSError *error) {
-      granted = ok;
-      if (error) failure = error.localizedDescription;
-      dispatch_semaphore_signal(done);
+    void (^handler)(BOOL granted, NSError *error) = ^(BOOL granted, NSError *error) {
+      // 応答はバックグラウンドで返ることがあるので、出力はメインへ寄せる。
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!granted) {
+          // 要求前後の状態を見ないと、ダイアログが出た上で拒否されたのか、
+          // そもそも出なかったのかが区別できない。
+          EKAuthorizationStatus after =
+            [EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
+          NSArray *names = @[@"notDetermined", @"restricted", @"denied",
+                             @"authorized", @"writeOnly", @"fullAccess"];
+          NSString *beforeName = before < names.count ? names[before] : @"unknown";
+          NSString *afterName = after < names.count ? names[after] : @"unknown";
+          emit(@"denied", -1,
+               [NSString stringWithFormat:@"要求前=%@ / 要求後=%@ / %@",
+                         beforeName, afterName,
+                         error.localizedDescription ?: @"エラーは返っていない"]);
+          exit(3);
+        }
+        emit(@"granted", countTodayEvents(store),
+             before == EKAuthorizationStatusNotDetermined
+               ? @"この実行で新たに許可された。"
+               : @"すでに許可されていた。");
+        exit(0);
+      });
     };
 
     // macOS 14 以降は「フルアクセス」の要求に分かれた。
@@ -60,36 +76,17 @@ int main(void) {
       [store requestAccessToEntityType:EKEntityTypeEvent completion:handler];
     }
 
-    // 応答が返らない場合に備える（ダイアログが出ないまま黙る環境がある）。
-    if (dispatch_semaphore_wait(
-          done, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) != 0) {
-      emit(@"timeout", -1,
-           before == EKAuthorizationStatusNotDetermined
-             ? @"許可ダイアログが返らなかった。.app 形式が必要かもしれない。"
-             : @"許可の要求が返らなかった。");
-      return 4;
-    }
+    // 利用者がダイアログを操作する時間を見込む。
+    dispatch_after(
+      dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_SEC),
+      dispatch_get_main_queue(),
+      ^{
+        emit(@"timeout", -1, @"許可の応答が返らなかった。");
+        exit(4);
+      });
 
-    if (!granted) {
-      // 要求前後の状態を見ないと、ダイアログが出た上で拒否されたのか、
-      // そもそも出なかったのかが区別できない。
-      EKAuthorizationStatus after =
-        [EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
-      NSArray *names = @[@"notDetermined", @"restricted", @"denied",
-                         @"authorized", @"writeOnly", @"fullAccess"];
-      NSString *beforeName = before < names.count ? names[before] : @"unknown";
-      NSString *afterName = after < names.count ? names[after] : @"unknown";
-      emit(@"denied", -1,
-           [NSString stringWithFormat:@"要求前=%@ / 要求後=%@ / %@",
-                     beforeName, afterName,
-                     failure ?: @"エラーは返っていない"]);
-      return 3;
-    }
-
-    emit(@"granted", countTodayEvents(store),
-         before == EKAuthorizationStatusNotDetermined
-           ? @"この実行で新たに許可された。"
-           : @"すでに許可されていた。");
-    return 0;
+    // ここでブロックしてはいけない。許可ダイアログはメインスレッドで
+    // 描かれるので、待ち合わせに semaphore を使うと出せないまま固まる。
+    dispatch_main();
   }
 }

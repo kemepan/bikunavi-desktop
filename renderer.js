@@ -95,6 +95,10 @@ let motionSequence = 0;
 let blinkTimer = 0;
 // 触られている間の口の開閉。位相を積み上げて持つ（周期を揺らしても飛ばないように）
 let hoverMouthPhase = 0;
+// 掴んで動かした時の慣性。実際の移動速度から作り、離しても揺り戻しが残る。
+const dragSway = { x: 0, y: 0 };
+let lastDragPoint;
+let lastDragMoveAt = 0;
 let hideBubbleTimer;
 let chatterEndTimer;
 let responseSpeechTimer;
@@ -2311,6 +2315,25 @@ async function start() {
           musicDanceWeight
         );
       }
+      // 掴んで振り回された時、体が置いていかれて傾く。手を離しても
+      // すぐには止まらず、揺り戻しながら収まる。
+      // 掴んでいる間も減衰させる。カーソルを止めると pointermove が来なくなり、
+      // 減衰しないままだと傾いた姿勢で固まってしまう。
+      const swayDecay = Math.pow(dragging ? 0.9 : 0.86, pixiApp.ticker.deltaMS / 16);
+      dragSway.x *= swayDecay;
+      dragSway.y *= swayDecay;
+      if (Math.abs(dragSway.x) > 0.01 || Math.abs(dragSway.y) > 0.01) {
+        // 速すぎる動きでも壊れないよう、効き幅に上限を置く。
+        const swayX = Math.max(-1, Math.min(1, dragSway.x / 34));
+        const swayY = Math.max(-1, Math.min(1, dragSway.y / 34));
+        core.addParameterValueById("ParamBodyAngleZ", swayX * -11);
+        core.addParameterValueById("ParamAngleZ", swayX * -7);
+        core.addParameterValueById("ParamBodyX", swayX * -5);
+        core.addParameterValueById("ParamBodyAngleX", swayX * -6);
+        // 上下に振ると、体が縦に伸び縮みするように見せる。
+        core.addParameterValueById("ParamBodyPositionY", swayY * -7);
+        core.addParameterValueById("ParamAngleY", swayY * -5);
+      }
       // 聞く・考える・話す・待機の動きを約0.26秒で混ぜ、状態切替時のカクつきを抑える。
       // 先行読み上げ中は、回答生成が続いていても「話す」を最優先する。
       updateInteractionMotion(core, seconds, pixiApp.ticker.deltaMS, danceActive || dragging);
@@ -2775,6 +2798,8 @@ bikunavi.on("companion:pomodoro-chime", (kind) => {
 canvas.addEventListener("pointerdown", (event) => {
   if (!model || event.button !== 0) return;
   pointerDown = { x: event.screenX, y: event.screenY };
+  lastDragPoint = undefined;
+  lastDragMoveAt = performance.now();
   canvas.setPointerCapture(event.pointerId);
 });
 
@@ -2794,7 +2819,21 @@ canvas.addEventListener("pointermove", (event) => {
     showBubble(dragLine);
     bikunavi.send("companion:drag-start");
   }
-  if (dragging) bikunavi.send("companion:drag-move");
+  if (dragging) {
+    // 画面上をどれだけ速く動かしたかを覚えておく。
+    // 1フレームぶんの差分は跳ねやすいので、なまして積む。
+    const now = performance.now();
+    if (lastDragPoint) {
+      const dt = Math.max(8, now - lastDragMoveAt);
+      const vx = (event.screenX - lastDragPoint.x) / dt * 16;
+      const vy = (event.screenY - lastDragPoint.y) / dt * 16;
+      dragSway.x += (vx - dragSway.x) * 0.35;
+      dragSway.y += (vy - dragSway.y) * 0.35;
+    }
+    lastDragPoint = { x: event.screenX, y: event.screenY };
+    lastDragMoveAt = now;
+    bikunavi.send("companion:drag-move");
+  }
 });
 
 canvas.addEventListener("pointerup", (event) => {

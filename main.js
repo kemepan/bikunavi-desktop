@@ -58,6 +58,7 @@ const {
   describeAway,
   shouldWelcomeBack
 } = require("./welcome-back-utils");
+const { describeBgmSuggestion, pickBgm } = require("./bgm-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
@@ -1488,6 +1489,10 @@ function buildTrayMenu() {
       ]
     },
     {
+      label: "🎧 BGMを選んでもらう",
+      click: suggestBgmNow
+    },
+    {
       label: "🔮 びくたん占い",
       submenu: [
         {
@@ -2699,6 +2704,32 @@ app.whenReady().then(() => {
 // VOICEVOX案内（15秒後）と重ならないよう、こちらは8秒後に出す。
 // しばらくぶりの起動なら、おかえりと一緒にBGMを1つ薦める。
 // 前回いつ起動したかは、この判定のためだけに残す。
+// 直近に薦めたBGM。続けて押した時に同じものを返さないため。
+const recentBgmNames = [];
+
+function suggestBgmNow() {
+  const context = {
+    slot: getJstTimeContext().slot,
+    focus: pomodoroState.active &&
+      !String(pomodoroState.phase || "").startsWith("break")
+  };
+  const name = pickBgm(context, recentBgmNames);
+  if (!name) return;
+  recentBgmNames.push(name);
+  while (recentBgmNames.length > 6) recentBgmNames.shift();
+  const text = describeBgmSuggestion(name, {
+    preference: getMusicGenrePreference(),
+    slot: context.slot,
+    focus: context.focus
+  });
+  companionHiddenByUser = false;
+  showAmbientLine({
+    text,
+    sources: [makeYoutubeSearchSource(`${name} 作業用 BGM`)],
+    kind: "bgm"
+  });
+}
+
 function maybeWelcomeBack() {
   const lastLaunchAt = Number(persistedState.lastLaunchAt) || 0;
   const welcome = shouldWelcomeBack(lastLaunchAt);
@@ -2708,11 +2739,10 @@ function maybeWelcomeBack() {
   if (!welcome) return;
 
   const away = describeAway(awayDuration(lastLaunchAt));
-  const preference = getMusicGenrePreference();
-  // 好みを聞けていれば、それを手がかりにする。無ければ今日の占いのBGM。
-  const bgm = preference
-    ? preference.slice(0, 24)
-    : (makeDailyFortune().bgm || "静かな作業用のチル");
+  // BGMはトレイの「BGMを選んでもらう」と同じ候補から選ぶ。
+  const bgm = pickBgm({ slot: getJstTimeContext().slot }, recentBgmNames) ||
+    "静かな作業用のチル";
+  recentBgmNames.push(bgm);
   const query = `${bgm} 作業用 BGM`;
   // 初回案内やVOICEVOX案内と重ならないよう、少し遅らせる。
   setTimeout(() => {

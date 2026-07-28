@@ -416,19 +416,40 @@ async function runGeminiApi(prompt, config, onDelta, signal) {
   throw lastError;
 }
 
+// キャラクターシートはどの依頼でも同じ文面が丸ごと入る（約7000文字）。
+// これを system へ移してキャッシュすると、2回目以降は読み込みが約1/10の値段になる。
+// プロンプトの先頭から一致した部分だけが対象なので、変わらないものを前に出す。
+function splitCachedPrefix(rawPrompt) {
+  const prompt = String(rawPrompt || "");
+  const match = prompt.match(/<character_sheet>[\s\S]*?<\/character_sheet>\n?/);
+  if (!match) return { system: "", body: prompt };
+  const body = (prompt.slice(0, match.index) + prompt.slice(match.index + match[0].length))
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { system: match[0].trim(), body };
+}
+
 async function runClaudeApi(prompt, config, onDelta, signal) {
   const apiKey = config?.anthropicApiKey;
   if (!apiKey) throw new Error("Claude APIキーが設定されていません。");
   const client = new Anthropic({ apiKey, timeout: 120000 });
   const model = process.env.BIKUNAVI_CLAUDE_MODEL || "claude-opus-4-8";
+  const { system, body } = splitCachedPrefix(prompt);
   const request = {
     model,
     max_tokens: 4096,
     thinking: { type: "adaptive" },
     // マスコット用途は短文・低レイテンシ優先
     output_config: { effort: "low" },
-    messages: [{ role: "user", content: prompt }]
+    messages: [{ role: "user", content: body }]
   };
+  // 毎回同じキャラクターシートを送り直さない。既定のTTLは5分で、
+  // 独り言はそれより短い間隔で回るため次の呼び出しで読み出せる。
+  if (system) {
+    request.system = [
+      { type: "text", text: system, cache_control: { type: "ephemeral" } }
+    ];
+  }
   if (signal?.aborted) throw chatAbortError();
   let response;
   try {
@@ -453,6 +474,16 @@ async function runClaudeApi(prompt, config, onDelta, signal) {
   if (response.stop_reason === "refusal") {
     throw new Error("Claudeがこの内容への回答を控えました。");
   }
+  // キャッシュが効いているかは、読み出したトークン数でしか分からない。
+  // 0 のまま続くなら、送っている中身が毎回変わっている。
+  const usage = response.usage || {};
+  const cacheRead = Number(usage.cache_read_input_tokens) || 0;
+  const cacheWrite = Number(usage.cache_creation_input_tokens) || 0;
+  console.log(
+    `Claude API usage: 入力${Number(usage.input_tokens) || 0} ` +
+    `/ キャッシュ書込${cacheWrite} / キャッシュ読出${cacheRead} ` +
+    `/ 出力${Number(usage.output_tokens) || 0}`
+  );
   const text = response.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -483,6 +514,7 @@ function runProvider(providerId, prompt, config, onDelta, signal) {
 }
 
 module.exports = {
+  splitCachedPrefix,
   detectProviders,
   getGeminiApiKey: geminiApiKey,
   isChatAbortError,

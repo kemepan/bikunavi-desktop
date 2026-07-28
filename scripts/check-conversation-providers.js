@@ -117,3 +117,33 @@ async function withStubbedFetch(stub, body) {
   console.error(error);
   process.exitCode = 1;
 });
+
+// キャラクターシートを system へ切り出し、本文へ残さない（キャッシュのため）。
+{
+  const { splitCachedPrefix } = require("../conversation-providers");
+
+  const prompt = [
+    "あなたはびくたんです。",
+    "<character_sheet>\n# シート\n- 明るい\n</character_sheet>",
+    "記事から独り言を作ってください。"
+  ].join("\n");
+  const r = splitCachedPrefix(prompt);
+  assert.ok(r.system.startsWith("<character_sheet>"));
+  assert.ok(r.system.includes("明るい"));
+  assert.equal(r.body.includes("明るい"), false);
+  assert.equal(r.body.includes("<character_sheet>"), false);
+  // 前後の指示は順番どおり残る。
+  assert.ok(r.body.startsWith("あなたはびくたんです。"));
+  assert.ok(r.body.endsWith("記事から独り言を作ってください。"));
+
+  // シートが無いプロンプトは、そのまま本文として扱う。
+  const plain = splitCachedPrefix("ふつうの依頼です。");
+  assert.equal(plain.system, "");
+  assert.equal(plain.body, "ふつうの依頼です。");
+
+  // 空でも落ちない。
+  assert.deepEqual(splitCachedPrefix(""), { system: "", body: "" });
+  assert.deepEqual(splitCachedPrefix(undefined), { system: "", body: "" });
+}
+
+console.log("conversation-providers（キャッシュ用の切り出し）: OK");

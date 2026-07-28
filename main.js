@@ -53,6 +53,11 @@ const {
   buildFallbackQueue,
   selectFallbackLine
 } = require("./fallback-line-utils");
+const {
+  awayDuration,
+  describeAway,
+  shouldWelcomeBack
+} = require("./welcome-back-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
@@ -126,6 +131,7 @@ const DEFAULT_STATE = {
   handsFreeEnabled: false,
   clickThroughEnabled: false,
   dimWhenIdleEnabled: false,
+  lastLaunchAt: 0,
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
@@ -971,6 +977,8 @@ function makeDailyFortune(date = new Date()) {
     lines,
     lineSources: [[], [], [], [makeYoutubeSearchSource(`${bgm} 作業用 BGM`)]],
     autoText: `今日の占いは「${stem.keyword}」。${action}のと相性がよさそうです。`,
+    // 他から使えるよう、BGMは文面から抜き出さずそのまま渡す。
+    bgm,
     sources: []
   };
 }
@@ -2683,11 +2691,39 @@ app.whenReady().then(() => {
     });
   maybeShowVoicevoxGuide();
   maybeShowTrayGuide();
+  maybeWelcomeBack();
 });
 
 // VOICEVOX未インストールの初回だけ、声の入手先を一度案内する（それまではmacOS音声で代用）
 // 初回起動時だけ、操作の入り口（メニューバーの🌱）を一度案内する。
 // VOICEVOX案内（15秒後）と重ならないよう、こちらは8秒後に出す。
+// しばらくぶりの起動なら、おかえりと一緒にBGMを1つ薦める。
+// 前回いつ起動したかは、この判定のためだけに残す。
+function maybeWelcomeBack() {
+  const lastLaunchAt = Number(persistedState.lastLaunchAt) || 0;
+  const welcome = shouldWelcomeBack(lastLaunchAt);
+  // 判定した後に更新する。次回はこの起動が基準になる。
+  persistedState.lastLaunchAt = Date.now();
+  saveStateSoon();
+  if (!welcome) return;
+
+  const away = describeAway(awayDuration(lastLaunchAt));
+  const preference = getMusicGenrePreference();
+  // 好みを聞けていれば、それを手がかりにする。無ければ今日の占いのBGM。
+  const bgm = preference
+    ? preference.slice(0, 24)
+    : (makeDailyFortune().bgm || "静かな作業用のチル");
+  const query = `${bgm} 作業用 BGM`;
+  // 初回案内やVOICEVOX案内と重ならないよう、少し遅らせる。
+  setTimeout(() => {
+    showAmbientLine({
+      text: `おかえりなさい。${away}ですね。${bgm}でも流しながら、ゆっくり始めませんか？`,
+      sources: [makeYoutubeSearchSource(query)],
+      kind: "welcome-back"
+    });
+  }, 22000);
+}
+
 function maybeShowTrayGuide() {
   if (persistedState.trayGuideShown) return;
   setTimeout(() => {

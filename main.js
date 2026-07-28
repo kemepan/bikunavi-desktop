@@ -2953,6 +2953,15 @@ function activeProviderId() {
 // （受信済みの途中テキストを捨てて表示をやり直すための合図）。
 async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
   const config = conversationConfig();
+  // 送っている量が見えないと、料金の見当も削りどころも分からない。
+  // 日本語はおおむね1文字1トークン、英数字は4文字で1トークンとして概算する。
+  const text = String(prompt || "");
+  const wide = (text.match(/[^\x00-\x7F]/g) || []).length;
+  const narrow = text.length - wide;
+  console.log(
+    `Prompt size: ${text.length}文字（全角${wide} / 半角${narrow}）` +
+    ` → 約${Math.round(wide + narrow / 4)}トークン`
+  );
   if (conversationProvider !== "auto") {
     const providerId = conversation.resolveProviderId(conversationProvider, config);
     if (!providerId) {

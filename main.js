@@ -597,9 +597,6 @@ const growthQuestions = loadGrowthQuestions();
 // 勝手にウィンドウを出し直さないようにする。アプリを再起動すれば表示へ戻る。
 let companionHiddenByUser = false;
 const nowPlayingHelperPath = path.join(__dirname, "native", "now-playing");
-const calendarProbePath = path.join(
-  __dirname, "native", "calendar-probe.app", "Contents", "MacOS", "calendar-probe"
-);
 const appleSpeechAppPath = path.join(__dirname, "native", "speech-recognizer.app");
 const appleSpeechHelperPath = path.join(
   appleSpeechAppPath,
@@ -1507,10 +1504,6 @@ function buildTrayMenu() {
           click: () => playPomodoroChime("finish")
         }
       ]
-    },
-    {
-      label: "🗓 カレンダーを読めるか試す（開発中）",
-      click: probeCalendarAccess
     },
     {
       label: "🔮 びくたん占い",
@@ -2772,43 +2765,6 @@ function bgmLineForPomodoroStart() {
     text: describeBgmSuggestion(name, { focus: true }),
     source: makeYoutubeSearchSource(`${name} 作業用 BGM`)
   };
-}
-
-// カレンダーを読めるか確かめるだけの試作。予定の中身は取り出さない。
-// 許可ダイアログは起動元のアプリに紐づくので、本体から起動して初めて出る。
-function probeCalendarAccess() {
-  if (!fs.existsSync(calendarProbePath)) {
-    console.log("Calendar probe: ヘルパーが見つかりません");
-    return;
-  }
-  const child = spawn(calendarProbePath, [], { stdio: ["ignore", "pipe", "pipe"] });
-  let output = "";
-  let errorOutput = "";
-  child.stdout.on("data", (chunk) => { output += chunk; });
-  child.stderr.on("data", (chunk) => { errorOutput += chunk; });
-  // 許可ダイアログを利用者が操作する時間を見込む。
-  const timer = setTimeout(() => child.kill(), 45000);
-  child.on("close", () => {
-    clearTimeout(timer);
-    const raw = output.trim();
-    console.log(`Calendar probe: ${raw || "(応答なし)"}`);
-    if (errorOutput.trim()) console.log(`Calendar probe stderr: ${errorOutput.trim()}`);
-    let result;
-    try {
-      result = JSON.parse(raw);
-    } catch (_e) {
-      result = undefined;
-    }
-    const text = !result
-      ? "カレンダーの確認ができませんでした。ログを見てください。"
-      : result.status === "granted"
-        ? `カレンダーを読めました。今日の予定は${result.todayEventCount}件です。`
-        : result.status === "denied"
-          ? "カレンダーを読む許可が下りませんでした。"
-          : "カレンダーの確認が時間切れになりました。";
-    companionHiddenByUser = false;
-    showAmbientLine({ text, sources: [], kind: "calendar-probe" });
-  });
 }
 
 function maybeWelcomeBack() {

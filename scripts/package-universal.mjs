@@ -43,28 +43,6 @@ function removeUnusedCameraPermission(appPath) {
   }
 }
 
-// カレンダーの使用目的は Electron の既定 Info.plist に無い。
-// 宣言が無いと、許可ダイアログが出ないまま要求が握り潰される
-// （拒否ではなく notDetermined のまま何も起きない）。
-function addCalendarPermission(appPath) {
-  const key = "NSCalendarsFullAccessUsageDescription";
-  const description = "今日の予定を踏まえて話しかけるために、カレンダーを読み取ります。";
-  // 本体の Info.plist だけに足す。同梱ヘルパーは自分の plist を持っている。
-  const mainPlist = path.join(appPath, "Contents", "Info.plist");
-  const plist = fs.readFileSync(mainPlist, "utf8");
-  if (plist.includes(`<key>${key}</key>`)) return;
-
-  // </dict></plist> の直前へ入れる。既存の並びは崩さない。
-  const updated = plist.replace(
-    /(\s*)<\/dict>\s*<\/plist>\s*$/,
-    `$1  <key>${key}</key>$1  <string>${description}</string>$1</dict>\n</plist>\n`
-  );
-  if (!updated.includes(`<key>${key}</key>`)) {
-    throw new Error(`カレンダー権限の追記に失敗しました: ${mainPlist}`);
-  }
-  fs.writeFileSync(mainPlist, updated);
-}
-
 function executableArchitectures(executablePath) {
   return execFileSync("/usr/bin/lipo", ["-archs", executablePath], { encoding: "utf8" }).trim().split(/\s+/);
 }
@@ -149,7 +127,6 @@ const outputPaths = await packager({
 for (const outputPath of outputPaths) {
   const appPath = path.join(outputPath, "びくたん.app");
   removeUnusedCameraPermission(appPath);
-  addCalendarPermission(appPath);
   const electronLicensePath = path.join(outputPath, "LICENSE");
   if (fs.existsSync(electronLicensePath)) {
     fs.renameSync(electronLicensePath, path.join(outputPath, "ELECTRON_LICENSE"));

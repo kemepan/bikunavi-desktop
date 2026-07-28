@@ -58,7 +58,13 @@ const {
   describeAway,
   shouldWelcomeBack
 } = require("./welcome-back-utils");
-const { describeBgmSuggestion, pickBgm } = require("./bgm-utils");
+const {
+  bgmDaypart,
+  describeBgmSuggestion,
+  markBgmSuggested,
+  pickBgm,
+  shouldSuggestBgm
+} = require("./bgm-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
@@ -133,6 +139,7 @@ const DEFAULT_STATE = {
   clickThroughEnabled: false,
   dimWhenIdleEnabled: false,
   lastLaunchAt: 0,
+  bgmSuggestHistory: { date: "", dayparts: [] },
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
@@ -1359,7 +1366,16 @@ function startPomodoro(phase, options = {}) {
   if (options.chime !== false) playPomodoroChime("start");
   const message = options.message ?? preset.startMessage;
   if (options.speak !== false && message) {
-    speakFromMain(message, "answer").catch((error) => {
+    // 集中している間は独り言を止めるので、始まる時にBGMも渡しておく。
+    // 休憩の開始では薦めない（休むための時間なので）。
+    const bgm = String(phase).startsWith("break")
+      ? { text: "", source: undefined }
+      : bgmLineForPomodoroStart();
+    const spoken = bgm.text ? `${message}\n${bgm.text}` : message;
+    if (bgm.source) {
+      showAmbientLine({ text: spoken, sources: [bgm.source], kind: "pomodoro-start" });
+    }
+    speakFromMain(spoken, "answer").catch((error) => {
       console.error("Pomodoro start speech failed:", error);
     });
   }
@@ -1487,10 +1503,6 @@ function buildTrayMenu() {
           click: () => playPomodoroChime("finish")
         }
       ]
-    },
-    {
-      label: "🎧 BGMを選んでもらう",
-      click: suggestBgmNow
     },
     {
       label: "🔮 びくたん占い",
@@ -2707,27 +2719,48 @@ app.whenReady().then(() => {
 // 直近に薦めたBGM。続けて押した時に同じものを返さないため。
 const recentBgmNames = [];
 
-function suggestBgmNow() {
-  const context = {
-    slot: getJstTimeContext().slot,
-    focus: pomodoroState.active &&
-      !String(pomodoroState.phase || "").startsWith("break")
-  };
-  const name = pickBgm(context, recentBgmNames);
-  if (!name) return;
+function rememberBgmName(name) {
   recentBgmNames.push(name);
   while (recentBgmNames.length > 6) recentBgmNames.shift();
-  const text = describeBgmSuggestion(name, {
-    preference: getMusicGenrePreference(),
-    slot: context.slot,
-    focus: context.focus
-  });
-  companionHiddenByUser = false;
-  showAmbientLine({
-    text,
+}
+
+// 朝・昼・夜に一度ずつ、独り言としてBGMを薦める。
+// メニューを増やさず、会話の流れの中で渡すための入口。
+function takeBgmSuggestion() {
+  const slot = getJstTimeContext().slot;
+  const daypart = bgmDaypart(slot);
+  const { year, month, day } = getJstDateParts();
+  const date = `${year}-${month}-${day}`;
+  if (!shouldSuggestBgm(persistedState.bgmSuggestHistory, { date, daypart })) {
+    return undefined;
+  }
+  const name = pickBgm({ slot }, recentBgmNames);
+  if (!name) return undefined;
+  rememberBgmName(name);
+  persistedState.bgmSuggestHistory = markBgmSuggested(
+    persistedState.bgmSuggestHistory,
+    { date, daypart }
+  );
+  saveStateSoon();
+  return {
+    text: describeBgmSuggestion(name, {
+      preference: getMusicGenrePreference(),
+      slot
+    }),
     sources: [makeYoutubeSearchSource(`${name} 作業用 BGM`)],
     kind: "bgm"
-  });
+  };
+}
+
+// ポモドーロ中は独り言を止めるので、始まる時のひと言へ混ぜておく。
+function bgmLineForPomodoroStart() {
+  const name = pickBgm({ focus: true }, recentBgmNames);
+  if (!name) return { text: "", source: undefined };
+  rememberBgmName(name);
+  return {
+    text: describeBgmSuggestion(name, { focus: true }),
+    source: makeYoutubeSearchSource(`${name} 作業用 BGM`)
+  };
 }
 
 function maybeWelcomeBack() {
@@ -2742,7 +2775,7 @@ function maybeWelcomeBack() {
   // BGMはトレイの「BGMを選んでもらう」と同じ候補から選ぶ。
   const bgm = pickBgm({ slot: getJstTimeContext().slot }, recentBgmNames) ||
     "静かな作業用のチル";
-  recentBgmNames.push(bgm);
+  rememberBgmName(bgm);
   const query = `${bgm} 作業用 BGM`;
   // 初回案内やVOICEVOX案内と重ならないよう、少し遅らせる。
   setTimeout(() => {
@@ -5116,6 +5149,9 @@ ipcMain.handle("companion:idle-line", async () => {
   if (!pendingThreadLines.length) {
     const diaryMemory = takeLocalDiaryMemory();
     if (diaryMemory) return withInferredEmote(diaryMemory);
+    // BGMは朝昼夜に一度ずつ。数が少ないので、埋もれないよう前の方で返す。
+    const bgmSuggestion = takeBgmSuggestion();
+    if (bgmSuggestion) return withInferredEmote(bgmSuggestion);
     const characterQuestion = makeCharacterQuestion(false);
     if (characterQuestion) return withInferredEmote(characterQuestion);
     const growthQuestion = makeGrowthQuestion();

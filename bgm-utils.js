@@ -86,5 +86,37 @@
     return `${name}はどうでしょう。`;
   }
 
-  return { BGM_CANDIDATES, matches, pickBgm, describeBgmSuggestion };
+  // 朝・昼・夜の3枠に丸める。1日に何度も薦めないための単位。
+  function bgmDaypart(slot) {
+    if (slot === "早朝" || slot === "朝") return "朝";
+    if (slot === "昼" || slot === "午後") return "昼";
+    return "夜";
+  }
+
+  // その日その時間帯で、まだ薦めていなければ true。
+  function shouldSuggestBgm(history, { date, daypart } = {}) {
+    if (!date || !daypart) return false;
+    if (history?.date !== date) return true;
+    return !(Array.isArray(history?.dayparts) ? history.dayparts : []).includes(daypart);
+  }
+
+  // 薦めた記録を更新する。日が変わったら作り直す。
+  function markBgmSuggested(history, { date, daypart } = {}) {
+    if (!date || !daypart) return history || { date: "", dayparts: [] };
+    if (history?.date !== date) return { date, dayparts: [daypart] };
+    const dayparts = Array.isArray(history.dayparts) ? history.dayparts : [];
+    return dayparts.includes(daypart)
+      ? history
+      : { date, dayparts: [...dayparts, daypart] };
+  }
+
+  return {
+    BGM_CANDIDATES,
+    matches,
+    pickBgm,
+    describeBgmSuggestion,
+    bgmDaypart,
+    shouldSuggestBgm,
+    markBgmSuggested
+  };
 });

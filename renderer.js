@@ -99,6 +99,8 @@ let hoverMouthPhase = 0;
 const dragSway = { x: 0, y: 0 };
 let lastDragPoint;
 let lastDragMoveAt = 0;
+// 振り幅の調整用。掴んでいる間の最大速度をログに出す。
+let dragPeak = 0;
 let hideBubbleTimer;
 let chatterEndTimer;
 let responseSpeechTimer;
@@ -2319,20 +2321,22 @@ async function start() {
       // すぐには止まらず、揺り戻しながら収まる。
       // 掴んでいる間も減衰させる。カーソルを止めると pointermove が来なくなり、
       // 減衰しないままだと傾いた姿勢で固まってしまう。
-      const swayDecay = Math.pow(dragging ? 0.9 : 0.86, pixiApp.ticker.deltaMS / 16);
+      const swayDecay = Math.pow(dragging ? 0.94 : 0.88, pixiApp.ticker.deltaMS / 16);
       dragSway.x *= swayDecay;
       dragSway.y *= swayDecay;
       if (Math.abs(dragSway.x) > 0.01 || Math.abs(dragSway.y) > 0.01) {
-        // 速すぎる動きでも壊れないよう、効き幅に上限を置く。
-        const swayX = Math.max(-1, Math.min(1, dragSway.x / 34));
-        const swayY = Math.max(-1, Math.min(1, dragSway.y / 34));
-        core.addParameterValueById("ParamBodyAngleZ", swayX * -11);
-        core.addParameterValueById("ParamAngleZ", swayX * -7);
-        core.addParameterValueById("ParamBodyX", swayX * -5);
-        core.addParameterValueById("ParamBodyAngleX", swayX * -6);
+        // 少し動かしただけでも効くよう、上限は低めに取る。
+        const swayX = Math.max(-1, Math.min(1, dragSway.x / 18));
+        const swayY = Math.max(-1, Math.min(1, dragSway.y / 18));
+        // 首（ParamAngleZ）は可動域が広いので大きく倒す。
+        // 体（ParamBodyAngleZ）は±10前後で頭打ちなので控えめに。
+        core.addParameterValueById("ParamAngleZ", swayX * -22);
+        core.addParameterValueById("ParamBodyAngleZ", swayX * -10);
+        core.addParameterValueById("ParamBodyX", swayX * -9);
+        core.addParameterValueById("ParamBodyAngleX", swayX * -9);
         // 上下に振ると、体が縦に伸び縮みするように見せる。
-        core.addParameterValueById("ParamBodyPositionY", swayY * -7);
-        core.addParameterValueById("ParamAngleY", swayY * -5);
+        core.addParameterValueById("ParamBodyPositionY", swayY * -13);
+        core.addParameterValueById("ParamAngleY", swayY * -10);
       }
       // 聞く・考える・話す・待機の動きを約0.26秒で混ぜ、状態切替時のカクつきを抑える。
       // 先行読み上げ中は、回答生成が続いていても「話す」を最優先する。
@@ -2800,6 +2804,7 @@ canvas.addEventListener("pointerdown", (event) => {
   pointerDown = { x: event.screenX, y: event.screenY };
   lastDragPoint = undefined;
   lastDragMoveAt = performance.now();
+  dragPeak = 0;
   canvas.setPointerCapture(event.pointerId);
 });
 
@@ -2827,8 +2832,11 @@ canvas.addEventListener("pointermove", (event) => {
       const dt = Math.max(8, now - lastDragMoveAt);
       const vx = (event.screenX - lastDragPoint.x) / dt * 16;
       const vy = (event.screenY - lastDragPoint.y) / dt * 16;
-      dragSway.x += (vx - dragSway.x) * 0.35;
-      dragSway.y += (vy - dragSway.y) * 0.35;
+      // なますとフレーム側の減衰に負けて、振っても傾かない。
+      // 速い方を採る（振った瞬間にしっかり効かせ、あとは減衰に任せる）。
+      if (Math.abs(vx) > Math.abs(dragSway.x)) dragSway.x = vx;
+      if (Math.abs(vy) > Math.abs(dragSway.y)) dragSway.y = vy;
+      dragPeak = Math.max(dragPeak, Math.abs(vx), Math.abs(vy));
     }
     lastDragPoint = { x: event.screenX, y: event.screenY };
     lastDragMoveAt = now;
@@ -2839,7 +2847,11 @@ canvas.addEventListener("pointermove", (event) => {
 canvas.addEventListener("pointerup", (event) => {
   if (!pointerDown) return;
   canvas.releasePointerCapture(event.pointerId);
-  if (dragging) bikunavi.send("companion:drag-end");
+  if (dragging) {
+    // 振り幅を調整できるよう、どれくらいの速さで動かされたか残す。
+    console.log(`Drag sway peak: ${dragPeak.toFixed(1)}（18で最大の傾き）`);
+    bikunavi.send("companion:drag-end");
+  }
   pointerDown = undefined;
   dragging = false;
   if (topDocked) {

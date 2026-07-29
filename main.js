@@ -103,12 +103,22 @@ const CAPABILITY_BOUNDARY_PROMPT = [
 // RendererのWeb Audioを再生できるようにする。
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
-// 配布版と開発版が同じ state.json を同時に書かないよう、開発起動時だけ
-// userData を分離する。配布した .app は環境変数なしで従来の保存先を使う。
-const dataChannel = process.env.BIKUNAVI_DATA_CHANNEL === "dev" ? "dev" : "release";
-if (dataChannel === "dev") {
-  app.setPath("userData", path.join(app.getPath("appData"), "bikunavi-desktop-dev"));
-}
+  // 配布版・開発版・検証用が同じ state.json を書かないよう、userData を分ける。
+  // 配布した .app は環境変数なしで従来の保存先を使う。
+  //
+  // 以前は "dev" だけを見ていたため、検証用に別名を渡したつもりでも
+  // 本番と同じ保存先が使われ、設定を壊したことがある（2026-07-29）。
+  // 名前は英数字とハイフンだけに限る。パス区切りを混ぜて保存先を
+  // アプリの外へ逃がされないようにするため。
+  const rawDataChannel = String(process.env.BIKUNAVI_DATA_CHANNEL || "").trim();
+  const dataChannel = /^[a-z0-9-]{1,24}$/i.test(rawDataChannel) ? rawDataChannel : "release";
+  if (dataChannel !== "release") {
+    app.setPath(
+      "userData",
+      path.join(app.getPath("appData"), `bikunavi-desktop-${dataChannel}`)
+    );
+  }
+  console.log(`Data channel: ${dataChannel}`);
 
 // file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
 // 特権スキームで index.html と Live2D 素材を配信する。

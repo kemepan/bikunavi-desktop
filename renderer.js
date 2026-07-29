@@ -476,6 +476,11 @@ function restoreHandsFreeCaptureState(utterance) {
 
 async function finishHandsFreeUtterance(utterance) {
   if (!utterance?.chunks?.length || utterance.generation !== handsFreeGeneration) {
+    console.log(
+      "Hands-free utterance dropped: " +
+      `${utterance?.chunks?.length ? "" : "音が空 / "}` +
+      `世代 ${utterance?.generation}/${handsFreeGeneration}`
+    );
     restoreHandsFreeCaptureState(utterance);
     return;
   }
@@ -507,9 +512,23 @@ async function finishHandsFreeUtterance(utterance) {
       utterance.generation !== handsFreeGeneration ||
       !handsFreeEnabled ||
       systemSleeping
-    ) return;
+      ) {
+        // 黙って捨てると、話しかけても無反応な理由が誰にも分からない。
+        console.log(
+          "Hands-free transcript dropped: " +
+          `世代 ${utterance.generation}/${handsFreeGeneration}` +
+          `${handsFreeEnabled ? "" : " / ハンズフリーOFF"}` +
+          `${systemSleeping ? " / スリープ中" : ""}`
+        );
+        return;
+      }
     const text = String(result?.text || "").trim();
     if (!isUsableTranscript(text, { handsFree: true })) {
+      // 何が弾かれたのかが分からないと、無反応の理由を追えない。
+      console.log(
+        `Hands-free transcript rejected: ${JSON.stringify(text.slice(0, 40))} `
+        + `(${text.length}文字)`
+      );
       showStatusMessage(result?.message || "うまく聞き取れませんでした");
       return;
     }
@@ -981,7 +1000,7 @@ volumeSlider?.addEventListener("change", async (event) => {
 });
 
 function normalizeSpeechItem(item) {
-  if (typeof item === "string") return { text: item, sources: [], choices: [] };
+  if (typeof item === "string") return { text: item, sources: [], choices: [], continues: false };
   return {
     text: String(item?.text ?? ""),
     sources: Array.isArray(item?.sources) ? item.sources : [],
@@ -991,7 +1010,9 @@ function normalizeSpeechItem(item) {
     choices: Array.isArray(item?.choices)
       ? item.choices.map((choice) => String(choice).trim()).filter(Boolean).slice(0, 6)
       : [],
-    emote: ANSWER_EMOTES.has(item?.emote) ? item.emote : ""
+    emote: ANSWER_EMOTES.has(item?.emote) ? item.emote : "",
+    // 続きものの印。落とすと、あとから話題の先頭を辿れなくなる。
+    continues: Boolean(item?.continues)
   };
 }
 
@@ -1087,6 +1108,8 @@ function rememberLine(item, kind = "line") {
     text: speechItem.text,
     sources: speechItem.sources,
     kind,
+    // 話題は先頭の行が持つので、途中の行だけを返信先にすると文脈が消える。
+    continues: Boolean(speechItem.continues),
     time: Date.now()
   };
   lineHistory.push(remembered);
@@ -1764,6 +1787,21 @@ function stopThinkingSound() {
   thinkingSoundPlaying = false;
 }
 
+// 続きものの途中の行が返信先になった時、その話題の先頭まで遡って一つにまとめる。
+// 「調整に時間かかりますよね？」だけ渡しても、何の調整か分からない。
+function withThreadContext(item) {
+  const text = String(item?.text || "").trim();
+  if (!text) return item;
+  const index = lineHistory.findIndex((line) => line.text === text);
+  if (index < 0 || !lineHistory[index]?.continues) return item;
+  let start = index;
+  while (start > 0 && lineHistory[start]?.continues) start -= 1;
+  if (start === index) return item;
+  const thread = lineHistory.slice(start, index + 1).map((line) => line.text);
+  console.log(`Choice reply context: ${thread.length}行さかのぼり`);
+  return { ...item, text: thread.join(" ") };
+}
+
 async function runChat(rawMessage, { uncertain = false, replyTo } = {}) {
   const message = rawMessage.trim();
   if (!message || isSpeaking || isThinking) return;
@@ -1774,7 +1812,7 @@ async function runChat(rawMessage, { uncertain = false, replyTo } = {}) {
   // 選択肢ボタンは、どのセリフに紐づくかを押した時点で持っている。
   // 推測に頼ると、直前の会話が履歴に残っている時にそちらへ引っ張られる。
   const pickedContext = String(replyTo?.text || "").trim()
-    ? { item: replyTo, direct: true }
+    ? { item: withThreadContext(replyTo), direct: true }
     : pickConversationContext({
       displayedLineItem,
       lastAmbientLine: lastLine,

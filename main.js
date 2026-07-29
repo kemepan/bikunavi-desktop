@@ -3856,11 +3856,14 @@ function formatRelationshipMemory() {
 }
 
 function formatRecentConversationCallbackContext() {
+  // 話しかけてもらった内容は、独り言のいちばん良い種になる。
+  // 4件では前の話題がすぐ流れてしまうので、少し長めに持つ。
   const recentChats = (Array.isArray(persistedState.chatEntries) ? persistedState.chatEntries : [])
-    .slice(-4)
+    .slice(-8)
     .map((entry) => {
+      // 覚えていてほしいのはユーザーが言ったこと。自分の返事は思い出す手がかり程度でいい。
       const question = String(entry?.question || "").replace(/\s+/g, " ").trim().slice(0, 180);
-      const answer = String(entry?.answer || "").replace(/\s+/g, " ").trim().slice(0, 220);
+      const answer = String(entry?.answer || "").replace(/\s+/g, " ").trim().slice(0, 120);
       const sourceTitles = uniqueSources(Array.isArray(entry?.sources) ? entry.sources : [])
         .map((source) => String(source.title || "").replace(/\s+/g, " ").trim().slice(0, 140))
         .filter(Boolean)
@@ -3875,9 +3878,13 @@ function formatRecentConversationCallbackContext() {
     .filter(Boolean);
   if (!recentChats.length) return "";
   return [
-    "直近の会話・ニュースの話題（今回の独り言に自然なつながりがある場合だけ使う）:",
+    "最近ユーザーと話したこと。独り言の種として積極的に使ってください:",
     ...recentChats.map((line) => `- ${line}`),
-    "会話内容をそのまま復唱せず、ここにない事実やユーザーの状況を補わないでください。"
+    "使い方:",
+    "- ユーザーが話した話題を自分から思い出し、そこから連想したことや、その後考えたことを話す",
+    "- 「さっき〇〇の話をしましたね」のように、会話を覚えていることが伝わる言い方をしてよい",
+    "- ただし、そのまま復唱しない。聞いていない事実やユーザーの状況を勝手に補わない",
+    "- 20行すべてを会話の話題にせず、ニュースや制作の話とまぜる"
   ].join("\n");
 }
 

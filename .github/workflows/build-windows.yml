@@ -44,11 +44,19 @@ jobs:
           foreach ($f in @("native/now-playing", "native/speech-recognizer.app", "native/stt/darwin-arm64")) {
             if (Test-Path "$app/$f") { throw "macOS 専用のファイルが含まれています: $f" }
           }
-          # 動かすのに要るものが揃っているか
-          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "models/ggml-base.bin")) {
+          # 動かすのに要るものが揃っているか。
+          # models/ は gitignore されていて CI には無いので、ここでは見ない
+          # （配布物を作る時は手元のモデルが入る）。
+          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "conversation-providers.js")) {
             if (-not (Test-Path "$app/$f")) { throw "必要なファイルがありません: $f" }
           }
           if (-not (Test-Path "dist/bikutan-win32-x64/bikutan.exe")) { throw "exe が作られていません" }
+          # モデルの有無は配布物の完成度に関わるので、状態だけ知らせる。
+          if (Test-Path "$app/models/ggml-base.bin") {
+            Write-Host "音声認識のモデル: 同梱されています"
+          } else {
+            Write-Host "音声認識のモデル: 含まれていません（CIでは想定どおり。配布時は手元のモデルが入ります）"
+          }
           Write-Host "確認できました"
 
       # 実機で試せるよう、成果物を残す。Release とは別で、

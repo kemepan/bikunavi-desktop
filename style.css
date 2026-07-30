@@ -354,6 +354,16 @@ body {
   background: rgb(255 250 244 / 95%);
 }
 
+/* 操作ボタンと同じ行に置く残り時間。ボタンと並ぶので、間を空けて左へ寄せる。 */
+.timer-inline {
+  font-size: 0.8rem;
+  opacity: 0.8;
+  margin-right: auto;
+  padding-left: 4px;
+  white-space: nowrap;
+  align-self: center;
+}
+
 .timer-message {
   color: #3a2530;
   font-weight: 650;
@@ -364,8 +374,15 @@ body {
 .timer-actions {
   display: flex;
   justify-content: center;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* 残り時間を並べる時だけ、時間を左・ボタンを右へ寄せる。
+   時間が無い時は従来どおり中央に揃える。 */
+.timer-actions:has(.timer-inline) {
+  justify-content: flex-start;
 }
 
 .timer-actions button {

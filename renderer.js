@@ -1446,10 +1446,32 @@ function getIdleSpeechHoldMs(item) {
   return 900;
 }
 
-function createPomodoroControls(state) {
+function pomodoroTimerText(state) {
+  return `${state.label || "ポモドーロ"}` +
+    `${state.running ? "" : " 一時停止中"}  ` +
+    `${state.timeText || "0:00"}`;
+}
+
+// 集中している間の吹き出し。セリフと入力欄を主役にし、
+// 残り時間と操作ボタンは下の一行へまとめる。
+function showPomodoroWithChat() {
+  showChatBubble(false, displayedLineSources, displayedLineItem);
+  const controls = createPomodoroControls(pomodoroState, { withTime: true });
+  if (controls) bubble.append(controls);
+}
+
+// withTime を立てると、残り時間を操作ボタンと同じ行に置く。
+// 離れていると、同じ機能なのに視線が往復する。
+function createPomodoroControls(state, { withTime = false } = {}) {
   if (!state.active) return undefined;
   const controls = document.createElement("div");
   controls.className = "timer-actions";
+  if (withTime) {
+    const time = document.createElement("span");
+    time.className = "timer-inline";
+    time.textContent = pomodoroTimerText(state);
+    controls.append(time);
+  }
 
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -1462,7 +1484,10 @@ function createPomodoroControls(state) {
         "companion:pomodoro-action",
         state.running ? "pause" : "resume"
       );
-      showPomodoroBubble(pomodoroState, true);
+      // 会話欄と並べて出している時はその表示を保つ。
+      // タイマー単独へ戻すと、話しかける手段が消える。
+      if (isHovered) showPomodoroWithChat();
+      else showPomodoroBubble(pomodoroState, true);
     } catch (error) {
       console.error("Pomodoro toggle failed:", error);
     }
@@ -2096,7 +2121,10 @@ function enterCharacter() {
   if (lineHistoryActive) return;
   if (chatActive && bubble.classList.contains("has-chat")) return;
   if (pomodoroState.active) {
-    showPomodoroBubble(pomodoroState, true);
+    // 集中している間も話しかけられるようにする。タイマーだけに差し替えると
+    // 入力欄とマイクが消えて、思いついたことを渡せなくなる。
+    showPomodoroWithChat();
+    model?.motion("Wave", 0);
   } else {
     // 表示中、または直前の自動セリフ・ニュースを残したまま入力欄を足す。
     // 会話履歴はホバーの初期表示にせず、直前にびくたんが話した内容を優先する。
@@ -2828,6 +2856,14 @@ bikunavi.on("companion:pomodoro", (state) => {
     showPomodoroBubble(pomodoroState, reason === "completed");
   } else if (pomodoroState.active && bubble.classList.contains("has-timer")) {
     showPomodoroBubble(pomodoroState);
+  } else if (pomodoroState.active && bubble.querySelector(".timer-inline")) {
+    // 会話欄と並べて出している時は、その行だけ書き換える。
+    // 吹き出しを作り直すと、入力途中の文字が消える。
+    const inline = bubble.querySelector(".timer-inline");
+    inline.textContent =
+      `${pomodoroState.label || "ポモドーロ"}` +
+      `${pomodoroState.running ? "" : " 一時停止中"}  ` +
+      `${pomodoroState.timeText || "0:00"}`;
   }
   if (!pomodoroState.active && reason !== "completed") resumeAmbientState();
 });

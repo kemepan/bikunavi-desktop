@@ -2074,14 +2074,56 @@ async function isVoicevoxReady() {
   }
 }
 
+// VOICEVOX の実体を探す。インストール先はOSごとに違ううえ、
+// 利用者が置き場所を変えていることもあるので、環境変数を最優先にする。
+function voicevoxEngineCandidates() {
+  const home = app.getPath("home");
+  const custom = String(process.env.BIKUNAVI_VOICEVOX_ENGINE || "").trim();
+  if (process.platform === "win32") {
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    return [
+      custom,
+      path.join(localAppData, "Programs", "VOICEVOX", "vv-engine", "run.exe"),
+      path.join(programFiles, "VOICEVOX", "vv-engine", "run.exe"),
+      path.join(home, "VOICEVOX", "vv-engine", "run.exe")
+    ];
+  }
+  if (process.platform === "linux") {
+    return [
+      custom,
+      path.join(home, ".local", "share", "VOICEVOX", "vv-engine", "run"),
+      "/opt/VOICEVOX/vv-engine/run"
+    ];
+  }
+  return [
+    custom,
+    "/Applications/VOICEVOX.app/Contents/Resources/vv-engine/run",
+    path.join(home, "Applications", "VOICEVOX.app", "Contents", "Resources", "vv-engine", "run")
+  ];
+}
+
+function findVoicevoxEngine() {
+  for (const candidate of voicevoxEngineCandidates()) {
+    if (candidate && fs.existsSync(candidate)) return candidate;
+  }
+  return "";
+}
+
+function voicevoxNotFoundMessage() {
+  const where = process.platform === "win32"
+    ? "VOICEVOXが見つかりません。インストールするか、BIKUNAVI_VOICEVOX_ENGINE に run.exe の場所を指定してください。"
+    : "VOICEVOXが見つかりません。アプリケーションフォルダへ入れるか、BIKUNAVI_VOICEVOX_ENGINE に場所を指定してください。";
+  return where;
+}
+
 async function ensureVoicevoxEngine() {
   if (await isVoicevoxReady()) return;
   if (voicevoxReadyPromise) return voicevoxReadyPromise;
 
   voicevoxReadyPromise = (async () => {
-    const engine =
-      "/Applications/VOICEVOX.app/Contents/Resources/vv-engine/run";
-    if (!fs.existsSync(engine)) throw new Error("VOICEVOX.appが見つかりません");
+    const engine = findVoicevoxEngine();
+    if (!engine) throw new Error(voicevoxNotFoundMessage());
     voicevoxProcess = spawn(
       engine,
       [

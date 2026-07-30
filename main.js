@@ -154,6 +154,9 @@ const DEFAULT_STATE = {
   // 注意: 一度もこの設定を触っていない人は、更新でオンに変わる
   // （保存されているのは触った値だけなので）。明示的にオフにした人は
   // false が保存されているため、オフのまま守られる。
+  // ログイン時に自動で立ち上げるか。macOS も Windows も
+  // Electron の setLoginItemSettings で扱える。
+  openAtLogin: false,
   clickThroughEnabled: true,
   dimWhenIdleEnabled: true,
   lastLaunchAt: 0,
@@ -1908,6 +1911,18 @@ function buildTrayMenu() {
       label: "🖥 表示・サイズ",
       submenu: [
         {
+          label: "パソコンを起動したら開く",
+          type: "checkbox",
+          checked: Boolean(persistedState.openAtLogin),
+          enabled: app.isPackaged,
+          click: (item) => {
+            persistedState.openAtLogin = item.checked;
+            applyOpenAtLogin(item.checked);
+            saveStateSoon();
+          }
+        },
+        { type: "separator" },
+        {
           label: "いつも手前",
           type: "checkbox",
           checked: companionWindow?.isAlwaysOnTop() ?? true,
@@ -2115,6 +2130,19 @@ function voicevoxNotFoundMessage() {
     ? "VOICEVOXが見つかりません。インストールするか、BIKUNAVI_VOICEVOX_ENGINE に run.exe の場所を指定してください。"
     : "VOICEVOXが見つかりません。アプリケーションフォルダへ入れるか、BIKUNAVI_VOICEVOX_ENGINE に場所を指定してください。";
   return where;
+}
+
+// ログイン時の自動起動。開発用の LaunchAgent とは別で、
+// 配布版を使う人が設定から入り切りできるようにする。
+function applyOpenAtLogin(enabled) {
+  // 開発中（npm start や LaunchAgent 常駐）は登録しない。
+  // 開発用の起動と二重になって、びくたんが2人立ち上がる。
+  if (!app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+  } catch (error) {
+    console.error("Login item update failed:", error);
+  }
 }
 
 async function ensureVoicevoxEngine() {
@@ -2760,6 +2788,9 @@ app.whenReady().then(() => {
   maybeShowVoicevoxGuide();
   maybeShowTrayGuide();
   maybeWelcomeBack();
+  // 保存された設定と、OS側の登録状態を合わせておく。
+  // アプリを入れ直すと登録が消えることがあるため。
+  applyOpenAtLogin(persistedState.openAtLogin);
 });
 
 // VOICEVOX未インストールの初回だけ、声の入手先を一度案内する（それまではmacOS音声で代用）
@@ -4375,6 +4406,10 @@ function showRecentDiaries() {
 }
 
 function detectMediaRemotePlayback() {
+  // 再生中の曲を読むのは macOS の MediaRemote に頼っている。
+  // Windows に同等の手段が無いので、音楽連動は macOS 限定機能として扱う。
+  // 他のOSでは「再生中の曲なし」を返すだけにする（踊らないが、他は動く）。
+  if (process.platform !== "darwin") return Promise.resolve(undefined);
   if (!fs.existsSync(nowPlayingHelperPath)) return Promise.resolve(undefined);
   return new Promise((resolve) => {
     const child = spawn(nowPlayingHelperPath, [], { stdio: ["ignore", "pipe", "ignore"] });

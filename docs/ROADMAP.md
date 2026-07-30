@@ -57,7 +57,9 @@
 
 - macOS でしか動かない箇所を、プラットフォームごとに差し替えられる形へ整理する。現状の依存は次の4つ:
   - **音声認識**: `speech-recognizer.app`（Apple Speech）。Windows は同梱の Whisper を使う（`whisper-cli.exe` の判定は実装済み）
-  - **音の再生**: `afplay`（7箇所）。Electron 側で鳴らす形へ寄せる
+  - **音の再生**: `afplay`。効果音の2箇所は対応済み（2026-07-29）。ポモドーロのベルは renderer 側へ回し、考え中の音は他OSでは鳴らさず諦める。
+    残る3箇所は**VOICEVOXが作った音声の再生**で、VOICEVOX の起動自体が `/Applications/VOICEVOX.app/...` 決め打ちのため、
+    **音声合成とセットで扱う**（片方だけ直しても意味がない）
   - **VOICEVOX**: `/Applications/VOICEVOX.app/...` を直接起動している。インストール先を環境ごとに探す
   - **再生中の曲**: `native/now-playing`（Objective-C）。Windows に同等の手段が無いため、**音楽連動は macOS 限定機能として切り分ける**
 - 自動起動を LaunchAgent 以外でも扱えるようにする（Windows はスタートアップ or タスクスケジューラ）

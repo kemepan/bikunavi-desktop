@@ -1197,6 +1197,11 @@ function playPomodoroChime(kind) {
     fallbackSent = true;
     companionWindow?.webContents.send("companion:pomodoro-chime", kind);
   };
+    // afplay は macOS の再生コマンド。他のOSでは renderer 側で鳴らす。
+    if (!canUseAfplay()) {
+      useRendererFallback();
+      return;
+    }
   try {
     const child = spawn("/usr/bin/afplay", ["-v", "0.35", soundPath], { stdio: "ignore" });
     pomodoroChimeProcess = child;
@@ -1214,6 +1219,12 @@ function playPomodoroChime(kind) {
   }
 }
 
+// 音の再生は macOS の afplay に頼っている。Windows へ持っていく時の分かれ目なので、
+// 判定をここへまとめる。実体が無い環境（将来のOS変更）でも false になる。
+function canUseAfplay() {
+  return process.platform === "darwin" && fs.existsSync("/usr/bin/afplay");
+}
+
 function stopThinkingSound() {
   thinkingSoundRequested = false;
   thinkingSoundIsPreview = false;
@@ -1229,6 +1240,9 @@ function startThinkingSound() {
   const soundPath = path.join(__dirname, "assets", "sounds", "thinking-countdown.mp3");
   if (!fs.existsSync(soundPath)) return;
   const volume = Math.max(0.12, Math.min(0.35, (speechVolume / 100) * 0.6)).toFixed(2);
+    // 他のOSでは afplay が無い。考え中の音は renderer 側に受け口が無いので、
+    // 鳴らさず静かに諦める（無くても会話は成立する）。
+    if (!canUseAfplay()) return;
   try {
     const child = spawn("/usr/bin/afplay", ["-v", volume, soundPath], { stdio: "ignore" });
     thinkingSoundProcess = child;

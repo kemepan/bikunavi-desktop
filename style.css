@@ -385,16 +385,75 @@ body {
   justify-content: flex-start;
 }
 
+/* 文字を入れるボタンなので、円ではなく横長の角丸にする。
+   円形は数字（15/25/90）向きで、「一時停止」のような語では窮屈になる。
+   文字が溢れないよう、幅は内容なりに広げる。 */
 .timer-actions button {
   appearance: none;
-  min-width: 64px;
-  padding: 7px 10px;
-  border: 1px solid rgb(130 78 44 / 20%);
-  border-radius: 999px;
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid rgb(130 78 44 / 22%);
+  border-radius: 10px;
   color: #4a2d1f;
   background: #f6eadf;
-  font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  font: 11.5px/1.3 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+/* 実行中の操作ボタン。待機中の丸ボタン（34px固定・円形）は
+   15/25/90 の数字向けなので、文字を入れるボタンでは打ち消す。
+   #pomodoro-quick button は ID セレクタで強いため、同じ強さで書く。 */
+#pomodoro-quick[data-mode="running"] .timer-actions button {
+  width: auto;
+  height: auto;
+  padding: 5px 12px;
+  border-radius: 10px;
+  box-shadow: none;
+  font: 11.5px/1.3 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  white-space: nowrap;
+}
+
+#pomodoro-quick[data-mode="running"] .timer-actions button[data-action="finish"] {
+  border-color: rgb(50 112 72 / 26%);
+  color: #24593c;
+  background: #cfeedb;
+}
+
+#pomodoro-quick[data-mode="running"] .timer-actions button[data-action="finish"]:hover {
+  background: #bfe6ce;
+}
+
+#pomodoro-quick[data-mode="running"] .timer-actions button[data-action="toggle"] {
+  border-color: rgb(133 67 67 / 24%);
+  color: #6d3030;
+  background: #f4d6d6;
+}
+
+#pomodoro-quick[data-mode="running"] .timer-actions button[data-action="toggle"]:hover {
+  background: #eec8c8;
+}
+
+/* 色で意味を分ける。👍👎の評価ボタンと同じ緑・赤の系統に揃える。
+   「完了」はやり切った合図なので緑。「一時停止」は手を止める側なので赤寄り。 */
+.timer-actions button[data-action="finish"] {
+  border-color: rgb(50 112 72 / 26%);
+  color: #24593c;
+  background: #cfeedb;
+}
+
+.timer-actions button[data-action="finish"]:hover {
+  background: #bfe6ce;
+}
+
+.timer-actions button[data-action="toggle"] {
+  border-color: rgb(133 67 67 / 24%);
+  color: #6d3030;
+  background: #f4d6d6;
+}
+
+.timer-actions button[data-action="toggle"]:hover {
+  background: #eec8c8;
 }
 
 .timer-actions button:hover {
@@ -634,6 +693,48 @@ body {
   background: white;
   font: 11px/1.25 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
   user-select: text;
+}
+
+/* 「あとで」「この質問はもうしない」を置く行。
+   入力欄と同じ行に並べると、入力欄が押しつぶされて打ちにくい。 */
+.chat-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.chat-question-actions button {
+  appearance: none;
+  padding: 4px 8px;
+  border: 1px solid rgb(80 55 100 / 20%);
+  border-radius: 9px;
+  color: #4a3a56;
+  background: #faf6fc;
+  font: 10.5px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  cursor: pointer;
+}
+
+.chat-question-actions button:hover {
+  background: #f2e9f7;
+}
+
+/* 実行中のポモドーロ枠。残り時間と操作ボタンをまとめて置く。
+   薄い背景に薄い文字を重ねると読めないので、色で濃さを出す。 */
+.pomodoro-quick-time {
+  padding: 0 4px 0 6px;
+  color: #4a2d1f;
+  font: 600 11.5px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* 残り時間と操作ボタンの間に、細い区切りを置く。 */
+#pomodoro-quick[data-mode="running"] .timer-actions {
+  margin: 0;
+  padding-left: 6px;
+  border-left: 1px solid rgb(121 72 64 / 16%);
 }
 
 .chat-form button {

@@ -18,6 +18,10 @@ const {
 const canvas = document.querySelector("#stage");
 const bubble = document.querySelector("#bubble");
 const pomodoroQuick = document.querySelector("#pomodoro-quick");
+// 待機中の中身（「集中する？」＋分数ボタン）。実行中の表示から戻す時に使う。
+const pomodoroQuickIdleNodes = pomodoroQuick
+  ? Array.from(pomodoroQuick.childNodes)
+  : [];
 const soundControls = document.querySelector("#sound-controls");
 const soundToggle = document.querySelector("#sound-toggle");
 const volumeControl = document.querySelector("#volume-control");
@@ -905,16 +909,45 @@ function isPointInSoundControls(point) {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
 }
 
+// ポモドーロの枠は吹き出しから独立させる。セリフと混ぜると、
+// タイマーがセリフの一部に見えたり、入力欄が押しのけられたりする。
+function renderPomodoroQuick() {
+  if (!pomodoroQuick) return;
+  if (!pomodoroState.active) {
+    // 待機中は「集中する？」＋分数ボタン（HTMLの初期状態）へ戻す。
+    if (pomodoroQuick.dataset.mode !== "idle") {
+      pomodoroQuick.dataset.mode = "idle";
+      pomodoroQuick.replaceChildren(...pomodoroQuickIdleNodes);
+    }
+    return;
+  }
+  // 実行中は残り時間と操作ボタン。作り直すと押しづらいので、
+  // 時間の表示だけ書き換える。
+  if (pomodoroQuick.dataset.mode === "running") {
+    const time = pomodoroQuick.querySelector(".pomodoro-quick-time");
+    if (time) time.textContent = pomodoroTimerText(pomodoroState);
+    const toggle = pomodoroQuick.querySelector('[data-action="toggle"]');
+    if (toggle) toggle.textContent = pomodoroState.running ? "一時停止" : "再開";
+    return;
+  }
+  pomodoroQuick.dataset.mode = "running";
+  const time = document.createElement("span");
+  time.className = "pomodoro-quick-time";
+  time.textContent = pomodoroTimerText(pomodoroState);
+  const controls = createPomodoroControls(pomodoroState);
+  pomodoroQuick.replaceChildren(time);
+  if (controls) pomodoroQuick.append(controls);
+}
+
 function updatePomodoroQuickVisibility() {
+  renderPomodoroQuick();
   const visible = Boolean(
     isHovered &&
     !dragging &&
-    !chatActive &&
     !lineHistoryActive &&
-    !isThinking &&
-    !isSpeaking &&
     !voiceInputActive &&
-    !pomodoroState.active
+    // 実行中は、考え中や読み上げ中でも残り時間を見せる。
+    (pomodoroState.active || (!chatActive && !isThinking && !isSpeaking))
   );
   if (visible === pomodoroQuickVisible) return;
   pomodoroQuickVisible = visible;
@@ -1450,39 +1483,35 @@ function getIdleSpeechHoldMs(item) {
 }
 
 function pomodoroTimerText(state) {
+  // トレイの「🍅 ポモドーロ」と同じ絵文字を、作業名と残り時間の間へ置く。
+  // 区切りになって、どちらも読みやすくなる。
   return `${state.label || "ポモドーロ"}` +
-    `${state.running ? "" : " 一時停止中"}  ` +
-    `${state.timeText || "0:00"}`;
+    `${state.running ? "" : "（一時停止中）"}` +
+    ` 🍅 ${state.timeText || "0:00"}`;
 }
 
 // 集中している間の吹き出し。セリフと入力欄を主役にし、
 // 残り時間と操作ボタンは下の一行へまとめる。
 function showPomodoroWithChat() {
+  // 吹き出しはセリフと入力欄だけ。残り時間と操作ボタンは
+  // #pomodoro-quick が持つ（renderPomodoroQuick）。
   // 開始時のセリフ（BGMの推薦とリンク）が残っていればそれを見せる。
   const carried = pomodoroStartLineItem || displayedLineItem;
   const sources = pomodoroStartLineItem?.sources?.length
     ? pomodoroStartLineItem.sources
     : displayedLineSources;
   showChatBubble(false, sources, carried);
-  const controls = createPomodoroControls(pomodoroState, { withTime: true });
-  if (controls) bubble.append(controls);
+  updatePomodoroQuickVisibility();
 }
 
-// withTime を立てると、残り時間を操作ボタンと同じ行に置く。
-// 離れていると、同じ機能なのに視線が往復する。
-function createPomodoroControls(state, { withTime = false } = {}) {
+function createPomodoroControls(state) {
   if (!state.active) return undefined;
   const controls = document.createElement("div");
   controls.className = "timer-actions";
-  if (withTime) {
-    const time = document.createElement("span");
-    time.className = "timer-inline";
-    time.textContent = pomodoroTimerText(state);
-    controls.append(time);
-  }
 
   const toggle = document.createElement("button");
   toggle.type = "button";
+  toggle.dataset.action = "toggle";
   toggle.textContent = state.running ? "一時停止" : "再開";
   toggle.addEventListener("click", async (event) => {
     event.preventDefault();
@@ -1503,6 +1532,7 @@ function createPomodoroControls(state, { withTime = false } = {}) {
 
   const finish = document.createElement("button");
   finish.type = "button";
+  finish.dataset.action = "finish";
   finish.textContent = "完了";
   finish.addEventListener("click", async (event) => {
     event.preventDefault();
@@ -1520,6 +1550,15 @@ function createPomodoroControls(state, { withTime = false } = {}) {
 }
 
 function showPomodoroBubble(state = pomodoroState, force = false) {
+  // 実行中の残り時間は下の枠（#pomodoro-quick）が受け持つ。
+  // 吹き出しへ出すと、セリフや会話欄を押しのけて一瞬ちらつく。
+  // 呼び出し元が9箇所あるので、入口で止める方が取りこぼしがない。
+  if (state.active && state.reason !== "completed") {
+    // ホバー中は会話欄付きの表示へ寄せる（中で枠も描き直される）。
+    if (isHovered && !dragging) showPomodoroWithChat();
+    else updatePomodoroQuickVisibility();
+    return;
+  }
   clearTimeout(hideBubbleTimer);
   clearTimeout(pomodoroHideTimer);
   lineHistoryActive = false;
@@ -1722,6 +1761,10 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
   });
   form.append(input);
   form.append(mic);
+  // 「あとで」「この質問はもうしない」は入力欄と同じ行に置くと、
+  // 入力欄が押しつぶされて打ちにくい。下の行へ分ける。
+  const questionActions = document.createElement("div");
+  questionActions.className = "chat-question-actions";
   if (pendingCharacterCustomization && !busy) {
     const defer = document.createElement("button");
     defer.type = "button";
@@ -1736,7 +1779,7 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
       bubble.querySelector(".chat-form input")?.focus();
       scheduleChatIdleReset();
     });
-    form.append(defer);
+      questionActions.append(defer);
     if (pendingCharacterCustomization.answerKind === "character") {
       const skip = document.createElement("button");
       skip.type = "button";
@@ -1751,7 +1794,7 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
         bubble.querySelector(".chat-form input")?.focus();
         scheduleChatIdleReset();
       });
-      form.append(skip);
+        questionActions.append(skip);
     }
   }
   form.append(send);
@@ -1772,6 +1815,8 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
     if (event.key === "Escape") closeChat();
   });
   bubble.append(form);
+  // 質問用のボタンは入力欄の下へ。同じ行に置くと入力欄が押しつぶされる。
+  if (questionActions.childElementCount) bubble.append(questionActions);
   bubble.classList.remove("has-timer", "has-history");
   bubble.classList.add("has-chat", "is-active");
 }
@@ -2862,7 +2907,12 @@ bikunavi.on("companion:pomodoro", (state) => {
     timeText: ""
   };
   const reason = pomodoroState.reason;
-  if (["started", "autoBreakStarted", "autoFocusStarted", "paused", "resumed", "completed", "stopped"].includes(reason)) {
+  // 先に枠を描き直す。これを忘れると、開始した直後に待機中の
+  // 「集中する？」が残って一瞬見えてしまう。
+  renderPomodoroQuick();
+  // 開始・一時停止・再開は下の枠（#pomodoro-quick）が受け持つ。
+  // ここで吹き出しへ出すと、切り替わる前の表示が一瞬見えてしまう。
+  if (["completed", "stopped"].includes(reason)) {
     showPomodoroBubble(pomodoroState, reason === "completed");
   } else if (pomodoroState.active && bubble.classList.contains("has-timer")) {
     showPomodoroBubble(pomodoroState);

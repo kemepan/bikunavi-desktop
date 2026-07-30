@@ -147,8 +147,15 @@ const DEFAULT_STATE = {
   speechVolume: 100,
   soundMuted: false,
   handsFreeEnabled: false,
-  clickThroughEnabled: false,
-  dimWhenIdleEnabled: false,
+  // 初期値をオンにする。使っている人から「最初から入れておいてほしい」と
+  // 言われたもの。どちらも困ったら設定から切れるうえ、切るより先に
+  // 「じゃまだ」と感じて離れる方が惜しい。
+  //
+  // 注意: 一度もこの設定を触っていない人は、更新でオンに変わる
+  // （保存されているのは触った値だけなので）。明示的にオフにした人は
+  // false が保存されているため、オフのまま守られる。
+  clickThroughEnabled: true,
+  dimWhenIdleEnabled: true,
   lastLaunchAt: 0,
   bgmSuggestHistory: { date: "", dayparts: [] },
   thinkingSoundEnabled: true,

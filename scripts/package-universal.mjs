@@ -113,6 +113,8 @@ const outputPaths = await packager({
     /^\/dist(\/|$)/,
     /^\/docs(\/|$)/,
     /^\/launchd(\/|$)/,
+      // Windows 用の whisper は macOS 版に要らない（9MBほど）。
+      /^\/native\/stt\/win32-/,
     /^\/\.gitignore$/,
     /\.log$/,
     new RegExp(`^/models/(?!${bundledWhisperModel.replace(/\./g, "\\.")}$)`)

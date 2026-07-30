@@ -12,7 +12,9 @@ const SEND_CHANNELS = new Set([
   "companion:focus-window",
   "companion:thinking-sound-start",
   "companion:thinking-sound-stop",
-  "companion:save-history"
+  "companion:save-history",
+  // renderer で音を鳴らした結果を返す（macOS 以外の再生経路）
+  "companion:audio-finished"
 ]);
 
 const INVOKE_CHANNELS = new Set([
@@ -63,6 +65,9 @@ const ON_CHANNELS = new Set([
   "companion:system-sleep",
   "companion:pomodoro",
   "companion:pomodoro-chime",
+  // 音を鳴らす指示（macOS 以外）。data は Base64 の wav。
+  "companion:play-audio",
+  "companion:stop-audio",
   "companion:settings-changed",
   "companion:clear-history",
   "companion:window-edge",

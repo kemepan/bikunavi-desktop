@@ -1232,7 +1232,48 @@ function playPomodoroChime(kind) {
 
 // 音の再生は macOS の afplay に頼っている。Windows へ持っていく時の分かれ目なので、
 // 判定をここへまとめる。実体が無い環境（将来のOS変更）でも false になる。
+// macOS 以外では renderer に鳴らしてもらう。afplay が無いため。
+// 呼び出し側から見た形（Promise が再生の終わりで解決する）は afplay と揃える。
+const pendingAudioPlays = new Map();
+let audioPlayCounter = 0;
+
+function playAudioInRenderer(filePath, volumeScale) {
+  if (!companionWindow || companionWindow.isDestroyed()) return Promise.resolve(false);
+  const id = `audio-${++audioPlayCounter}`;
+  let data;
+  try {
+    data = fs.readFileSync(filePath).toString("base64");
+  } catch (error) {
+    console.error("Audio read failed:", error);
+    return Promise.resolve(false);
+  }
+  console.log(`Audio via renderer: ${path.basename(filePath)} (${Math.round(data.length / 1024)}KB)`);
+  return new Promise((resolve) => {
+    // 返事が来ないまま残ると、次の文へ進めなくなる。
+    const timer = setTimeout(() => {
+      if (pendingAudioPlays.delete(id)) resolve(false);
+    }, 120000);
+    pendingAudioPlays.set(id, (ok) => {
+      clearTimeout(timer);
+      resolve(ok);
+    });
+    companionWindow.webContents.send("companion:play-audio", {
+      id,
+      data,
+      volume: Number(volumeScale)
+    });
+  });
+}
+
+function stopAudioInRenderer() {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  companionWindow.webContents.send("companion:stop-audio");
+}
+
 function canUseAfplay() {
+  // 動作確認用の逃げ道。macOS でも renderer 経由の再生を試せるようにする。
+  // Windows で初めて動かすより、手元で確かめられる方が安全。
+  if (process.env.BIKUNAVI_FORCE_RENDERER_AUDIO === "1") return false;
   return process.platform === "darwin" && fs.existsSync("/usr/bin/afplay");
 }
 
@@ -2028,6 +2069,8 @@ function openChatInput() {
 }
 
 function stopSpeech() {
+  // renderer で鳴らしている時は、プロセスが無いので kill では止まらない。
+  if (!canUseAfplay()) stopAudioInRenderer();
   if (!speechProcess && !activeSpeechId) return;
   const processToStop = speechProcess;
   const stoppedSpeechId = activeSpeechId;
@@ -2259,6 +2302,13 @@ function createMacSpeechAudio(text, speechId) {
 
 function playSpeechAudio(output, speechId) {
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+  if (!canUseAfplay()) {
+    // renderer に鳴らしてもらい、終わったら後片付けする。
+    playAudioInRenderer(output, volumeScale).finally(() => {
+      fs.promises.unlink(output).catch(() => {});
+    });
+    return;
+  }
   const child = spawn("/usr/bin/afplay", ["-v", volumeScale, output], { stdio: "ignore" });
   startSpeechProcess(child, speechId, output);
 }
@@ -2269,8 +2319,16 @@ function playSpeechChunk(output, speechId) {
     fs.promises.unlink(output).catch(() => {});
     return Promise.resolve(false);
   }
+  const chunkVolume = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+  if (!canUseAfplay()) {
+    // 鳴り終わりを待って次の文へ進む。ここが afplay と同じ形であることが要点。
+    return playAudioInRenderer(output, chunkVolume).then((ok) => {
+      fs.promises.unlink(output).catch(() => {});
+      return ok && activeSpeechId === speechId;
+    });
+  }
   return new Promise((resolve) => {
-    const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+    const volumeScale = chunkVolume;
     const child = spawn("/usr/bin/afplay", ["-v", volumeScale, output], { stdio: "ignore" });
     speechProcess = child;
     speechFile = output;
@@ -2629,6 +2687,11 @@ function maybePlayAizuchi() {
   stopAizuchi();
   const aizuchiId = `aizuchi-${++aizuchiSequence}`;
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
+  if (!canUseAfplay()) {
+    // 相づちは鳴りっぱなしでも困らないので、終わりを待たない。
+    playAudioInRenderer(pick.file, volumeScale).catch(() => {});
+    return;
+  }
   const child = spawn("/usr/bin/afplay", ["-v", volumeScale, pick.file], { stdio: "ignore" });
   aizuchiProcess = child;
   // 本回答とは区別し、rendererが「短く相づち → また考える」を表情で示せるようにする。
@@ -5050,6 +5113,13 @@ async function generateIdleLines() {
 
 // 生成中の会話。ハンズフリーで話しかけられた時に畳むため、1本だけ保持する。
 let activeChatController;
+
+ipcMain.on("companion:audio-finished", (_event, { id, ok } = {}) => {
+  const resolve = pendingAudioPlays.get(String(id || ""));
+  if (!resolve) return;
+  pendingAudioPlays.delete(String(id));
+  resolve(Boolean(ok));
+});
 
 ipcMain.handle("companion:chat", async (
   _event,

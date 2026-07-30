@@ -2930,6 +2930,53 @@ bikunavi.on("companion:pomodoro", (state) => {
   if (!pomodoroState.active && reason !== "completed") resumeAmbientState();
 });
 
+// macOS 以外では、読み上げの音声を main から受け取ってここで鳴らす。
+// afplay が無いため。鳴り終わったことを返さないと、次の文へ進めない。
+let currentAudio;
+
+function stopRendererAudio() {
+  if (!currentAudio) return;
+  const audio = currentAudio;
+  currentAudio = undefined;
+  audio.pause();
+  audio.src = "";
+}
+
+bikunavi.on("companion:play-audio", async ({ id, data, volume } = {}) => {
+  stopRendererAudio();
+  if (!data) {
+    bikunavi.send("companion:audio-finished", { id, ok: false });
+    return;
+  }
+  try {
+    // data: URL ではなく Blob を使う。CSP を data: まで開けずに済み、
+    // 長い音声でも URL 文字列にせずに扱える。
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+    const audio = new Audio(url);
+    audio.volume = Math.max(0, Math.min(1, Number(volume) || 1));
+    currentAudio = audio;
+    const done = (ok) => {
+      if (currentAudio === audio) currentAudio = undefined;
+      // 使い終わったら開放する。残すとメモリを持ち続ける。
+      URL.revokeObjectURL(url);
+      bikunavi.send("companion:audio-finished", { id, ok });
+    };
+    audio.addEventListener("ended", () => done(true), { once: true });
+    audio.addEventListener("error", () => done(false), { once: true });
+    // 停止された時も返す。返さないと main が待ち続ける。
+    audio.addEventListener("pause", () => {
+      if (!audio.ended) done(false);
+    }, { once: true });
+    await audio.play();
+  } catch (error) {
+    console.error("Audio playback failed:", error);
+    bikunavi.send("companion:audio-finished", { id, ok: false });
+  }
+});
+
+bikunavi.on("companion:stop-audio", stopRendererAudio);
+
 bikunavi.on("companion:pomodoro-chime", (kind) => {
   if (soundMuted) return;
   playPomodoroChime(kind === "finish" ? "finish" : "start").catch(console.error);

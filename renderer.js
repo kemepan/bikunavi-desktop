@@ -136,6 +136,9 @@ let speechVolume = 100;
 // いま素の吹き出しに出しているソース。ニュース吹き出しにホバーして会話欄へ
 // 切り替わっても、このソースボタンを引き継いで消さないために覚えておく。
 let displayedLineSources = [];
+// ポモドーロ開始時に渡されたセリフ。BGMの推薦と検索リンクを持っている。
+// タイマー表示は毎秒作り直されるため、ここへ取っておかないとリンクが消える。
+let pomodoroStartLineItem;
 // 表示中の自動セリフ・ニュース等。ホバーで会話欄を開いても読み続けられるよう保持する
 let displayedLineItem;
 // 吹き出しが閉じた後も、次のホバーでは過去の会話より直前の独り言・ニュースを優先する。
@@ -1455,7 +1458,12 @@ function pomodoroTimerText(state) {
 // 集中している間の吹き出し。セリフと入力欄を主役にし、
 // 残り時間と操作ボタンは下の一行へまとめる。
 function showPomodoroWithChat() {
-  showChatBubble(false, displayedLineSources, displayedLineItem);
+  // 開始時のセリフ（BGMの推薦とリンク）が残っていればそれを見せる。
+  const carried = pomodoroStartLineItem || displayedLineItem;
+  const sources = pomodoroStartLineItem?.sources?.length
+    ? pomodoroStartLineItem.sources
+    : displayedLineSources;
+  showChatBubble(false, sources, carried);
   const controls = createPomodoroControls(pomodoroState, { withTime: true });
   if (controls) bubble.append(controls);
 }
@@ -2754,6 +2762,8 @@ bikunavi.on("companion:ambient-line", async (item) => {
   lineHistoryActive = false;
   suppressHoverUntilLeave = false;
   rememberLine(lineItem, "idle");
+  // 集中中はタイマー表示が毎秒入るので、開始時のセリフを取っておく。
+  if (lineItem.kind === "pomodoro-start") pomodoroStartLineItem = lineItem;
   showBubble(lineItem);
   showLineEmote(lineItem, lineItem.kind === "custom-question" ? "Wave" : "Happy");
 
@@ -2865,6 +2875,8 @@ bikunavi.on("companion:pomodoro", (state) => {
       `${pomodoroState.running ? "" : " 一時停止中"}  ` +
       `${pomodoroState.timeText || "0:00"}`;
   }
+  // 終わったら開始時のセリフは役目を終える。次の集中まで持ち越さない。
+  if (!pomodoroState.active) pomodoroStartLineItem = undefined;
   if (!pomodoroState.active && reason !== "completed") resumeAmbientState();
 });
 

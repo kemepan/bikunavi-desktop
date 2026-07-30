@@ -1,0 +1,81 @@
+// Windows 版のパッケージ。
+//
+// macOS 版（package-universal.mjs）とは同梱するものが違うので分けた。
+// 同じスクリプトに分岐を足すと、どちらの都合か分からないコードになる。
+//
+// 入れないもの:
+//   native/*.m, now-playing, speech-recognizer.app  … macOS 専用のヘルパー
+//   native/stt/darwin-*                              … macOS 用の whisper
+//   launchd/                                         … LaunchAgent の雛形
+import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { packager } from "@electron/packager";
+
+const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const arch = process.argv.includes("--arm64") ? "arm64" : "x64";
+const bundledWhisperModel = "ggml-base.bin";
+
+// Windows 用の whisper が同梱されているか。無くても配布はできるが、
+// 音声入力は使えないので、はっきり知らせる。
+function reportWhisperState() {
+  const dir = path.join(projectDirectory, "native", "stt", `win32-${arch}`);
+  const exe = path.join(dir, "whisper-cli.exe");
+  if (fs.existsSync(exe)) {
+    console.log(`音声入力: 同梱の whisper を使えます（${path.relative(projectDirectory, exe)}）`);
+    return;
+  }
+  console.warn(
+    `音声入力: win32-${arch} の whisper-cli.exe がありません。` +
+    "この配布物では音声入力が使えません（会話欄からの入力は動きます）。"
+  );
+}
+
+async function main() {
+  reportWhisperState();
+
+  const outputPaths = await packager({
+    dir: projectDirectory,
+    name: "bikutan",
+    platform: "win32",
+    arch,
+    out: "dist",
+    overwrite: true,
+    asar: false,
+    appCopyright: "Copyright © 2026 びくに. All rights reserved.",
+    // アイコンは .ico が要る。無ければ Electron の既定のまま進める
+    // （動作には支障が無く、実機で確認する段階では後回しでよい）。
+    ...(fs.existsSync(path.join(projectDirectory, "assets", "app-icon.ico"))
+      ? { icon: path.join(projectDirectory, "assets", "app-icon.ico") }
+      : {}),
+    ignore: [
+      /^\/dist(\/|$)/,
+      /^\/docs(\/|$)/,
+      /^\/launchd(\/|$)/,
+      /^\/\.gitignore$/,
+      /\.log$/,
+      // macOS 専用のヘルパー。Windows では使わないので入れない。
+      /^\/native\/.*\.m$/,
+      /^\/native\/now-playing$/,
+      /^\/native\/speech-recognizer/,
+      /^\/native\/stt\/darwin-/,
+      new RegExp(`^/models/(?!${bundledWhisperModel.replace(/\./g, "\\.")}$)`)
+    ]
+  });
+
+  for (const outputPath of outputPaths) {
+    console.log(`.exe を作成しました: ${path.relative(projectDirectory, outputPath)}/`);
+    // 入ってはいけないものが混ざっていないか確かめる。
+    const resources = path.join(outputPath, "resources", "app");
+    for (const unwanted of ["native/now-playing", "native/speech-recognizer.app"]) {
+      if (fs.existsSync(path.join(resources, unwanted))) {
+        throw new Error(`macOS 専用のファイルが含まれています: ${unwanted}`);
+      }
+    }
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

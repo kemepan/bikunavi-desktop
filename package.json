@@ -13,7 +13,8 @@
     "build-speech-helper": "bash scripts/build-speech-helper.sh",
     "fetch-core": "node scripts/fetch-cubism-core.mjs",
     "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs",
-    "package:universal": "npm run build-app-icon && npm run build-speech-helper && node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'"
+    "package:universal": "npm run build-app-icon && npm run build-speech-helper && node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'",
+    "package:win": "node scripts/package-windows.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

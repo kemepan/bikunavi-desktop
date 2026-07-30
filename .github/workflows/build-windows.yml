@@ -1,0 +1,61 @@
+# Windows 版がビルドできるかを確かめる。
+#
+# 手元（macOS）でもクロスビルドはできるが、Windows 上で組んだ方が
+# 実際に配る形に近い。動作確認はできないので、あくまで
+# 「壊れていないか」を見るためのもの。
+name: Windows ビルド
+
+on:
+  push:
+    branches: [main, "codex/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  pull_request:
+    branches: [main]
+  # 手で動かしたい時のため
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: テストを通す
+        run: npm run check
+
+      - name: Windows 版を組む
+        run: npm run package:win
+
+      - name: 中身を確かめる
+        shell: pwsh
+        run: |
+          $app = "dist/bikutan-win32-x64/resources/app"
+          # macOS 専用のものが混ざっていないか
+          foreach ($f in @("native/now-playing", "native/speech-recognizer.app", "native/stt/darwin-arm64")) {
+            if (Test-Path "$app/$f") { throw "macOS 専用のファイルが含まれています: $f" }
+          }
+          # 動かすのに要るものが揃っているか
+          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "models/ggml-base.bin")) {
+            if (-not (Test-Path "$app/$f")) { throw "必要なファイルがありません: $f" }
+          }
+          if (-not (Test-Path "dist/bikutan-win32-x64/bikutan.exe")) { throw "exe が作られていません" }
+          Write-Host "確認できました"
+
+      # 実機で試せるよう、成果物を残す。Release とは別で、
+      # 動作確認のためだけに使う（保存期間は短くてよい）。
+      - name: 成果物を残す
+        uses: actions/upload-artifact@v4
+        with:
+          name: bikutan-win32-x64
+          path: dist/bikutan-win32-x64
+          retention-days: 14

@@ -66,6 +66,7 @@ const {
   pickBgm,
   shouldSuggestBgm
 } = require("./bgm-utils");
+const { extractSearchQuery, makeSearchUrl } = require("./search-request-utils");
 const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
@@ -5069,6 +5070,21 @@ ipcMain.handle("companion:chat", async (
   activeChatController?.abort();
   const chatController = new AbortController();
   activeChatController = chatController;
+  // 「〜を検索して」と頼まれたら、AIへ回さずリンクを渡す。
+  // びくたん自身は外のページを読まないので、読んだふりをさせない。
+  // YouTube検索のリンクは前から渡しているので、それを広げた形。
+  const searchQuery = extractSearchQuery(message);
+  if (searchQuery) {
+    activeChatController = undefined;
+    return {
+      text: `「${searchQuery}」ですね。検索の結果を開けるようにしておきました。`,
+      sources: [{
+        title: `${searchQuery} を検索`,
+        url: makeSearchUrl(searchQuery),
+        source: "ウェブ検索"
+      }]
+    };
+  }
   // 考えている間の相づち（本回答の声が始まると自動で引っ込む）
   maybePlayAizuchi();
   const contextKind = String(rawContextKind || "").trim().slice(0, 40);

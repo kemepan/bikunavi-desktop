@@ -343,7 +343,7 @@ function isChatAbortError(error) {
 function killChildTree(child) {
   if (IS_WINDOWS && child.pid) {
     try {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" })
+      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true })
         .on("error", () => child.kill("SIGTERM"));
       return;
     } catch (_error) {
@@ -368,7 +368,10 @@ function runCli(command, args, options = {}) {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: options.cwd,
         env: { ...process.env, PATH: augmentedPath() },
-        shell: useWindowsShell
+        shell: useWindowsShell,
+        // .cmd 経由（shell: true）だと会話のたびに cmd.exe の黒い窓が
+        // 出てしまうのを抑える（macOS では効果なし・無害）
+        windowsHide: true
       }
     );
     let output = "";

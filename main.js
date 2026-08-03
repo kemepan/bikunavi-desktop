@@ -2305,7 +2305,9 @@ async function ensureVoicevoxEngine() {
         // 文単位の先行合成が再生に追いつかないため4にする
         "--cpu_num_threads", "4"
       ],
-      { stdio: "ignore" }
+      // windowsHide が無いと、Windows ではエンジンの黒いコンソール窓が
+      // アプリを閉じるまで出続ける（macOS では効果なし・無害）
+      { stdio: "ignore", windowsHide: true }
     );
     voicevoxOwned = true;
     voicevoxProcess.on("exit", () => {
@@ -3801,7 +3803,8 @@ function runWhisperTranscriptionWithExecutable(executable, model, audioPath) {
         "-sns",
         "--prompt", "びくたんとの自然な日本語の会話。ポモドーロ、Gemini、VOICEVOX、Live2D。"
       ],
-      { stdio: ["ignore", "pipe", "pipe"] }
+      // windowsHide: 認識のたびにコンソール窓が出ないようにする
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true }
     );
     let output = "";
     let errors = "";

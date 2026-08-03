@@ -141,7 +141,7 @@ models/ggml-base.bin
 - コピーはアイコン化済み、マイクは拡大済み。ただし履歴、ソースURL、入力欄、送信ボタンを含む全体の整理はまだ必要。
 - 音声入力の録音には `ScriptProcessorNode` を使っている。コールバックがLive2D描画と同じスレッドで走るため取りこぼしを疑ったが、2026-07-22の常用計測では15,604コールバック中0件だった（`audio-meter-utils.js`）。`AudioWorkletNode` への移行は当面見送り、計測だけ続ける。
 - 配布前に Electron のセキュリティ設定、署名、公証、STTバイナリ同梱を整理する。
-- Windows対応は設計方針のみ。STT、読み上げ、音楽検出、常駐UIの代替実装が必要。
+- Windows対応は実装済み（STTは同梱Whisper、読み上げはrenderer再生、常駐UIはトレイ、音楽検出はmacOS限定として切り分け）。CI（windows-latest）で `package:win` を検証し、2026-08-03から実機確認に入った。
 
 ## v0.1.1 での主な変更（2026-07-18）
 

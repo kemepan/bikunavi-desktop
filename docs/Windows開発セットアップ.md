@@ -98,10 +98,14 @@ npm run check
 
 ## Windows でできないこと
 
-- **`npm run package:win`（配布物のビルド）は macOS 専用。**
-  アイコン生成に macOS の `sips` を使っているため、Windows で実行すると
-  はっきりエラーになる。配布物は Mac 側で作る。
-- `npm run package` / `package:universal`（macOS 版のビルド）も当然動かない。
+- **アイコンの作り直しだけは macOS が要る。**
+  `assets/app-icon.ico` はコミット済みなので普段は困らないが、
+  `app-icon.png` を変えて `.ico` を作り直す（`npm run build-windows-icon`）には
+  macOS の `sips` が要る。Windows では何もせず正常終了する。
+- `npm run package` / `package:universal`（macOS 版のビルド）は動かない。
+
+なお `npm run package:win`（Windows 配布物のビルド）は **Windows でも動く**。
+CI（GitHub Actions の windows-latest）も同じコマンドで組んでいる。
 
 ## つまずきやすいところ
 

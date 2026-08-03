@@ -24,11 +24,19 @@ const iconSizes = [16, 24, 32, 48, 64, 128, 256];
 const ICONDIR_LENGTH = 6;
 const ICONDIRENTRY_LENGTH = 16;
 
+// 縮小に macOS の sips を使うので、作り直せるのは Mac の上だけ。
+// ただし .ico は git に入れてあるので、他のOSでは作り直さず、
+// 既にあるものをそのまま使えばよい。
+//
+// ここで例外を投げると、Windows で package:win を走らせる CI が
+// アイコンを作れないという理由だけで落ちる（実際に落とした）。
+if (process.platform !== "darwin") {
+  const state = fs.existsSync(outputPath) ? "既にあるものを使います" : "ありません（既定アイコンで組まれます）";
+  console.log(`アイコンの作り直しは macOS でのみ行います。${state}: ${path.relative(projectDirectory, outputPath)}`);
+  process.exit(0);
+}
 if (!fs.existsSync(sourcePath)) {
   throw new Error(`アイコン元画像がありません: ${sourcePath}`);
-}
-if (process.platform !== "darwin") {
-  throw new Error("このスクリプトはmacOSのsipsを使う。Windows版のパッケージもMac上で作る想定。");
 }
 
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "bikutan-win-icon-"));

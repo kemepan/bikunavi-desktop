@@ -244,11 +244,32 @@ const PROVIDERS = [
   }
 ];
 
+// ホームフォルダを ~ に伏せる。この診断は利用者が他人へ貼るものなので、
+// アカウント名が残らないようにする。
+//
+// Windowsは同じ場所を違う大小文字で書く（PATHに "c:\Users\..." と
+// "C:\Users\..." が混ざる）。単純な置換では片方が伏せられずに残るため、
+// 大小文字を無視して探す。
+function maskHome(text, home) {
+  const source = String(text);
+  if (!home) return source;
+  const needle = home.toLowerCase();
+  const haystack = source.toLowerCase();
+  let result = "";
+  let index = 0;
+  for (;;) {
+    const hit = haystack.indexOf(needle, index);
+    if (hit === -1) return result + source.slice(index);
+    result += source.slice(index, hit) + "~";
+    index = hit + needle.length;
+  }
+}
+
 // 「使えるAIが見つからない」時に、どこを探して何が無かったのかを見せる。
 // 手元にWindows機が無いと、探索先の一つ違いを延々と当てずっぽうで直すことになる。
 // ホームフォルダは ~ に伏せる（利用者がそのまま貼れるように）。
 function describeProviderDetection(config) {
-  const hide = (text) => String(text).split(HOME).join("~");
+  const hide = (text) => maskHome(String(text), HOME);
   const lines = [
     `OS: ${process.platform} ${process.arch}`,
     `ホーム: ${hide(HOME)}`,
@@ -686,7 +707,7 @@ module.exports = {
   verifyApiKey,
   // 検査用。Windowsでのコマンド探索と引用は実機が無いと確かめにくいので、
   // 部品だけ取り出して落ち着いて見られるようにしておく。
-  _internals: { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell },
+  _internals: { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell, maskHome },
   getGeminiApiKey: geminiApiKey,
   isChatAbortError,
   resolveProviderId,

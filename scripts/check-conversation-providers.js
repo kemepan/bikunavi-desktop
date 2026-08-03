@@ -192,3 +192,26 @@ console.log("conversation-providers（キャッシュ用の切り出し）: OK")
 }
 
 console.log("conversation-providers（Windowsのコマンド探索と引用）: OK");
+
+// --- 診断からアカウント名を消す ---
+{
+  const { maskHome } = require("../conversation-providers")._internals;
+
+  assert.equal(maskHome("/Users/a/.local/bin", "/Users/a"), "~/.local/bin");
+  // Windowsは同じ場所を違う大小文字で書く。PATHに紛れた小文字の "c:" でも
+  // 伏せられないと、他人へ貼る診断にアカウント名が残る。
+  assert.equal(
+    maskHome("c:\\Users\\name\\AppData\\Local\\Programs\\x", "C:\\Users\\name"),
+    "~\\AppData\\Local\\Programs\\x"
+  );
+  // 1行に複数出てきても全部消す。
+  assert.equal(
+    maskHome("C:\\Users\\name;c:\\Users\\name\\bin", "C:\\Users\\name"),
+    "~;~\\bin"
+  );
+  // 元の大小文字は、伏せない部分では変えない。
+  assert.equal(maskHome("D:\\Program Files\\Git", "C:\\Users\\name"), "D:\\Program Files\\Git");
+  assert.equal(maskHome("なにもない", ""), "なにもない");
+}
+
+console.log("conversation-providers（診断のアカウント名伏せ）: OK");

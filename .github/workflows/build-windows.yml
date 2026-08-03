@@ -30,6 +30,11 @@ jobs:
       - name: 依存を入れる
         run: npm ci
 
+      # vendor/ は gitignore されているので、CI では毎回取得する。
+      # これが無いとキャラクターの出ない配布物ができてしまう。
+      - name: Live2D Cubism Core を取得する
+        run: npm run fetch-core
+
       - name: テストを通す
         run: npm run check
 
@@ -47,7 +52,7 @@ jobs:
           # 動かすのに要るものが揃っているか。
           # models/ は gitignore されていて CI には無いので、ここでは見ない
           # （配布物を作る時は手元のモデルが入る）。
-          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "conversation-providers.js")) {
+          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "conversation-providers.js", "vendor/live2dcubismcore.min.js")) {
             if (-not (Test-Path "$app/$f")) { throw "必要なファイルがありません: $f" }
           }
           if (-not (Test-Path "dist/bikutan-win32-x64/bikutan.exe")) { throw "exe が作られていません" }

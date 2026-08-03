@@ -44,7 +44,20 @@ function reportWhisperState() {
   );
 }
 
+// 無いと起動してもキャラクターが表示されない。警告で済ませると
+// 気づかないまま配ってしまうので、macOS 版（package-universal.mjs の
+// verifyDistributionAssets）と同じくビルド自体を止める。
+function verifyCubismCore() {
+  const corePath = path.join(projectDirectory, "vendor", "live2dcubismcore.min.js");
+  if (fs.existsSync(corePath)) return;
+  throw new Error(
+    "vendor/live2dcubismcore.min.js がありません。`npm run fetch-core` を実行してください。" +
+    "（これが無い配布物は、起動してもキャラクターが表示されません）"
+  );
+}
+
 async function main() {
+  verifyCubismCore();
   reportWhisperState();
   reportIconState();
 

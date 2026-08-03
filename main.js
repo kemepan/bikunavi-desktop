@@ -2238,6 +2238,39 @@ async function isVoicevoxReady() {
   }
 }
 
+// インストーラは任意のドライブに入れられる（例: D:\Program Files\VOICEVOX）が、
+// 環境変数の ProgramFiles はシステムドライブしか指さない。そこで他のドライブも
+// 探すのだが、この横断だけは一度きり・非同期で行う。オフラインのネットワーク
+// ドライブ文字へ同期 existsSync すると応答待ち（実測20秒超）でメインプロセス
+// ごと固まるため、同期経路（トレイ再構築など）には結果のキャッシュだけを見せる。
+let voicevoxDriveCandidates = [];
+let voicevoxDriveScanPromise;
+
+function scanVoicevoxDrives() {
+  if (process.platform !== "win32") return Promise.resolve();
+  if (!voicevoxDriveScanPromise) {
+    voicevoxDriveScanPromise = (async () => {
+      const found = [];
+      for (let code = "C".charCodeAt(0); code <= "Z".charCodeAt(0); code += 1) {
+        const drive = `${String.fromCharCode(code)}:\\`;
+        for (const candidate of [
+          path.join(drive, "Program Files", "VOICEVOX", "vv-engine", "run.exe"),
+          path.join(drive, "VOICEVOX", "vv-engine", "run.exe")
+        ]) {
+          // 応答しないドライブは3秒で諦める（本体の access は裏で終わらせる）
+          const exists = await Promise.race([
+            fs.promises.access(candidate).then(() => true, () => false),
+            new Promise((resolve) => setTimeout(() => resolve(false), 3000))
+          ]);
+          if (exists) found.push(candidate);
+        }
+      }
+      voicevoxDriveCandidates = found;
+    })();
+  }
+  return voicevoxDriveScanPromise;
+}
+
 // VOICEVOX の実体を探す。インストール先はOSごとに違ううえ、
 // 利用者が置き場所を変えていることもあるので、環境変数を最優先にする。
 function voicevoxEngineCandidates() {
@@ -2246,23 +2279,14 @@ function voicevoxEngineCandidates() {
   if (process.platform === "win32") {
     const programFiles = process.env.ProgramFiles || "C:\\Program Files";
     const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
-    const candidates = [
+    return [
       custom,
       path.join(localAppData, "Programs", "VOICEVOX", "vv-engine", "run.exe"),
       path.join(programFiles, "VOICEVOX", "vv-engine", "run.exe"),
-      path.join(home, "VOICEVOX", "vv-engine", "run.exe")
+      path.join(home, "VOICEVOX", "vv-engine", "run.exe"),
+      // ドライブ横断の発見分（scanVoicevoxDrives のキャッシュ）
+      ...voicevoxDriveCandidates
     ];
-    // インストーラは任意のドライブに入れられる（例: D:\Program Files\VOICEVOX）が、
-    // 環境変数の ProgramFiles はシステムドライブしか指さない。
-    // 他のドライブの定番2箇所も候補に足す（存在確認だけなので軽い）。
-    for (let code = "C".charCodeAt(0); code <= "Z".charCodeAt(0); code += 1) {
-      const drive = `${String.fromCharCode(code)}:\\`;
-      candidates.push(
-        path.join(drive, "Program Files", "VOICEVOX", "vv-engine", "run.exe"),
-        path.join(drive, "VOICEVOX", "vv-engine", "run.exe")
-      );
-    }
-    return candidates;
   }
   if (process.platform === "linux") {
     return [
@@ -2310,6 +2334,7 @@ async function ensureVoicevoxEngine() {
   if (voicevoxReadyPromise) return voicevoxReadyPromise;
 
   voicevoxReadyPromise = (async () => {
+    await scanVoicevoxDrives(); // 初回だけ他ドライブも見る（2回目以降は即返る）
     const engine = findVoicevoxEngine();
     if (!engine) throw new Error(voicevoxNotFoundMessage());
     voicevoxProcess = spawn(
@@ -4765,6 +4790,8 @@ function detectBrowserAudioPlayback() {
 // macOS の native/now-playing（MediaRemote）にあたるものが無いので、
 // SMTC（システムのメディア再生情報）を PowerShell から読む。
 // playing / stopped / unknown が1行ずつ届き、最新値だけ覚えておく。
+let windowsMediaHelperRapidExits = 0;
+
 function startWindowsMediaHelper() {
   if (process.platform !== "win32" || windowsMediaHelperProcess) return;
   const scriptPath = path.join(__dirname, "native", "now-playing.ps1");
@@ -4776,8 +4803,11 @@ function startWindowsMediaHelper() {
       { stdio: ["ignore", "pipe", "ignore"], windowsHide: true }
     );
     windowsMediaHelperProcess = child;
+    const startedAt = Date.now();
     let buffered = "";
     child.stdout.on("data", (chunk) => {
+      // 止めた直後にパイプへ残っていた行で状態を書き戻さない
+      if (windowsMediaHelperProcess !== child) return;
       buffered += chunk.toString();
       const lines = buffered.split(/\r?\n/);
       buffered = lines.pop();
@@ -4789,9 +4819,20 @@ function startWindowsMediaHelper() {
       }
     });
     const cleanup = () => {
-      if (windowsMediaHelperProcess === child) {
-        windowsMediaHelperProcess = undefined;
-        windowsMediaPlaying = undefined;
+      if (windowsMediaHelperProcess !== child) return;
+      windowsMediaHelperProcess = undefined;
+      windowsMediaPlaying = undefined;
+      // ここへ来るのは不意の終了だけ（stopWindowsMediaHelper 経由の停止は
+      // 参照を先に外すので上のガードで弾かれる）。macOS 側は毎回使い捨て
+      // 起動なので一過性の失敗から勝手に立ち直る。それに合わせて、少し
+      // 置いてから立て直す。すぐ死ぬ状態が続く時は諦める（無限再起動防止）。
+      console.error("Windows media helper exited unexpectedly");
+      if (Date.now() - startedAt > 30000) windowsMediaHelperRapidExits = 0;
+      else windowsMediaHelperRapidExits += 1;
+      if (windowsMediaHelperRapidExits < 3) {
+        setTimeout(() => {
+          if (musicReactEnabled) startWindowsMediaHelper();
+        }, 5000);
       }
     };
     child.on("error", (error) => {
@@ -4808,6 +4849,7 @@ function stopWindowsMediaHelper() {
   const child = windowsMediaHelperProcess;
   windowsMediaHelperProcess = undefined;
   windowsMediaPlaying = undefined;
+  windowsMediaHelperRapidExits = 0;
   child?.kill("SIGTERM");
 }
 

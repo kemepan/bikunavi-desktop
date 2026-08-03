@@ -2399,9 +2399,18 @@ function createMacSpeechAudio(text, speechId) {
 function playSpeechAudio(output, speechId) {
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
   if (!canUseAfplay()) {
-    // renderer に鳴らしてもらい、終わったら後片付けする。
+    // renderer に鳴らしてもらい、終わったら afplay 経路（startSpeechProcess）と
+    // 同じ終了処理をする。これが無いと口パクと waitForSpeechEnd が実再生の
+    // 終わりを知れず、タイムアウトまで（最大45秒）残り続ける。
+    // stopSpeech による中断時は activeSpeechId が先に書き換わっているので、
+    // 終了イベントを二重に送らない。
     playAudioInRenderer(output, volumeScale).finally(() => {
       fs.promises.unlink(output).catch(() => {});
+      if (activeSpeechId === speechId) {
+        activeSpeechId = undefined;
+        companionWindow?.webContents.send("companion:speech-ended", speechId);
+      }
+      resolveSpeechWaiter(speechId);
     });
     return;
   }

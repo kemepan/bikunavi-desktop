@@ -4682,6 +4682,9 @@ function detectMediaRemotePlayback() {
 }
 
 function detectBrowserAudioPlayback() {
+  // pmset は macOS のコマンド。他のOSで4秒ごとに空振り起動し続けないよう、
+  // 隣の detectMediaRemotePlayback と同じくここで引き返す。
+  if (process.platform !== "darwin") return Promise.resolve(undefined);
   return new Promise((resolve) => {
     const child = spawn("/usr/bin/pmset", ["-g", "assertions"], {
       stdio: ["ignore", "pipe", "ignore"]

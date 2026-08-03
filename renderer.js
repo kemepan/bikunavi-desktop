@@ -2932,18 +2932,26 @@ bikunavi.on("companion:pomodoro", (state) => {
 
 // macOS 以外では、読み上げの音声を main から受け取ってここで鳴らす。
 // afplay が無いため。鳴り終わったことを返さないと、次の文へ進めない。
-let currentAudio;
+// 読み上げと相づちは別チャンネルで持ち、互いに止め合わない
+//（main 側の speechProcess / aizuchiProcess の分離と同じ形）。
+const rendererAudioChannels = { speech: undefined, aizuchi: undefined };
 
-function stopRendererAudio() {
-  if (!currentAudio) return;
-  const audio = currentAudio;
-  currentAudio = undefined;
+function audioChannelName(channel) {
+  return channel === "aizuchi" ? "aizuchi" : "speech";
+}
+
+function stopRendererAudio(channel) {
+  const name = audioChannelName(channel);
+  const audio = rendererAudioChannels[name];
+  if (!audio) return;
+  rendererAudioChannels[name] = undefined;
   audio.pause();
   audio.src = "";
 }
 
-bikunavi.on("companion:play-audio", async ({ id, data, volume } = {}) => {
-  stopRendererAudio();
+bikunavi.on("companion:play-audio", async ({ id, data, volume, channel } = {}) => {
+  const name = audioChannelName(channel);
+  stopRendererAudio(name);
   if (!data) {
     bikunavi.send("companion:audio-finished", { id, ok: false });
     return;
@@ -2955,9 +2963,9 @@ bikunavi.on("companion:play-audio", async ({ id, data, volume } = {}) => {
     const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
     const audio = new Audio(url);
     audio.volume = Math.max(0, Math.min(1, Number(volume) || 1));
-    currentAudio = audio;
+    rendererAudioChannels[name] = audio;
     const done = (ok) => {
-      if (currentAudio === audio) currentAudio = undefined;
+      if (rendererAudioChannels[name] === audio) rendererAudioChannels[name] = undefined;
       // 使い終わったら開放する。残すとメモリを持ち続ける。
       URL.revokeObjectURL(url);
       bikunavi.send("companion:audio-finished", { id, ok });
@@ -2975,7 +2983,9 @@ bikunavi.on("companion:play-audio", async ({ id, data, volume } = {}) => {
   }
 });
 
-bikunavi.on("companion:stop-audio", stopRendererAudio);
+bikunavi.on("companion:stop-audio", (payload) => {
+  stopRendererAudio(payload?.channel);
+});
 
 bikunavi.on("companion:pomodoro-chime", (kind) => {
   if (soundMuted) return;

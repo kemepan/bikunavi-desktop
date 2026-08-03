@@ -1300,7 +1300,7 @@ function playPomodoroChime(kind) {
 const pendingAudioPlays = new Map();
 let audioPlayCounter = 0;
 
-function playAudioInRenderer(filePath, volumeScale) {
+function playAudioInRenderer(filePath, volumeScale, channel = "speech") {
   if (!companionWindow || companionWindow.isDestroyed()) return Promise.resolve(false);
   const id = `audio-${++audioPlayCounter}`;
   let data;
@@ -1323,14 +1323,17 @@ function playAudioInRenderer(filePath, volumeScale) {
     companionWindow.webContents.send("companion:play-audio", {
       id,
       data,
-      volume: Number(volumeScale)
+      volume: Number(volumeScale),
+      // 読み上げと相づちは別チャンネル。afplay 経路の speechProcess /
+      // aizuchiProcess の分離と同じで、互いの再生を止め合わない。
+      channel
     });
   });
 }
 
-function stopAudioInRenderer() {
+function stopAudioInRenderer(channel = "speech") {
   if (!companionWindow || companionWindow.isDestroyed()) return;
-  companionWindow.webContents.send("companion:stop-audio");
+  companionWindow.webContents.send("companion:stop-audio", { channel });
 }
 
 function canUseAfplay() {
@@ -2752,6 +2755,7 @@ async function prepareAizuchiAudio() {
 // 相づちは通常の読み上げと別チャンネルで再生する。本回答の読み上げは
 // 相づちを途中で切らず、終わるのを待ってから話し始める（aizuchiDone）。
 let aizuchiProcess;
+let aizuchiRendererId; // renderer 経路で再生中の相づちID（afplay の aizuchiProcess にあたる）
 let aizuchiSequence = 0;
 let aizuchiDoneResolvers = [];
 
@@ -2765,12 +2769,16 @@ function stopAizuchi() {
   const child = aizuchiProcess;
   aizuchiProcess = undefined;
   child?.kill("SIGTERM");
+  if (aizuchiRendererId) {
+    aizuchiRendererId = undefined;
+    stopAudioInRenderer("aizuchi");
+  }
   resolveAizuchiDone();
 }
 
 // 相づちが鳴り終わるまで待つ（鳴っていなければ即解決。安全のため上限4秒）
 function aizuchiDone() {
-  if (!aizuchiProcess) return Promise.resolve();
+  if (!aizuchiProcess && !aizuchiRendererId) return Promise.resolve();
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, 4000);
     aizuchiDoneResolvers.push(() => {
@@ -2793,8 +2801,18 @@ function maybePlayAizuchi() {
   const aizuchiId = `aizuchi-${++aizuchiSequence}`;
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
   if (!canUseAfplay()) {
-    // 相づちは鳴りっぱなしでも困らないので、終わりを待たない。
-    playAudioInRenderer(pick.file, volumeScale).catch(() => {});
+    // afplay 経路と同じ形にする：表情用のイベントを送り、終わりも通知する。
+    // これが無いと相づち表情が出ず、aizuchiDone が即解決して本回答が
+    // 相づちの終わりを待たなくなる。再生ファイルは作り置きキャッシュなので消さない。
+    aizuchiRendererId = aizuchiId;
+    companionWindow?.webContents.send("companion:speech-started", { speechId: aizuchiId, kind: "aizuchi" });
+    playAudioInRenderer(pick.file, volumeScale, "aizuchi")
+      .catch(() => false)
+      .then(() => {
+        if (aizuchiRendererId === aizuchiId) aizuchiRendererId = undefined;
+        companionWindow?.webContents.send("companion:speech-ended", aizuchiId);
+        resolveAizuchiDone();
+      });
     return;
   }
   const child = spawn("/usr/bin/afplay", ["-v", volumeScale, pick.file], { stdio: "ignore" });

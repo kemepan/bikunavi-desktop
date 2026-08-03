@@ -15,6 +15,19 @@ import { packager } from "@electron/packager";
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const arch = process.argv.includes("--arm64") ? "arm64" : "x64";
 const bundledWhisperModel = "ggml-base.bin";
+const windowsIconPath = path.join(projectDirectory, "assets", "app-icon.ico");
+
+// .exe とタスクバーのアイコン。無いと Electron の既定のまま出てしまう。
+function reportIconState() {
+  if (fs.existsSync(windowsIconPath)) {
+    console.log(`アイコン: ${path.relative(projectDirectory, windowsIconPath)} を使います`);
+    return;
+  }
+  console.warn(
+    "アイコン: assets/app-icon.ico がありません。Electronの既定アイコンで作ります。" +
+    "`npm run build-windows-icon` で生成できます。"
+  );
+}
 
 // Windows 用の whisper が同梱されているか。無くても配布はできるが、
 // 音声入力は使えないので、はっきり知らせる。
@@ -33,6 +46,7 @@ function reportWhisperState() {
 
 async function main() {
   reportWhisperState();
+  reportIconState();
 
   const outputPaths = await packager({
     dir: projectDirectory,
@@ -43,11 +57,10 @@ async function main() {
     overwrite: true,
     asar: false,
     appCopyright: "Copyright © 2026 びくに. All rights reserved.",
-    // アイコンは .ico が要る。無ければ Electron の既定のまま進める
-    // （動作には支障が無く、実機で確認する段階では後回しでよい）。
-    ...(fs.existsSync(path.join(projectDirectory, "assets", "app-icon.ico"))
-      ? { icon: path.join(projectDirectory, "assets", "app-icon.ico") }
-      : {}),
+    // アイコンは .ico が要る（`npm run build-windows-icon` が作る）。
+    // 無い時は Electron の既定アイコンのまま進むが、配布物としては
+    // 目立って困るので reportIconState() で知らせる。
+    ...(fs.existsSync(windowsIconPath) ? { icon: windowsIconPath } : {}),
     ignore: [
       /^\/dist(\/|$)/,
       /^\/docs(\/|$)/,
@@ -64,6 +77,21 @@ async function main() {
   });
 
   for (const outputPath of outputPaths) {
+    // Electron自身のライセンスが LICENSE という名前で出てくる。
+    // 同梱する LICENSE.md（このアプリの利用条件）と紛らわしいので改名する。
+    const electronLicensePath = path.join(outputPath, "LICENSE");
+    if (fs.existsSync(electronLicensePath)) {
+      fs.renameSync(electronLicensePath, path.join(outputPath, "ELECTRON_LICENSE"));
+    }
+    // 説明書きは macOS 版と別。手順もデータの置き場所も違うので、
+    // Mac向けの文面をそのまま渡すと全部おかしくなる。
+    fs.copyFileSync(
+      path.join(projectDirectory, "DISTRIBUTION_README_WIN.md"),
+      path.join(outputPath, "はじめにお読みください.md")
+    );
+    for (const fileName of ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]) {
+      fs.copyFileSync(path.join(projectDirectory, fileName), path.join(outputPath, fileName));
+    }
     console.log(`.exe を作成しました: ${path.relative(projectDirectory, outputPath)}/`);
     // 入ってはいけないものが混ざっていないか確かめる。
     const resources = path.join(outputPath, "resources", "app");

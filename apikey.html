@@ -39,7 +39,16 @@
         border-color: #b3593b;
         color: #fff;
       }
-      #status { min-height: 16px; margin-top: 8px; font-size: 11.5px; color: #7a7062; }
+      /* 断られた理由は長くなるので折り返す。改行も入るので pre-line。 */
+      #status {
+        min-height: 16px;
+        margin-top: 8px;
+        font-size: 11.5px;
+        color: #7a7062;
+        line-height: 1.5;
+        white-space: pre-line;
+        overflow-wrap: anywhere;
+      }
     </style>
   </head>
   <body>

@@ -3210,9 +3210,6 @@ function activeProviderId() {
   return conversation.resolveProviderId(conversationProvider, conversationConfig());
 }
 
-// onDelta: ストリーミング対応プロバイダ（API系）ではテキスト受信ごとに呼ばれる。
-// onAttemptStart: 自動フォールバックで別プロバイダを試す直前に呼ばれる
-// （受信済みの途中テキストを捨てて表示をやり直すための合図）。
 // 直近の失敗。console にしか出していないと、ターミナルから起動していない
 // 利用者には何も伝わらない（Windowsでは実質見えない）。検出状況と一緒に
 // 持ち出せるよう、AIが返したエラーそのものを覚えておく。
@@ -3238,6 +3235,9 @@ function describeLastProviderFailure() {
   ].join("\n");
 }
 
+// onDelta: ストリーミング対応プロバイダ（API系）ではテキスト受信ごとに呼ばれる。
+// onAttemptStart: 自動フォールバックで別プロバイダを試す直前に呼ばれる
+// （受信済みの途中テキストを捨てて表示をやり直すための合図）。
 async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
   const config = conversationConfig();
   // 送っている量が見えないと、料金の見当も削りどころも分からない。
@@ -3565,8 +3565,11 @@ function openApiKeyWindow(provider = "claude") {
   apiKeyWindowProvider = requestedProvider;
   apiKeyWindow = new BrowserWindow({
     width: 480,
-    height: 260,
-    resizable: false,
+    // 260pxではWindowsで保存ボタンが下に隠れていた（日本語フォントの
+    // 行の高さがmacOSより大きい）。断られた理由も出すので余裕を持たせ、
+    // それでも収まらない環境のために大きさを変えられるようにする。
+    height: 360,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -3631,14 +3634,18 @@ ipcMain.handle("companion:set-api-key", async (_event, requestedProvider, rawKey
   const key = String(rawKey ?? "").trim();
   // 空は削除。確認するものが無いのでそのまま閉じる。
   const verification = key ? await conversation.verifyApiKey(provider, key) : { ok: true };
+  // 発行元にはっきり断られたキーは、保存はしても「使うAI」には選ばない。
+  // 選んでしまうと、以後の会話がすべて失敗する。通信できなかっただけの時は、
+  // キーが悪いと決めつけられないので今までどおり選ぶ。
+  const usable = verification.ok || verification.offline;
   if (provider === "gemini") {
     writeGeminiApiKey(key);
-    if (key) conversationProvider = "gemini-api";
-    else if (conversationProvider === "gemini-api") conversationProvider = "auto";
+    if (key && usable) conversationProvider = "gemini-api";
+    else if (!key && conversationProvider === "gemini-api") conversationProvider = "auto";
   } else {
     anthropicApiKey = key;
-    if (key) conversationProvider = "claude-api";
-    else if (conversationProvider === "claude-api") conversationProvider = "auto";
+    if (key && usable) conversationProvider = "claude-api";
+    else if (!key && conversationProvider === "claude-api") conversationProvider = "auto";
   }
   saveStateSoon();
   if (tray) tray.setContextMenu(buildTrayMenu());

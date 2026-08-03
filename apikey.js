@@ -48,7 +48,8 @@ saveButton.addEventListener("click", async () => {
     if (result?.ok) return;
     status.textContent = result?.offline
       ? `保存しました。ただし今は確認できませんでした（${result.message}）`
-      : `保存しましたが、断られました: ${result?.message || "理由が返ってきませんでした。"}`;
+      : `保存しましたが、断られました: ${result?.message || "理由が返ってきませんでした。"}`
+        + "\n（このキーは会話AIには選んでいません）";
   } catch (error) {
     console.error("API key save failed:", error);
     status.textContent = "保存できませんでした。保存先の権限を確認してください。";

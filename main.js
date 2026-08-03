@@ -784,6 +784,30 @@ const traySvg = `
   <path fill="black" d="M8 5C5 2 2 3 1 1c4-1 7 0 8 3 1-3 4-4 8-3-1 2-4 1-7 4v2h3c2 0 3 1 3 3v5c0 2-1 3-3 3H5c-2 0-3-1-3-3v-5c0-2 1-3 3-3h3V5Zm-3 5v5h8v-5H5Z"/>
 </svg>`;
 
+// 常駐アイコンの絵は、OSごとに事情が違う。
+//
+// macOS: テンプレート画像（黒一色）を渡すと、OSがライト/ダークに合わせて
+//        白黒を反転してくれる。メニューバーの他のアイコンと揃う。
+// Windows: テンプレート画像という仕組みが無いので、黒一色の絵を渡すと
+//        既定のダークなタスクバーに溶けて「アイコンが無い」ように見える。
+//        setTitle も効かないため、文字での手がかりも残らない。
+//        そこでアプリのアイコン（色が付いていて背景も明るい）を縮めて使う。
+function createTrayIcon() {
+  if (process.platform !== "darwin") {
+    const iconPath = path.join(__dirname, "assets", "app-icon.png");
+    if (fs.existsSync(iconPath)) {
+      // 16pxで作ると拡大率150%の画面でぼやけるため、32pxで渡してOSに縮めさせる。
+      const image = nativeImage.createFromPath(iconPath);
+      if (!image.isEmpty()) return image.resize({ width: 32, height: 32, quality: "best" });
+    }
+  }
+  const icon = nativeImage.createFromDataURL(
+    `data:image/svg+xml;base64,${Buffer.from(traySvg).toString("base64")}`
+  );
+  if (process.platform === "darwin") icon.setTemplateImage(true);
+  return icon;
+}
+
 function restoreWindowPosition(width, height) {
   const fallbackArea = screen.getPrimaryDisplay().workArea;
   const fallback = {
@@ -851,6 +875,12 @@ function createWindow() {
     if (companionHiddenByUser) return;
     if (companionWindow && !companionWindow.isDestroyed()) companionWindow.showInactive();
   });
+  // Windowsで拡大率の違うモニタが混在していると、ウィンドウは主画面の拡大率で
+  // 作られてから移動先の拡大率へ合わせ直されるため、その分だけ大きく（または
+  // 小さく）出てしまう。表示できる状態になってから、狙いの大きさで置き直す。
+  if (process.platform === "win32") {
+    companionWindow.once("show", () => moveCompanionWindow(x, y));
+  }
   // macOSの透明・フレームレス窓では ready-to-show が発火しないことがあり、
   // その場合ウィンドウが永久に不可視のままになるため、時間で強制表示する。
   const showFallbackTimer = setTimeout(() => {
@@ -902,17 +932,41 @@ function sendWindowEdgeState() {
   companionWindow.webContents.send("companion:window-edge", { topDocked });
 }
 
+// 今のサイズは常にプリセットを正とする。OSから読み直さない。
+function currentSizePreset() {
+  return SIZE_PRESETS[currentSize] || SIZE_PRESETS.medium;
+}
+
+// ウィンドウを動かす時は、位置だけでなくサイズも毎回渡し直す。
+//
+// Windowsの拡大率が100%以外（150%など）だと、Electronの setPosition は
+// 「今のサイズをOSからDIPで読み直し、そのまま設定し直す」動きになる。
+// この読み書きの往復で端数が毎回切り上げ側へ寄るため、呼ぶほどウィンドウが
+// 1pxずつ太っていく。自動移動は33msごとに呼ぶので、放っておくと目に見えて
+// 大きくなる（2026-08-03にWindows実機で確認）。
+// サイズをプリセットから渡し直せば読み直しが起きないので、蓄積しない。
+// すでに太ってしまった環境も、次に動いた時点で元の大きさへ戻る。
+function moveCompanionWindow(rawX, rawY) {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  const preset = currentSizePreset();
+  companionWindow.setBounds({
+    x: roundWindowCoordinate(rawX),
+    y: roundWindowCoordinate(rawY),
+    width: preset.width,
+    height: preset.height
+  });
+}
+
 function setCompanionSize(sizeName) {
   const preset = SIZE_PRESETS[sizeName];
   if (!companionWindow || !preset) return;
 
   clearInterval(autoMoveTimer);
   const [oldX, oldY] = companionWindow.getPosition();
-  const [oldWidth, oldHeight] = companionWindow.getSize();
+  const { width: oldWidth, height: oldHeight } = currentSizePreset();
   const centerX = oldX + oldWidth / 2;
   const centerY = oldY + oldHeight / 2;
   currentSize = sizeName;
-  companionWindow.setSize(preset.width, preset.height);
 
   const targetBounds = {
     x: Math.round(centerX - preset.width / 2),
@@ -929,7 +983,7 @@ function setCompanionSize(sizeName) {
     area.y,
     Math.min(targetBounds.y, area.y + area.height - preset.height)
   );
-  companionWindow.setPosition(x, y);
+  moveCompanionWindow(x, y);
   tray?.setContextMenu(buildTrayMenu());
   saveStateSoon();
 }
@@ -1530,7 +1584,10 @@ function buildTrayMenu() {
       }
     },
     {
-      label: "💬 会話欄を開く（⌘⇧B）",
+      // ショートカットは CommandOrControl。表記もOSに合わせる。
+      label: process.platform === "darwin"
+        ? "💬 会話欄を開く（⌘⇧B）"
+        : "💬 会話欄を開く（Ctrl+Shift+B）",
       click: openChatInput
     },
     { type: "separator" },
@@ -1752,6 +1809,25 @@ function buildTrayMenu() {
             saveStateSoon();
           }
         })),
+        { type: "separator" },
+        {
+          // 「未検出」だけでは、探索先が惜しかったのか何も入っていないのかが
+          // 分からない。手元に無いOSの切り分け用に、状況ごと持ち出せるようにする。
+          label: "🔎 検出状況をコピー",
+          click: () => {
+            clipboard.writeText([
+              conversation.describeProviderDetection(conversationConfig()),
+              "",
+              `作業フォルダ: ${aiWorkingDirectory()}`,
+              "",
+              describeLastProviderFailure()
+            ].join("\n"));
+            showAmbientLine({
+              text: "会話AIの検出状況をコピーしました。うまく繋がらない時は、これを貼って相談してみてください。",
+              sources: []
+            });
+          }
+        },
         { type: "separator" },
         {
           label: conversation.getGeminiApiKey(conversationConfig())
@@ -1999,8 +2075,8 @@ function buildTrayMenu() {
           click: () => {
             if (!companionWindow) return;
             const display = screen.getPrimaryDisplay().workArea;
-            const [width, height] = companionWindow.getSize();
-            companionWindow.setPosition(
+            const { width, height } = currentSizePreset();
+            moveCompanionWindow(
               display.x + display.width - width - 24,
               display.y + display.height - height - 24
             );
@@ -2804,24 +2880,34 @@ app.whenReady().then(() => {
   app.dock?.hide();
   // メニューを持たないとmacOSでCmd+C/Vなどのクリップボード操作が効かない。
   // Dock非表示なのでメニュー自体は見えないが、ショートカットのために設定する。
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: "びくたん", submenu: [{ role: "quit" }] },
-    { role: "editMenu" }
-  ]));
+  //
+  // Windowsではこの事情が逆になる。Ctrl+C/V はメニューが無くても効く一方、
+  // アプリメニューを設定するとフレーム無しウィンドウの中にメニューバーの帯が
+  // 描かれてしまい、透明な窓の上端に見えない板が乗る。だから設定しない。
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { label: "びくたん", submenu: [{ role: "quit" }] },
+      { role: "editMenu" }
+    ]));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
   createWindow();
   if (needsLegacyUserVocativeRepair) saveStateSoon();
   if (!globalShortcut.register(CHAT_SHORTCUT, openChatInput)) {
     console.error(`Global shortcut could not be registered: ${CHAT_SHORTCUT}`);
   }
 
-  const icon = nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(traySvg).toString("base64")}`
-  );
-  icon.setTemplateImage(true);
-  tray = new Tray(icon);
-  tray.setTitle("🌱");
+  tray = new Tray(createTrayIcon());
+  // setTitle はmacOS専用。Windowsでは呼んでも何も起きない。
+  if (process.platform === "darwin") tray.setTitle("🌱");
   tray.setToolTip("びくたん");
   tray.setContextMenu(buildTrayMenu());
+  // Windowsでは、常駐アイコンの左クリックではメニューが開かない（右クリックだけ）。
+  // macOSと同じつもりで左を押しても何も出ないので、左クリックでも開くようにする。
+  if (process.platform !== "darwin") {
+    tray.on("click", () => tray?.popUpContextMenu());
+  }
   startMusicPlaybackMonitor();
   powerMonitor.on("suspend", () => {
     setSystemSleeping(true);
@@ -2965,7 +3051,11 @@ function maybeShowTrayGuide() {
     persistedState.trayGuideShown = true;
     saveStateSoon();
     showAmbientLine({
-      text: "はじめまして、びくたんです！設定やお願いごとは、画面上のメニューバーにある🌱アイコンからできますよ。よろしくお願いします。",
+      // 操作の入り口はOSで場所も見た目も違う。Windows 11は入れたばかりの
+      // 常駐アイコンを「^」の中へ隠すので、そこまで案内しないと辿り着けない。
+      text: process.platform === "darwin"
+        ? "はじめまして、びくたんです！設定やお願いごとは、画面上のメニューバーにある🌱アイコンからできますよ。よろしくお願いします。"
+        : "はじめまして、びくたんです！設定やお願いごとは、画面右下の通知領域にあるわたしのアイコンからできますよ。見つからない時は「^」を押すと隠れているので、外へドラッグしておくと便利です。よろしくお願いします。",
       sources: []
     });
   }, 8000);
@@ -3001,7 +3091,7 @@ ipcMain.on("companion:drag-start", () => {
 ipcMain.on("companion:drag-move", () => {
   if (!companionWindow || !dragOrigin) return;
   const cursor = screen.getCursorScreenPoint();
-  companionWindow.setPosition(
+  moveCompanionWindow(
     dragOrigin.window[0] + cursor.x - dragOrigin.cursor.x,
     dragOrigin.window[1] + cursor.y - dragOrigin.cursor.y
   );
@@ -3022,10 +3112,14 @@ ipcMain.on("companion:auto-move", () => {
   if (bounds.y <= area.y + 42) return;
 
   const origin = companionWindow.getPosition();
+  // 移動できる範囲は、OSから読んだ幅ではなくプリセットを基準にする。
+  // Windowsの拡大率環境では getBounds が実寸より大きめに返ることがあり、
+  // それを範囲計算に使うと右端・下端へ寄れなくなる。
+  const { width: windowWidth, height: windowHeight } = currentSizePreset();
   const minX = area.x;
-  const maxX = area.x + area.width - bounds.width;
+  const maxX = area.x + area.width - windowWidth;
   // 自動移動ではメニューバー直下へ吸い付かせない。上端へ行きたい時は手動ドラッグだけにする。
-  const maxY = area.y + area.height - bounds.height;
+  const maxY = area.y + area.height - windowHeight;
   const minY = Math.min(area.y + 64, maxY);
   // 3割の確率で画面内のどこかへ大きくお出かけ、残りは近場の中移動。
   // 移動時間は距離に応じて伸縮し、歩く速さの印象を一定に保つ。
@@ -3071,7 +3165,7 @@ ipcMain.on("companion:auto-move", () => {
       return;
     }
     try {
-      companionWindow.setPosition(nextX, nextY);
+      moveCompanionWindow(nextX, nextY);
     } catch (error) {
       // Electron/macOS側が画面構成変更の瞬間などに座標を拒否しても、
       // タイマー由来の未捕捉例外でアプリ全体を終了させない。
@@ -3119,6 +3213,31 @@ function activeProviderId() {
 // onDelta: ストリーミング対応プロバイダ（API系）ではテキスト受信ごとに呼ばれる。
 // onAttemptStart: 自動フォールバックで別プロバイダを試す直前に呼ばれる
 // （受信済みの途中テキストを捨てて表示をやり直すための合図）。
+// 直近の失敗。console にしか出していないと、ターミナルから起動していない
+// 利用者には何も伝わらない（Windowsでは実質見えない）。検出状況と一緒に
+// 持ち出せるよう、AIが返したエラーそのものを覚えておく。
+let lastProviderFailure;
+
+function recordProviderFailure(providerId, error) {
+  lastProviderFailure = {
+    at: Date.now(),
+    providerId,
+    message: String(error?.message || error || "").slice(0, 600)
+  };
+}
+
+function describeLastProviderFailure() {
+  if (!lastProviderFailure) return "直近の失敗: なし";
+  const { year, month, day } = getJstDateParts(new Date(lastProviderFailure.at));
+  const time = new Date(lastProviderFailure.at)
+    .toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" });
+  return [
+    `直近の失敗: ${conversation.providerLabel(lastProviderFailure.providerId) || lastProviderFailure.providerId}`,
+    `  いつ: ${year}/${month}/${day} ${time}`,
+    `  AIが返した内容: ${lastProviderFailure.message || "（何も返ってこなかった）"}`
+  ].join("\n");
+}
+
 async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
   const config = conversationConfig();
   // 送っている量が見えないと、料金の見当も削りどころも分からない。
@@ -3136,7 +3255,11 @@ async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
       throw new Error("選択中の会話AIが使えません。トレイメニューの「会話AI」を確認してください。");
     }
     onAttemptStart?.();
-    return conversation.runProvider(providerId, prompt, config, onDelta, signal);
+    return conversation.runProvider(providerId, prompt, config, onDelta, signal)
+      .catch((error) => {
+        if (!conversation.isChatAbortError(error)) recordProviderFailure(providerId, error);
+        throw error;
+      });
   }
   // 自動モードは、失敗（未ログイン・タイムアウト等）したら次の候補へフォールバックする
   const available = conversation.detectProviders(config).filter((provider) => provider.available);
@@ -3152,6 +3275,7 @@ async function runAssistant(prompt, onDelta, onAttemptStart, signal) {
       // 利用者が話しかけて中断した時に、次のAIで同じ質問を蒸し返さない。
       if (conversation.isChatAbortError(error)) throw error;
       console.error(`Conversation provider ${provider.id} failed:`, error?.message || error);
+      recordProviderFailure(provider.id, error);
       lastError = error;
     }
   }
@@ -3456,7 +3580,10 @@ function openApiKeyWindow(provider = "claude") {
     }
   });
   apiKeyWindow.setMenuBarVisibility?.(false);
-  apiKeyWindow.loadURL(`${APP_SCHEME}://app/apikey.html?provider=${apiKeyWindowProvider}`);
+  // 保存先も暗号化の仕組みもOSで違う。説明文を実態に合わせるため渡す。
+  apiKeyWindow.loadURL(
+    `${APP_SCHEME}://app/apikey.html?provider=${apiKeyWindowProvider}&platform=${process.platform}`
+  );
   apiKeyWindow.on("closed", () => {
     apiKeyWindow = undefined;
   });
@@ -3499,9 +3626,11 @@ ipcMain.handle("companion:api-key-status", (_event, requestedProvider) => {
   };
 });
 
-ipcMain.handle("companion:set-api-key", (_event, requestedProvider, rawKey) => {
+ipcMain.handle("companion:set-api-key", async (_event, requestedProvider, rawKey) => {
   const provider = requestedProvider === "gemini" ? "gemini" : "claude";
   const key = String(rawKey ?? "").trim();
+  // 空は削除。確認するものが無いのでそのまま閉じる。
+  const verification = key ? await conversation.verifyApiKey(provider, key) : { ok: true };
   if (provider === "gemini") {
     writeGeminiApiKey(key);
     if (key) conversationProvider = "gemini-api";
@@ -3513,8 +3642,12 @@ ipcMain.handle("companion:set-api-key", (_event, requestedProvider, rawKey) => {
   }
   saveStateSoon();
   if (tray) tray.setContextMenu(buildTrayMenu());
-  if (apiKeyWindow && !apiKeyWindow.isDestroyed()) apiKeyWindow.close();
-  return { ok: true };
+  // 断られた時は閉じない。理由を出したまま直せるようにする。
+  // 通信できなかっただけの場合は、キーのせいと決めつけずに閉じる。
+  if (verification.ok || verification.offline) {
+    if (apiKeyWindow && !apiKeyWindow.isDestroyed()) apiKeyWindow.close();
+  }
+  return verification;
 });
 
 ipcMain.handle("companion:close-api-key", () => {

@@ -147,3 +147,48 @@ async function withStubbedFetch(stub, body) {
 }
 
 console.log("conversation-providers（キャッシュ用の切り出し）: OK");
+
+// --- Windowsまわりの部品 ---
+{
+  const path = require("node:path");
+  const { _internals } = require("../conversation-providers");
+  const { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell } = _internals;
+
+  // PATHの区切りはOSに合わせる。ここが ":" 固定だとWindowsでPATHが壊れ、
+  // 子プロセスがコマンドを何も見つけられなくなる（v0.4で実際に起きた）。
+  const originalPath = process.env.PATH;
+  process.env.PATH = ["a", "b"].join(path.delimiter);
+  const augmented = augmentedPath();
+  assert.ok(augmented.startsWith(`a${path.delimiter}b${path.delimiter}`));
+  assert.equal(augmented.split(path.delimiter).includes("a"), true);
+  assert.equal(augmented.split(path.delimiter).includes("b"), true);
+  // 元のPATHの要素が分断されていない。
+  assert.equal(augmented.split(path.delimiter).some((part) => part === ""), false);
+  process.env.PATH = originalPath;
+
+  if (process.platform === "win32") {
+    // 拡張子なしはnpmが置くsh用スクリプト。Windowsからは起動できないので候補に入れない。
+    assert.deepEqual(executableFileNames("gemini"), [
+      "gemini.exe", "gemini.com", "gemini.cmd", "gemini.bat"
+    ]);
+    assert.equal(needsWindowsShell("C:\\x\\gemini.cmd"), true);
+    assert.equal(needsWindowsShell("C:\\x\\gemini.CMD"), true);
+    // .exe はcmd.exeを挟まずに直接起動できる。
+    assert.equal(needsWindowsShell("C:\\x\\claude.exe"), false);
+  } else {
+    assert.deepEqual(executableFileNames("gemini"), ["gemini"]);
+    assert.equal(needsWindowsShell("/usr/local/bin/gemini.cmd"), false);
+  }
+
+  // cmd.exe へ渡す引用。空白を含むパスが割れると別物のコマンドになる。
+  assert.equal(quoteWindowsArgument("-p"), "-p");
+  assert.equal(quoteWindowsArgument("C:\\Program Files\\x"), '"C:\\Program Files\\x"');
+  assert.equal(quoteWindowsArgument(""), '""');
+  assert.equal(quoteWindowsArgument('a"b'), '"a\\"b"');
+  // 閉じ引用符の直前のバックスラッシュは倍にする（MSの引数解析規則）。
+  assert.equal(quoteWindowsArgument("a b\\"), '"a b\\\\"');
+  // cmd.exe の記号は引用符で囲って無害化する。
+  assert.equal(quoteWindowsArgument("a&b"), '"a&b"');
+}
+
+console.log("conversation-providers（Windowsのコマンド探索と引用）: OK");

@@ -1,7 +1,9 @@
 // 会話AIのAPIキー設定小窓。preload.js 経由の IPC のみ使用する。
-const provider = new URLSearchParams(window.location.search).get("provider") === "gemini"
-  ? "gemini"
-  : "claude";
+const parameters = new URLSearchParams(window.location.search);
+const provider = parameters.get("provider") === "gemini" ? "gemini" : "claude";
+// 保存先の書き方も、暗号化に使う仕組みの名前もOSで違う。
+// ここを macOS 前提のまま出すと、Windowsの利用者に嘘の説明をすることになる。
+const isWindows = parameters.get("platform") === "win32";
 const input = document.getElementById("api-key");
 const status = document.getElementById("status");
 const title = document.getElementById("title");
@@ -10,12 +12,16 @@ const note = document.getElementById("note");
 if (provider === "gemini") {
   document.title = "Gemini APIキー設定";
   title.textContent = "Gemini APIキー";
-  note.textContent = "Google AI Studioで発行したAPIキーを入力してください。\nキーは ~/.gemini/.env に権限600で保存されます。無料枠では、入力と出力がGoogleの製品改善に利用される場合があります。";
+  note.textContent = isWindows
+    ? "Google AI Studioで発行したAPIキーを入力してください。\nキーは %USERPROFILE%\\.gemini\\.env に保存されます（本人だけが読めるユーザーフォルダの中です）。無料枠では、入力と出力がGoogleの製品改善に利用される場合があります。"
+    : "Google AI Studioで発行したAPIキーを入力してください。\nキーは ~/.gemini/.env に権限600で保存されます。無料枠では、入力と出力がGoogleの製品改善に利用される場合があります。";
   input.placeholder = "AIza…";
 } else {
   document.title = "Claude APIキー設定";
   title.textContent = "Claude APIキー";
-  note.textContent = "Anthropic Consoleで発行したAPIキー（sk-ant-…）を入力してください。\nキーはmacOSの安全な保存機能（Keychain連動）で暗号化され、暗号化したデータがstate.jsonに保存されます。";
+  note.textContent = isWindows
+    ? "Anthropic Consoleで発行したAPIキー（sk-ant-…）を入力してください。\nキーはWindowsの安全な保存機能（DPAPI）で暗号化され、暗号化したデータがstate.jsonに保存されます。"
+    : "Anthropic Consoleで発行したAPIキー（sk-ant-…）を入力してください。\nキーはmacOSの安全な保存機能（Keychain連動）で暗号化され、暗号化したデータがstate.jsonに保存されます。";
   input.placeholder = "sk-ant-api03-…";
 }
 
@@ -28,21 +34,26 @@ async function showCurrentStatus() {
   }
 }
 
-document.getElementById("save").addEventListener("click", async () => {
+const saveButton = document.getElementById("save");
+
+// 見た目でキーを弾かない。発行元の形式が変われば正しいキーも通らなくなるし、
+// 形だけ合った無効なキーは素通りしてしまう。実際に問い合わせて確かめる。
+saveButton.addEventListener("click", async () => {
   const key = input.value.trim();
-  if (provider === "claude" && key && !key.startsWith("sk-ant-")) {
-    status.textContent = "sk-ant- で始まるキーではないようです。もう一度確認してください。";
-    return;
-  }
-  if (provider === "gemini" && key && (!key.startsWith("AIza") || key.length < 30)) {
-    status.textContent = "Google AI StudioのAPIキーではないようです。もう一度確認してください。";
-    return;
-  }
+  saveButton.disabled = true;
+  status.textContent = key ? "キーを確認しています…" : "削除しています…";
   try {
-    await window.bikunavi.invoke("companion:set-api-key", provider, key);
+    const result = await window.bikunavi.invoke("companion:set-api-key", provider, key);
+    // 使えた時と、削除した時は、この小窓ごと閉じられる。
+    if (result?.ok) return;
+    status.textContent = result?.offline
+      ? `保存しました。ただし今は確認できませんでした（${result.message}）`
+      : `保存しましたが、断られました: ${result?.message || "理由が返ってきませんでした。"}`;
   } catch (error) {
     console.error("API key save failed:", error);
     status.textContent = "保存できませんでした。保存先の権限を確認してください。";
+  } finally {
+    saveButton.disabled = false;
   }
 });
 

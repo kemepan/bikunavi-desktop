@@ -10,38 +10,100 @@ const { Anthropic } = require("@anthropic-ai/sdk");
 const CLI_TIMEOUT_MS = 90000;
 const API_TIMEOUT_MS = 30000;
 const HOME = os.homedir();
-// LaunchAgent 起動時は PATH が最小構成のため、CLI の実体は既知の場所から探す。
-const COMMON_BIN_DIRS = [
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  path.join(HOME, ".local", "bin"),
-  path.join(HOME, "bin")
-];
+const IS_WINDOWS = process.platform === "win32";
+// CLI の実体を探す場所。PATH だけに頼れない事情がOSごとにある。
+// macOS/Linux: LaunchAgent 起動時は PATH が最小構成になる。
+// Windows: npm -g の入れ先（%APPDATA%\npm）が PATH に無いことがある。
+const COMMON_BIN_DIRS = IS_WINDOWS
+  ? [
+      path.join(process.env.APPDATA || path.join(HOME, "AppData", "Roaming"), "npm"),
+      path.join(HOME, ".local", "bin"),
+      path.join(HOME, "bin")
+    ]
+  : [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      path.join(HOME, ".local", "bin"),
+      path.join(HOME, "bin")
+    ];
+// Windowsの実行ファイルは拡張子が要る。spawnで直接起動できるものだけを見る
+// （.ps1 は直接起動できないので入れない）。.exe を .cmd より先に試すのは、
+// ネイティブ版があるならシムを経由しない方が確実なため。
+const WINDOWS_EXECUTABLE_EXTENSIONS = [".exe", ".com", ".cmd", ".bat"];
+
+function isExistingFile(candidate) {
+  try {
+    // ディレクトリを実行ファイルと取り違えない（Windowsでは同名のフォルダが有り得る）。
+    return fs.statSync(candidate).isFile();
+  } catch (_error) {
+    return false;
+  }
+}
 
 function firstExistingPath(candidates) {
-  return candidates.filter(Boolean).find((candidate) => {
-    try {
-      return fs.existsSync(candidate);
-    } catch (_error) {
-      return false;
-    }
-  });
+  return candidates.filter(Boolean).find(isExistingFile);
+}
+
+// 「codex」から、そのOSで実際に置かれうるファイル名を並べる。
+function executableFileNames(name) {
+  if (!IS_WINDOWS) return [name];
+  // 拡張子なしのファイルはnpmがsh用に置くシェルスクリプトで、
+  // Windowsからは起動できない。候補に入れない。
+  return WINDOWS_EXECUTABLE_EXTENSIONS.map((extension) => `${name}${extension}`);
+}
+
+function searchDirectories() {
+  const fromPath = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .map((directory) => directory.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+  // 既知の場所を先に見る。PATHは補い。
+  return [...COMMON_BIN_DIRS, ...fromPath];
 }
 
 function findExecutable(name, extraCandidates = []) {
-  return firstExistingPath([
-    ...extraCandidates,
-    ...COMMON_BIN_DIRS.map((dir) => path.join(dir, name))
-  ]);
+  const candidates = [...extraCandidates];
+  for (const directory of searchDirectories()) {
+    for (const fileName of executableFileNames(name)) {
+      candidates.push(path.join(directory, fileName));
+    }
+  }
+  return firstExistingPath(candidates);
 }
 
 function augmentedPath() {
   const current = process.env.PATH || "";
-  const parts = current.split(":");
+  // 区切りはOSで違う（macOS/Linuxは":"、Windowsは";"）。
+  // ここを ":" 固定にすると、WindowsではPATH全体が壊れて子プロセスが
+  // 何も見つけられなくなる。
+  const parts = current.split(path.delimiter);
   for (const dir of COMMON_BIN_DIRS) {
     if (!parts.includes(dir)) parts.push(dir);
   }
-  return parts.join(":");
+  return parts.join(path.delimiter);
+}
+
+// Windowsで .cmd / .bat を起動するには cmd.exe を挟むしかない
+// （Node 20.12 以降、shell なしでのバッチ起動は塞がれている）。
+function needsWindowsShell(command) {
+  if (!IS_WINDOWS) return false;
+  const extension = path.extname(String(command)).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
+}
+
+// cmd.exe へ渡す引数の引用。shell:true のNodeは引数を空白で繋ぐだけで
+// 何も逃がしてくれないため、こちらで括ってから渡す。
+// 注意: 二重引用符の中でも cmd.exe は %VAR% を展開する。これを打ち消す
+// 方法はコマンドラインには無いので、% を含む引数は渡さない前提で使う。
+function quoteWindowsArgument(value) {
+  const text = String(value);
+  if (text === "") return '""';
+  if (!/[\s"^&|<>()]/.test(text)) return text;
+  // 閉じ引用符の直前のバックスラッシュは倍にする決まり（MSの引数解析規則）。
+  const escaped = text
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/, "$1$1");
+  return `"${escaped}"`;
 }
 
 function codexExecutable() {
@@ -82,7 +144,10 @@ function geminiApiKey(config) {
   // Gemini CLIと同じ保存場所を使う。キーを公開リポジトリやstate.jsonへ保存しない。
   const envPath = path.join(HOME, ".gemini", ".env");
   try {
-    const mode = fs.statSync(envPath).mode & 0o777;
+    // Windowsのst_modeは実際のアクセス権を表していない（常に0666前後を返す）。
+    // ここでPOSIXの権限ビットを見ると必ず「危険」と判定してしまうので見ない。
+    // Windowsではユーザープロファイル配下のACLが既定で本人と管理者に限られる。
+    const mode = IS_WINDOWS ? 0 : fs.statSync(envPath).mode & 0o777;
     if (mode & 0o077) {
       // 手動やCLIが0644で作ったファイルを黙って無視しない。
       // 権限を600へ締めてから読む（締められない場合のみ安全側で不使用）。
@@ -102,6 +167,52 @@ function geminiApiKey(config) {
     return unquoteEnvValue(line.replace(/^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*/, ""));
   } catch (_error) {
     return "";
+  }
+}
+
+// APIキーが使えるかを、発行元に問い合わせて確かめる。
+//
+// 以前は「AIzaで始まる39文字以上」のような見た目の検査で弾いていたが、
+// これはこちらの推測でしかない。発行元が形式を変えれば正しいキーも弾くし、
+// 形が合っているだけの無効なキーは通してしまう。どちらも利用者には
+// 理由が分からない。実際に一度問い合わせれば、答えは確実に出る。
+//
+// トークンを消費しないモデル一覧の取得を使う。
+async function verifyApiKey(provider, key) {
+  const trimmed = String(key || "").trim();
+  if (!trimmed) return { ok: false, message: "キーが空です。" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = provider === "gemini"
+      ? await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+        headers: { "x-goog-api-key": trimmed },
+        signal: controller.signal
+      })
+      : await fetch("https://api.anthropic.com/v1/models", {
+        headers: { "x-api-key": trimmed, "anthropic-version": "2023-06-01" },
+        signal: controller.signal
+      });
+    if (response.ok) return { ok: true, message: "" };
+    let detail = "";
+    try {
+      const data = await response.json();
+      detail = data?.error?.message || "";
+    } catch (_error) {
+      detail = "";
+    }
+    return { ok: false, message: detail || `HTTP ${response.status} で断られました。` };
+  } catch (error) {
+    // 通信できないだけかもしれない。キーが悪いと決めつけない。
+    return {
+      ok: false,
+      offline: true,
+      message: error?.name === "AbortError"
+        ? "確認の問い合わせが時間内に終わりませんでした。"
+        : `確認の問い合わせに失敗しました（${error?.message || error}）。`
+    };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -132,6 +243,41 @@ const PROVIDERS = [
     isAvailable: (config) => Boolean(config?.anthropicApiKey)
   }
 ];
+
+// 「使えるAIが見つからない」時に、どこを探して何が無かったのかを見せる。
+// 手元にWindows機が無いと、探索先の一つ違いを延々と当てずっぽうで直すことになる。
+// ホームフォルダは ~ に伏せる（利用者がそのまま貼れるように）。
+function describeProviderDetection(config) {
+  const hide = (text) => String(text).split(HOME).join("~");
+  const lines = [
+    `OS: ${process.platform} ${process.arch}`,
+    `ホーム: ${hide(HOME)}`,
+    "",
+    "■ 探した場所（この順）"
+  ];
+  for (const directory of searchDirectories()) {
+    lines.push(`  ${fs.existsSync(directory) ? "あり" : "なし"}  ${hide(directory)}`);
+  }
+  lines.push("", "■ CLIの実体");
+  for (const [name, resolve] of [
+    ["codex", codexExecutable],
+    ["claude", claudeCliExecutable],
+    ["gemini", geminiCliExecutable]
+  ]) {
+    const found = resolve();
+    lines.push(`  ${name}: ${found ? hide(found) : "見つからない"}`);
+    if (found) lines.push(`    起動方法: ${needsWindowsShell(found) ? "cmd.exe 経由" : "直接"}`);
+  }
+  lines.push("", "  探したファイル名: " + executableFileNames("〇〇").join(" / "));
+  lines.push("", "■ 会話AIの状態");
+  for (const provider of detectProviders(config)) {
+    lines.push(`  ${provider.available ? "使える" : "使えない"}  ${provider.label}`);
+  }
+  // キーそのものは絶対に出さない。有無だけ。
+  lines.push("", `Gemini APIキー: ${geminiApiKey(config) ? "設定済み" : "未設定"}`);
+  lines.push(`Claude APIキー: ${config?.anthropicApiKey ? "設定済み" : "未設定"}`);
+  return lines.join("\n");
+}
 
 function detectProviders(config) {
   return PROVIDERS.map((provider) => ({
@@ -170,6 +316,22 @@ function isChatAbortError(error) {
   return error?.name === CHAT_ABORT_ERROR_NAME;
 }
 
+// 打ち切りと中断で使う。Windowsで cmd.exe を挟んだ場合、cmd.exe を殺しても
+// その先のCLI本体（node）は生き残る。会話の割り込みが効かなくなるので、
+// プロセスの木ごと止める。
+function killChildTree(child) {
+  if (IS_WINDOWS && child.pid) {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" })
+        .on("error", () => child.kill("SIGTERM"));
+      return;
+    } catch (_error) {
+      // taskkill を起動できない時は、せめて cmd.exe だけでも止める。
+    }
+  }
+  child.kill("SIGTERM");
+}
+
 function runCli(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const { signal } = options;
@@ -177,22 +339,28 @@ function runCli(command, args, options = {}) {
       reject(chatAbortError());
       return;
     }
-    const child = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: options.cwd,
-      env: { ...process.env, PATH: augmentedPath() }
-    });
+    const useWindowsShell = needsWindowsShell(command);
+    const child = spawn(
+      useWindowsShell ? quoteWindowsArgument(command) : command,
+      useWindowsShell ? args.map(quoteWindowsArgument) : args,
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: options.cwd,
+        env: { ...process.env, PATH: augmentedPath() },
+        shell: useWindowsShell
+      }
+    );
     let output = "";
     let errors = "";
     let timedOut = false;
     let aborted = false;
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      killChildTree(child);
     }, CLI_TIMEOUT_MS);
     const onAbort = () => {
       aborted = true;
-      child.kill("SIGTERM");
+      killChildTree(child);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const settle = (callback, value) => {
@@ -261,18 +429,16 @@ function runGeminiCli(prompt, config, _onDelta, signal) {
   // ファイルへ触れないよう、空の専用ディレクトリ＋読み取り専用Planモードで動かす。
   const cwd = path.join(os.tmpdir(), "bikunavi-gemini");
   fs.mkdirSync(cwd, { recursive: true });
+  // プロンプトは -p ではなく標準入力から渡す（パイプで渡すと、その中身が
+  // そのままプロンプトになる）。codex や claude と同じ形。
+  //
+  // 引数で渡すとWindowsで二重に詰む。cmd.exe のコマンドラインは改行を運べず、
+  // 長さも約8191文字で頭打ちになる。びくたんのプロンプトはキャラクターシートと
+  // 会話履歴を含むのでどちらにも引っかかる。
   return runCli(
     executable,
-    [
-      "--skip-trust",
-      "--approval-mode",
-      "plan",
-      "--output-format",
-      "text",
-      "-p",
-      prompt
-    ],
-    { cwd, signal }
+    ["--skip-trust", "--approval-mode", "plan", "--output-format", "text"],
+    { stdin: prompt, cwd, signal }
   );
 }
 
@@ -516,6 +682,11 @@ function runProvider(providerId, prompt, config, onDelta, signal) {
 module.exports = {
   splitCachedPrefix,
   detectProviders,
+  describeProviderDetection,
+  verifyApiKey,
+  // 検査用。Windowsでのコマンド探索と引用は実機が無いと確かめにくいので、
+  // 部品だけ取り出して落ち着いて見られるようにしておく。
+  _internals: { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell },
   getGeminiApiKey: geminiApiKey,
   isChatAbortError,
   resolveProviderId,

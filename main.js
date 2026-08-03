@@ -2240,12 +2240,23 @@ function voicevoxEngineCandidates() {
   if (process.platform === "win32") {
     const programFiles = process.env.ProgramFiles || "C:\\Program Files";
     const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
-    return [
+    const candidates = [
       custom,
       path.join(localAppData, "Programs", "VOICEVOX", "vv-engine", "run.exe"),
       path.join(programFiles, "VOICEVOX", "vv-engine", "run.exe"),
       path.join(home, "VOICEVOX", "vv-engine", "run.exe")
     ];
+    // インストーラは任意のドライブに入れられる（例: D:\Program Files\VOICEVOX）が、
+    // 環境変数の ProgramFiles はシステムドライブしか指さない。
+    // 他のドライブの定番2箇所も候補に足す（存在確認だけなので軽い）。
+    for (let code = "C".charCodeAt(0); code <= "Z".charCodeAt(0); code += 1) {
+      const drive = `${String.fromCharCode(code)}:\\`;
+      candidates.push(
+        path.join(drive, "Program Files", "VOICEVOX", "vv-engine", "run.exe"),
+        path.join(drive, "VOICEVOX", "vv-engine", "run.exe")
+      );
+    }
+    return candidates;
   }
   if (process.platform === "linux") {
     return [

@@ -641,6 +641,9 @@ const sttDefaultModelPath = path.join(__dirname, "models", "ggml-base.bin");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
+// Windows の再生検出ヘルパー（native/now-playing.ps1）と、その最新報告
+let windowsMediaHelperProcess;
+let windowsMediaPlaying;
 let systemSleeping = false;
 let pomodoroPausedBySystem = false;
 let fortuneAutoEnabled = Boolean(persistedState.fortuneAutoEnabled);
@@ -2015,6 +2018,9 @@ function buildTrayMenu() {
               musicPlaying = false;
               companionWindow?.webContents.send("companion:music-playing", false);
             }
+            // Windows の検出ヘルパーはトグルに合わせて起動・停止する
+            if (musicReactEnabled) startWindowsMediaHelper();
+            else stopWindowsMediaHelper();
             tray.setContextMenu(buildTrayMenu());
             saveStateSoon();
           }
@@ -4755,7 +4761,59 @@ function detectBrowserAudioPlayback() {
   });
 }
 
+// Windows で「再生中の曲があるか」を読む常駐ヘルパー。
+// macOS の native/now-playing（MediaRemote）にあたるものが無いので、
+// SMTC（システムのメディア再生情報）を PowerShell から読む。
+// playing / stopped / unknown が1行ずつ届き、最新値だけ覚えておく。
+function startWindowsMediaHelper() {
+  if (process.platform !== "win32" || windowsMediaHelperProcess) return;
+  const scriptPath = path.join(__dirname, "native", "now-playing.ps1");
+  if (!fs.existsSync(scriptPath)) return;
+  try {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      { stdio: ["ignore", "pipe", "ignore"], windowsHide: true }
+    );
+    windowsMediaHelperProcess = child;
+    let buffered = "";
+    child.stdout.on("data", (chunk) => {
+      buffered += chunk.toString();
+      const lines = buffered.split(/\r?\n/);
+      buffered = lines.pop();
+      for (const line of lines) {
+        const status = line.trim();
+        if (status === "playing") windowsMediaPlaying = true;
+        else if (status === "stopped") windowsMediaPlaying = false;
+        else if (status === "unknown") windowsMediaPlaying = undefined;
+      }
+    });
+    const cleanup = () => {
+      if (windowsMediaHelperProcess === child) {
+        windowsMediaHelperProcess = undefined;
+        windowsMediaPlaying = undefined;
+      }
+    };
+    child.on("error", (error) => {
+      console.error("Windows media helper failed:", error?.message || error);
+      cleanup();
+    });
+    child.on("close", cleanup);
+  } catch (error) {
+    console.error("Windows media helper could not start:", error?.message || error);
+  }
+}
+
+function stopWindowsMediaHelper() {
+  const child = windowsMediaHelperProcess;
+  windowsMediaHelperProcess = undefined;
+  windowsMediaPlaying = undefined;
+  child?.kill("SIGTERM");
+}
+
 async function detectMusicPlayback() {
+  // Windows は常駐ヘルパーが届けてきた最新の状態を使う（無ければ undefined）
+  if (process.platform === "win32") return windowsMediaPlaying;
   const [mediaRemotePlaying, browserAudioPlaying] = await Promise.all([
     detectMediaRemotePlayback(),
     detectBrowserAudioPlayback()
@@ -4781,6 +4839,8 @@ async function updateMusicPlayback() {
 }
 
 function startMusicPlaybackMonitor() {
+  // Windows のヘルパーは検出を使う時だけ動かす（win32 以外では何もしない）
+  if (musicReactEnabled) startWindowsMediaHelper();
   updateMusicPlayback().catch(console.error);
   mediaPlaybackTimer = setInterval(() => {
     updateMusicPlayback().catch(console.error);
@@ -5955,6 +6015,7 @@ app.on("before-quit", () => {
   pomodoroChimeProcess = undefined;
   saveStateNow();
   if (voicevoxOwned) voicevoxProcess?.kill("SIGTERM");
+  stopWindowsMediaHelper();
 });
 
 app.on("window-all-closed", () => {

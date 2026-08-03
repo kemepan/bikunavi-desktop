@@ -5944,6 +5944,8 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  // Keep the menu-bar companion alive on macOS.
-  if (process.platform !== "darwin") app.quit();
+  // トレイ常駐アプリなので、どのOSでもウィンドウが全部閉じても終了しない。
+  // Windows で終了すると、トレイアイコンごと消えて復帰手段が無くなる。
+  // このリスナー自体を消してはいけない（未購読だと Electron の既定動作で
+  // 終了してしまう）。終了はトレイの「終了」から。
 });

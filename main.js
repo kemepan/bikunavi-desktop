@@ -348,11 +348,17 @@ const speechProviderRegistry = createSpeechProviderRegistry([
     synthesize: createVoicevoxAudio,
     capabilities: { sentenceStreaming: true }
   },
-  {
-    id: "macos",
-    label: "macOS代替音声",
-    synthesize: createMacSpeechAudio
-  }
+  // 代替音声は /usr/bin/say を使うので macOS でだけ登録する。
+  // 他のOSで登録すると、VOICEVOX が失敗するたびに存在しない say を
+  // 起動しては ENOENT を投げ、本当のエラーがログで見分けられなくなる。
+  ...(process.platform === "darwin"
+    ? [{
+        id: "macos",
+        label: "macOS代替音声",
+        synthesize: createMacSpeechAudio
+      }]
+    : [])
+  // fallbackIds は未登録IDを黙って除外するので、この指定はそのままで良い
 ], { fallbackIds: ["macos"] });
 let speechProcess;
 let speechSequence = 0;

@@ -192,7 +192,10 @@ const DEFAULT_STATE = {
   sourceRatings: [],
   conversationProvider: "auto",
   anthropicApiKey: "",
-  voicevoxGuideShown: false,
+  // VOICEVOX案内を最後に出した日（JST）。旧 voicevoxGuideShown（真偽値）は
+  // 「一度出したら二度と出さない」だったが、見落とすと入手先へ辿り着けなく
+  // なるのでやめた。未インストールのうちは1日1回まで出す。
+  voicevoxGuideShownDate: "",
   trayGuideShown: false
 };
 const stateFilePath = path.join(app.getPath("userData"), "state.json");
@@ -1879,6 +1882,17 @@ function buildTrayMenu() {
             : "音声認識は同梱Whisperで端末内処理",
           enabled: false
         },
+        // 未インストールの時だけ出す。吹き出しの案内を見落としても、
+        // ここから入手先へ辿り着ける。入れてしまえば消える。
+        ...(isVoicevoxInstalled()
+          ? []
+          : [
+            { type: "separator" },
+            {
+              label: "🔈 声を入れる（VOICEVOXが未インストール）",
+              click: () => shell.openExternal(VOICEVOX_DOWNLOAD_SOURCE.url)
+            }
+          ]),
         { type: "separator" },
         {
           label: "すべての音をミュート",
@@ -3061,21 +3075,50 @@ function maybeShowTrayGuide() {
   }, 8000);
 }
 
+// VOICEVOXが入っているか。インストール先はOSごとに違うので、
+// 起動に使う候補と同じ場所を見る（macOS固定パスで見ていた頃は、
+// Windowsでは何を入れても「未インストール」のままだった）。
+function isVoicevoxInstalled() {
+  return voicevoxEngineCandidates().some((candidate) => {
+    if (!candidate) return false;
+    try {
+      return fs.existsSync(candidate);
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+const VOICEVOX_DOWNLOAD_SOURCE = {
+  title: "VOICEVOXをダウンロード（無料）",
+  url: "https://voicevox.hiroshiba.jp/",
+  source: "voicevox.hiroshiba.jp"
+};
+
+function voicevoxGuideText() {
+  // 代替音声があるかどうかで、待っている間の体験がまるで違う。
+  // macOSは声が変わるだけだが、他のOSでは本当に一言も喋らない。
+  return process.platform === "darwin"
+    ? "びくたんの声は、無料アプリのVOICEVOXを使います。インストールすると「猫使ビィ」の声でおしゃべりできますよ。それまではmacOSの声で代用しますね。"
+    : "びくたんの声は、無料アプリのVOICEVOXを使います。まだ入っていないので、いまは声を出せません（文字だけでお話しします）。インストールすると「猫使ビィ」の声でおしゃべりできますよ。";
+}
+
+// 未インストールのうちは、起動のたびに一度だけ案内する。
+//
+// 以前は「一度出したら二度と出さない」だった。吹き出しは時間で消えるので、
+// 見落とすと入手先に辿り着く手段が無くなってしまう（実際に起きた）。
+// かといって再起動のたびに出すと、一日に何度も立ち上げる人にはうるさい。
+// JSTの日付で1日1回に抑える。入れてしまえば二度と出ない。
 function maybeShowVoicevoxGuide() {
-  if (persistedState.voicevoxGuideShown) return;
-  if (fs.existsSync("/Applications/VOICEVOX.app")) return;
+  if (isVoicevoxInstalled()) return;
+  const today = getJstDateString();
+  if (persistedState.voicevoxGuideShownDate === today) return;
   setTimeout(() => {
-    if (fs.existsSync("/Applications/VOICEVOX.app")) return;
-    persistedState.voicevoxGuideShown = true;
+    // 15秒の間に入れ終わることは無いが、案内の直前にもう一度だけ見る。
+    if (isVoicevoxInstalled()) return;
+    persistedState.voicevoxGuideShownDate = today;
     saveStateSoon();
-    showAmbientLine({
-      text: "びくたんの声は、無料アプリのVOICEVOXを使います。インストールすると「猫使ビィ」の声でおしゃべりできますよ。それまではmacOSの声で代用しますね。",
-      sources: [{
-        title: "VOICEVOXをダウンロード（無料）",
-        url: "https://voicevox.hiroshiba.jp/",
-        source: "voicevox.hiroshiba.jp"
-      }]
-    });
+    showAmbientLine({ text: voicevoxGuideText(), sources: [VOICEVOX_DOWNLOAD_SOURCE] });
   }, 15000);
 }
 

@@ -15,6 +15,7 @@
     "build-speech-helper": "bash scripts/build-speech-helper.sh",
     "fetch-core": "node scripts/fetch-cubism-core.mjs",
     "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs",
+    "fetch-whisper-binaries": "node scripts/fetch-whisper-binaries.mjs",
     "package:universal": "npm run build-app-icon && npm run build-speech-helper && node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'",
     "package:win": "npm run build-windows-icon && node scripts/package-windows.mjs"
   },

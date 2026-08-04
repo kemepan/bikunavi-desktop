@@ -57,19 +57,18 @@ npm run fetch-whisper-model
 
 ### 実行ファイル
 
-whisper.cpp の公式リリースから取る。手順の詳細は `native/stt/README.md` にある。
-ブラウザで済ませるなら:
+```bash
+npm run fetch-whisper-binaries
+```
 
-1. [whisper.cpp v1.9.1](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1) から
-   **`whisper-bin-x64.zip`**（CPU版）をダウンロード
-   ※ CUDA 版は 265MB あり、配布には重すぎるので使わない
-2. zip を展開する
-3. `native\stt\win32-x64\` フォルダを作り、展開した `Release\` から次をコピーする
-   - `whisper-cli.exe`
-   - `whisper.dll` / `ggml.dll` / `ggml-base.dll`
-   - `ggml-cpu-*.dll`（複数ある。CPU の世代ごとに分かれていて実行時に選ばれるので全部入れる）
+whisper.cpp の公式リリース（CPU版）から、必要な13ファイルだけを
+`native\stt\win32-x64\` へ置く（合計 9.4MB）。
 
-`SDL2.dll`、`whisper-server.exe`、`test-*.exe` などは要らない。びくたんは `whisper-cli` しか呼ばない。
+`whisper-cli.exe` は DLL に依存するので実行ファイル単体では動かない。
+`ggml-cpu-*.dll` は CPU の世代ごとに分かれていて実行時に選ばれるため、
+どれが使われるかは動かす機械次第。だから一式入れる。
+
+手で揃える場合の手順は `native/stt/README.md` にある。
 
 ## 会話AIを用意する
 

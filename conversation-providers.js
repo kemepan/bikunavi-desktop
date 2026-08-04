@@ -140,7 +140,10 @@ function codexExecutable() {
 function claudeCliExecutable() {
   return findExecutable("claude", [
     process.env.BIKUNAVI_CLAUDE_CLI_PATH,
-    path.join(HOME, ".claude", "local", "claude")
+    // 拡張子なしのこのパスは sh スクリプトで、Windowsからは起動できない。
+    // extraCandidates は最優先で見るので、Windowsで同名ファイルがあると
+    // claude.exe より先に選ばれて「見つかるのに動かない」になる。
+    ...(IS_WINDOWS ? [] : [path.join(HOME, ".claude", "local", "claude")])
   ]);
 }
 

@@ -46,7 +46,19 @@ BIKUNAVI_WHISPER_MODEL=/path/to/ggml-base.bin
 - The app tries multiple candidates and falls back to the next one if a binary exists but fails to run.
 
 
-## Windows 用バイナリの入手（2026-07-31 時点）
+## Windows 用バイナリの入手
+
+```bash
+npm run fetch-whisper-binaries
+```
+
+必要なものだけを `native/stt/win32-x64/` へ置く（合計 9.4MB）。macOS でも
+Windows でも動く（展開は OS 標準の unzip / Expand-Archive を使う）。
+既に置かれている場合は何もしない。入れ直す時はフォルダを消してから実行する。
+
+以下は、このスクリプトが何をしているかの記録（手で追う場合の手順でもある）。
+
+### 中身（2026-07-31 時点）
 
 whisper.cpp の公式リリースから取得する。`whisper-cli.exe` は DLL に依存するので、
 実行ファイルだけでは動かない。

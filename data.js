@@ -1,5 +1,9 @@
 // データ管理画面。main側の companion:data-* ハンドラとやり取りする。
 const sectionsRoot = document.querySelector("#sections");
+// 保存先の書き方はOSで違う。macOS前提のまま出すと嘘の案内になる
+// （apikey.js と同じ扱い）。
+const isWindows = new URLSearchParams(window.location.search).get("platform") === "win32";
+const geminiKeyLocation = isWindows ? "%USERPROFILE%\\.gemini\\.env" : "~/.gemini/.env";
 
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -207,7 +211,7 @@ async function render() {
   const geminiBody = el("span", {
     className: "body",
     textContent: data.apiKeys.gemini.present
-      ? "Gemini APIキー: 保存済み（~/.gemini/.env・このアプリ外のファイル）"
+      ? `Gemini APIキー: 保存済み（${geminiKeyLocation}・このアプリ外のファイル）`
       : "Gemini APIキー: 未設定"
   });
   const geminiItem = el("li", {}, [geminiBody]);

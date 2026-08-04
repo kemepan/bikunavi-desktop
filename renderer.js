@@ -782,6 +782,28 @@ function saveHistorySoon() {
   }, 1200);
 }
 
+// 画面の拡大率が変わったら、描画の解像度を合わせ直す。
+//
+// resolution は起動時の devicePixelRatio で固定されるので、拡大率の違う
+// モニタへ移した時（Windowsで125%と150%が混在、macOSでRetinaと外部ディスプレイ）
+// に、ぼやけたり無駄に高精細になったりする。
+// resize では発火しないことがあるため、devicePixelRatio 自体を見張る。
+function watchPixelRatio() {
+  let media;
+  const apply = () => {
+    const ratio = window.devicePixelRatio || 1;
+    if (Math.abs(pixiApp.renderer.resolution - ratio) > 0.01) {
+      pixiApp.renderer.resolution = ratio;
+      fitModel();
+    }
+    // matchMedia は「今の値」でしか張れないので、変わるたびに張り直す。
+    media?.removeEventListener("change", apply);
+    media = window.matchMedia(`(resolution: ${ratio}dppx)`);
+    media.addEventListener("change", apply);
+  };
+  apply();
+}
+
 function fitModel() {
   if (!model || !visualBounds) return;
   const margin = 12;
@@ -2606,6 +2628,7 @@ async function start() {
       fitModel();
       requestAnimationFrame(fitModel);
     });
+    watchPixelRatio();
   } catch (error) {
     console.error(error);
     status.textContent = "モデルを読み込めませんでした";

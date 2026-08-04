@@ -13,6 +13,8 @@ const SEND_CHANNELS = new Set([
   "companion:thinking-sound-start",
   "companion:thinking-sound-stop",
   "companion:save-history",
+  // びくたん本体を右クリックしたら、その場にトレイと同じメニューを出す
+  "companion:open-menu",
   // renderer で音を鳴らした結果を返す（macOS 以外の再生経路）
   "companion:audio-finished"
 ]);

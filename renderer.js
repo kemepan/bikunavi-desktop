@@ -3015,6 +3015,17 @@ bikunavi.on("companion:pomodoro-chime", (kind) => {
   playPomodoroChime(kind === "finish" ? "finish" : "start").catch(console.error);
 });
 
+// びくたん本体を右クリックしたら、その場にメニューを出す。
+//
+// macOSは常駐アイコンが画面上端のメニューバーに常に見えているが、Windowsは
+// 通知領域（右下）で、しかも既定では「^」の中に隠れている。設定を開くまでの
+// 手数が多すぎるので、いつでも見えているびくたん自身を入り口にする。
+// 吹き出しは別要素（z-index 上）なので、本文の選択は邪魔しない。
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  bikunavi.send("companion:open-menu");
+});
+
 canvas.addEventListener("pointerdown", (event) => {
   if (!model || event.button !== 0) return;
   pointerDown = { x: event.screenX, y: event.screenY };

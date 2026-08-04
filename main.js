@@ -3266,7 +3266,7 @@ function maybeShowTrayGuide() {
       // 常駐アイコンを「^」の中へ隠すので、そこまで案内しないと辿り着けない。
       text: process.platform === "darwin"
         ? "はじめまして、びくたんです！設定やお願いごとは、画面上のメニューバーにある🌱アイコンからできますよ。よろしくお願いします。"
-        : "はじめまして、びくたんです！設定やお願いごとは、画面右下の通知領域にあるわたしのアイコンからできますよ。見つからない時は「^」を押すと隠れているので、外へドラッグしておくと便利です。よろしくお願いします。",
+        : "はじめまして、びくたんです！設定やお願いごとは、わたしを右クリックすると出るメニューからできますよ。画面右下の通知領域のアイコンからも同じことができます（「^」の中に隠れていたら、外へドラッグしておくと便利です）。よろしくお願いします。",
       sources: []
     });
   }, 8000);
@@ -3430,6 +3430,14 @@ ipcMain.on("companion:set-mouse-ignore", (_event, ignore) => {
 
 // アクセサリ型アプリはクリックだけではアクティブにならないことがあるため、
 // 入力欄クリック時にrendererから明示的にフォーカスを要求する
+// びくたん本体の右クリック。トレイと同じメニューを、押した場所へ出す。
+// tray.popUpContextMenu だと常駐アイコンの位置（Windowsでは画面右下）に
+// 出てしまい、押した場所から遠い。menu.popup はカーソル位置に出る。
+ipcMain.on("companion:open-menu", () => {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  buildTrayMenu().popup({ window: companionWindow });
+});
+
 ipcMain.on("companion:focus-window", () => {
   if (!companionWindow || companionWindow.isDestroyed()) return;
   companionWindow.focus();

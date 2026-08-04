@@ -121,6 +121,23 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
   }
   console.log(`Data channel: ${dataChannel}`);
 
+// 二重起動を防ぐ。うっかり2回起動すると、びくたんが2人現れて
+// 同じ state.json を取り合っていた。2人目は静かに終了し、
+// 既にいるびくたんを前へ出す。ロックは userData 単位なので、
+// データチャンネルを分けた検証用とは今までどおり共存できる
+// （上の setPath より後で取るのが要点）。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    companionHiddenByUser = false;
+    companionWindow.show();
+    companionWindow.focus();
+    tray?.setContextMenu(buildTrayMenu());
+  });
+}
+
 // file:// を webSecurity 無効で読む代わりに、アプリ内ファイル専用の
 // 特権スキームで index.html と Live2D 素材を配信する。
 const APP_SCHEME = "bikunavi";

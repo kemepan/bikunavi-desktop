@@ -168,7 +168,17 @@ let handsFreeIgnoreUntil = 0;
 let chatDraft = "";
 let preferredUserName = "あなた";
 const VOICE_INPUT_MAX_MS = 15000;
-const HANDS_FREE_PRE_ROLL_MS = 360;
+// 発話を検知するより前の音を、この長さぶん取っておく。頭を欠けさせないため。
+//
+// **VADの startMs（既定360ms）より十分長くないと意味がない。** 検知は
+// 「しきい値を超えた状態が startMs 続く」ことで成立するので、started が
+// 出た時点で既に360ms喋り終わっている。同じ360msしか持っていないと、
+// しきい値を超えるまでの立ち上がり（子音や小さい入りの音）が押し出される。
+// さらに VAD は声が揺れると aboveMs を1.6倍の速さで減らすので、検知まで
+// もっと伸びることがある。その分も飲み込める長さにする。
+//
+// 900ms なら 48kHz float32 でも約173KB。常に持ち歩いても負担にならない。
+const HANDS_FREE_PRE_ROLL_MS = 900;
 const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
 const HANDS_FREE_BUFFER_SIZE = 4096;
 // 続きものの次の行までの間。吹き出しを出したまま差し替えるので、

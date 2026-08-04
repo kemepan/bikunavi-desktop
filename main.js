@@ -374,9 +374,18 @@ const speechProviderRegistry = createSpeechProviderRegistry([
         label: "macOS代替音声",
         synthesize: createMacSpeechAudio
       }]
+    : []),
+  // Windows は内蔵の日本語音声（SAPI・Haruka など）で代用する。
+  // 内蔵音声が無い環境では合成が失敗し、従来どおり文字だけになる。
+  ...(process.platform === "win32"
+    ? [{
+        id: "windows",
+        label: "Windows代替音声",
+        synthesize: createWindowsSpeechAudio
+      }]
     : [])
-  // fallbackIds は未登録IDを黙って除外するので、この指定はそのままで良い
-], { fallbackIds: ["macos"] });
+  // fallbackIds は未登録IDを黙って除外するので、両方書いたままで良い
+], { fallbackIds: ["macos", "windows"] });
 let speechProcess;
 let speechSequence = 0;
 let activeSpeechId;
@@ -2466,6 +2475,71 @@ function createMacSpeechAudio(text, speechId) {
   });
 }
 
+// Windows 内蔵の日本語音声（SAPI）で合成する。VOICEVOX が無い・落ちている間の
+// 代替で、macOS の say（createMacSpeechAudio）と同じ立ち位置。
+// テキストはコマンドラインではなく UTF-8 のファイルで渡す。cmd.exe / CP932 の
+// 引数経由だと日本語が化ける環境があるため。
+function createWindowsSpeechAudio(text, speechId) {
+  const scriptPath = path.join(__dirname, "native", "sapi-speech.ps1");
+  const textFile = path.join(app.getPath("temp"), `bikunavi-speech-${speechId}.txt`);
+  const output = path.join(app.getPath("temp"), `bikunavi-speech-${speechId}.wav`);
+  // SAPI の速度は -10〜10（0 が標準）。speechRate（words/min、既定190）を
+  // 「190 で標準」になるよう線形に写す
+  const sapiRate = Math.max(-10, Math.min(10, Math.round((speechRate / 190 - 1) * 10)));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let child;
+    try {
+      fs.writeFileSync(textFile, text, "utf8");
+      child = spawn(
+        "powershell.exe",
+        [
+          "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath,
+          "-TextFile", textFile,
+          "-OutFile", output,
+          "-Rate", String(sapiRate)
+        ],
+        { stdio: "ignore", windowsHide: true }
+      );
+    } catch (error) {
+      fs.promises.unlink(textFile).catch(() => {});
+      reject(error);
+      return;
+    }
+    speechProcess = child;
+    speechFile = output;
+
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      if (speechProcess === child) speechProcess = undefined;
+      if (speechFile === output) speechFile = undefined;
+      fs.promises.unlink(textFile).catch(() => {});
+      fs.promises.unlink(output).catch(() => {});
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      if (speechProcess === child) speechProcess = undefined;
+      fs.promises.unlink(textFile).catch(() => {});
+      if (activeSpeechId !== speechId) {
+        if (speechFile === output) speechFile = undefined;
+        fs.promises.unlink(output).catch(() => {});
+        resolve(undefined);
+        return;
+      }
+      if (code !== 0) {
+        if (speechFile === output) speechFile = undefined;
+        fs.promises.unlink(output).catch(() => {});
+        reject(new Error(`Windows speech generation exited with code ${code}`));
+        return;
+      }
+      resolve(output);
+    });
+  });
+}
+
 function playSpeechAudio(output, speechId) {
   const volumeScale = Math.max(0, Math.min(1, speechVolume / 100)).toFixed(2);
   if (!canUseAfplay()) {
@@ -3200,11 +3274,11 @@ const VOICEVOX_DOWNLOAD_SOURCE = {
 };
 
 function voicevoxGuideText() {
-  // 代替音声があるかどうかで、待っている間の体験がまるで違う。
-  // macOSは声が変わるだけだが、他のOSでは本当に一言も喋らない。
+  // どちらのOSも内蔵音声で代用できる。ただし Windows は内蔵の日本語音声が
+  // 無いパソコン（日本語言語パック無し等）もあるため、文字だけの可能性に触れる。
   return process.platform === "darwin"
     ? "びくたんの声は、無料アプリのVOICEVOXを使います。インストールすると「猫使ビィ」の声でおしゃべりできますよ。それまではmacOSの声で代用しますね。"
-    : "びくたんの声は、無料アプリのVOICEVOXを使います。まだ入っていないので、いまは声を出せません（文字だけでお話しします）。インストールすると「猫使ビィ」の声でおしゃべりできますよ。";
+    : "びくたんの声は、無料アプリのVOICEVOXを使います。インストールすると「猫使ビィ」の声でおしゃべりできますよ。それまではWindowsの声で代用しますね（内蔵の日本語音声が無いパソコンでは文字だけになります）。";
 }
 
 // 未インストールのうちは、起動のたびに一度だけ案内する。

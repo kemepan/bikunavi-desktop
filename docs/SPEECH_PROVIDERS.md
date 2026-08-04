@@ -5,7 +5,8 @@
 ## 現在の構成
 
 - `voicevox`: 既定音声。VOICEVOX「猫使ビィ」で、文単位の先行合成に対応する。
-- `macos`: VOICEVOXが利用できない場合の代替音声。
+- `macos`: VOICEVOXが利用できない場合の代替音声（macOSでのみ登録。`/usr/bin/say`）。
+- `windows`: 同じく代替音声（Windowsでのみ登録。内蔵の日本語音声＝SAPIをPowerShell経由で使う。`native/sapi-speech.ps1`）。内蔵の日本語音声が無い環境では合成が失敗し、文字だけになる。
 - 音量、ミュート、音声再生、口パク、停止、聞き直しはプロバイダの外側にあり、共通で動く。
 - `speech-provider-utils.js` が登録情報、能力、フォールバック順を管理する。
 

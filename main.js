@@ -2250,7 +2250,6 @@ function scanVoicevoxDrives() {
   if (process.platform !== "win32") return Promise.resolve();
   if (!voicevoxDriveScanPromise) {
     voicevoxDriveScanPromise = (async () => {
-      const found = [];
       for (let code = "C".charCodeAt(0); code <= "Z".charCodeAt(0); code += 1) {
         const drive = `${String.fromCharCode(code)}:\\`;
         for (const candidate of [
@@ -2262,10 +2261,12 @@ function scanVoicevoxDrives() {
             fs.promises.access(candidate).then(() => true, () => false),
             new Promise((resolve) => setTimeout(() => resolve(false), 3000))
           ]);
-          if (exists) found.push(candidate);
+          // 見つけ次第すぐ候補へ反映する。全ドライブの走査完了を待つと、
+          // 応答しないドライブがある環境で VOICEVOX の案内（15秒後の再確認）に
+          // 間に合わないことがある
+          if (exists) voicevoxDriveCandidates.push(candidate);
         }
       }
-      voicevoxDriveCandidates = found;
     })();
   }
   return voicevoxDriveScanPromise;
@@ -3013,6 +3014,10 @@ app.whenReady().then(() => {
   powerMonitor.on("unlock-screen", () => {
     setSystemSleeping(false);
   });
+  // 起動直後に一度だけ走らせておく。VOICEVOXが既に起動していて
+  // ensureVoicevoxEngine が早期 return する場合でも、
+  // 「入っているか」の判定（トレイの案内・毎日の案内）に他ドライブ分を反映させるため。
+  scanVoicevoxDrives().catch(() => {});
   ensureVoicevoxEngine()
     .then(() => {
       // 起動直後の読み上げと合成が競合しないよう、少し置いてから

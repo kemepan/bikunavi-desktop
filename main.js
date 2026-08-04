@@ -2267,7 +2267,12 @@ function scanVoicevoxDrives() {
           if (exists) voicevoxDriveCandidates.push(candidate);
         }
       }
-    })();
+    })().finally(() => {
+      // 見つかった分を、開きっぱなしでない次のメニューへ反映する。
+      // これが無いと、他ドライブ環境で起動直後にメニューを開いた時だけ
+      // 「声を入れる（VOICEVOXが未インストール）」が残って見える。
+      if (tray) tray.setContextMenu(buildTrayMenu());
+    });
   }
   return voicevoxDriveScanPromise;
 }

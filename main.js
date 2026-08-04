@@ -890,6 +890,9 @@ function createWindow() {
     }
   });
 
+  // macOSでは全スペース＋フルスクリーンにも付いてくる。
+  // Windowsでは何も起きない（仮想デスクトップへの追従には Win32 の
+  // ネイティブ拡張が要るため、対応しない判断。開いたデスクトップに残る）。
   companionWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   companionWindow.webContents.on("console-message", (event) => {
     const isError = event.level === "error" || event.level === "warning";
@@ -1272,7 +1275,13 @@ function getPomodoroSnapshot(reason = "tick") {
 
 function refreshPomodoroUi(reason = "tick") {
   if (tray) {
-    tray.setTitle(pomodoroState.active ? `🍅 ${formatPomodoroTime(pomodoroState.remaining)}` : "🌱");
+    const label = pomodoroState.active
+      ? `🍅 ${formatPomodoroTime(pomodoroState.remaining)}`
+      : "🌱";
+    // setTitle は macOS 専用で、Windows では毎秒呼んでも何も起きない。
+    // 残り時間を見る手段が無くなるので、ツールチップ（ホバーで出る）へ回す。
+    if (process.platform === "darwin") tray.setTitle(label);
+    else tray.setToolTip(pomodoroState.active ? `びくたん — ${label}` : "びくたん");
     tray.setContextMenu(buildTrayMenu());
   }
   companionWindow?.webContents.send("companion:pomodoro", getPomodoroSnapshot(reason));
@@ -1993,10 +2002,14 @@ function buildTrayMenu() {
           }
         })),
         { type: "separator" },
+        // 考え中の音は afplay でしか鳴らせない（renderer 側に受け口が無い）。
+        // 鳴らない環境でスイッチと試聴だけ生きていると、押しても無反応で
+        // 壊れているように見える。理由を書いて触れなくする。
         {
-          label: "考え中の効果音",
+          label: canUseAfplay() ? "考え中の効果音" : "考え中の効果音（このOSでは鳴りません）",
           type: "checkbox",
-          checked: thinkingSoundEnabled,
+          checked: thinkingSoundEnabled && canUseAfplay(),
+          enabled: canUseAfplay(),
           click: (item) => {
             thinkingSoundEnabled = item.checked;
             if (!thinkingSoundEnabled) stopThinkingSound();
@@ -2006,7 +2019,7 @@ function buildTrayMenu() {
         },
         {
           label: "考え中の音を試す",
-          enabled: thinkingSoundEnabled,
+          enabled: thinkingSoundEnabled && canUseAfplay(),
           click: () => previewThinkingSound()
         },
         { type: "separator" },
@@ -2151,8 +2164,14 @@ function buildTrayMenu() {
         {
           label: "おしゃべり履歴を消去…",
           click: async () => {
-            // 取り消せない消去なので、実行前に必ず確認を挟む
-            const { response } = await dialog.showMessageBox({
+            // 取り消せない消去なので、実行前に必ず確認を挟む。
+            // 親を渡さないと、Windowsでは他のウィンドウの裏へ回り込んで
+            // 気づかれないことがある（返事待ちのまま止まって見える）。
+            // 親なしは null で渡す（undefined だと引数の解釈がずれる）
+            const parent = companionWindow && !companionWindow.isDestroyed()
+              ? companionWindow
+              : null;
+            const { response } = await dialog.showMessageBox(parent, {
               type: "warning",
               buttons: ["消去する", "キャンセル"],
               defaultId: 1,
@@ -3419,7 +3438,10 @@ ipcMain.on("companion:focus-window", () => {
 function aiWorkingDirectory() {
   const configured = process.env.BIKUNAVI_AI_CWD || process.env.BIKUNAVI_CODEX_CWD;
   if (configured) return configured;
-  const brainPath = path.join(app.getPath("home"), "Documents", "Brain");
+  // ドキュメントの場所はOSと設定で変わる。手で "Documents" と繋ぐと、
+  // OneDriveへリダイレクトされている環境や、フォルダ名がローカライズ
+  // されている環境（「ドキュメント」等）で見つからない。
+  const brainPath = path.join(app.getPath("documents"), "Brain");
   return fs.existsSync(brainPath) ? brainPath : app.getPath("home");
 }
 
@@ -3528,7 +3550,8 @@ function openDataWindow() {
     }
   });
   dataWindow.setMenuBarVisibility?.(false);
-  dataWindow.loadURL(`${APP_SCHEME}://app/data.html`);
+  // APIキーの保存先の書き方がOSで違う（apikey.html と同じ理由）。
+  dataWindow.loadURL(`${APP_SCHEME}://app/data.html?platform=${process.platform}`);
   dataWindow.on("closed", () => {
     dataWindow = undefined;
   });

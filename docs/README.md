@@ -14,6 +14,7 @@
 | GitHub保存・公開の準備を見る | [`GITHUB_SETUP.md`](GITHUB_SETUP.md) |
 | 権利・ライセンス確認を見る | [`RIGHTS_CHECK.md`](RIGHTS_CHECK.md) |
 | v0.1.0 の公開作業を見る | [`公開手順-v0.1.0.md`](公開手順-v0.1.0.md) |
+| Windows版の公開手順を見る | [`公開手順-Windows.md`](公開手順-Windows.md) |
 
 リポジトリ直下の主要資料:
 

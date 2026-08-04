@@ -1,0 +1,68 @@
+# macOS 側が壊れていないかを確かめる。
+#
+# Windows 対応の改修で Mac 版を壊しても、Windows ビルドだけの CI では緑で
+# 通ってしまう（実際 v0.4 の作業はほぼ Windows 向けだった）。その穴を塞ぐ。
+#
+# **配布物そのものは組まない。** package-universal.mjs は models/ggml-base.bin
+# （141MB・gitignore）と darwin 用 whisper（取得スクリプトが無い）を要求する。
+# 毎回 141MB 落とすのは、private リポジトリの macOS ランナー（従量が高い）に
+# 見合わない。代わりに、**macOS でしかビルドできない部分**を全部通す。
+# 実行時の動作は手元の実機確認が頼りで、そこは docs/Windows対応-設計メモ.md に
+# 誰が何を見たかを残している。
+name: macOS ビルド
+
+on:
+  push:
+    branches: [main, "codex/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  pull_request:
+    branches: [main, "codex/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: Live2D Cubism Core を取得する
+        run: npm run fetch-core
+
+      - name: テストを通す
+        run: npm run check
+
+      # ここから下は macOS でしかビルドできないもの。
+      # Windows 向けの改修で壊れても、Windows ビルドの CI では気づけない。
+      - name: アプリアイコン（ICNS）を作る
+        run: npm run build-app-icon
+
+      - name: 音声認識ヘルパーを組む
+        run: npm run build-speech-helper
+
+      - name: 再生中の曲を読むヘルパーを組む
+        run: npm run build-media-helper
+
+      - name: 中身を確かめる
+        run: |
+          set -euo pipefail
+          # 組み上がったものが、狙いのアーキテクチャになっているか。
+          # speech-recognizer は universal ビルドで arm64/x86_64 の両方が要る。
+          lipo -info native/speech-recognizer.app/Contents/MacOS/speech-recognizer
+          lipo -info native/now-playing
+          for f in assets/app-icon.icns vendor/live2dcubismcore.min.js; do
+            test -s "$f" || { echo "必要なファイルがありません: $f"; exit 1; }
+          done
+          echo "確認できました"

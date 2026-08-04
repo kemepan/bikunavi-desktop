@@ -2,7 +2,8 @@
   "name": "bikunavi-desktop",
   "version": "0.3.1",
   "private": true,
-  "description": "Live2D desktop companion for macOS",
+  "description": "Live2D desktop companion for macOS and Windows",
+  "author": "びくに",
   "main": "main.js",
   "scripts": {
     "start": "BIKUNAVI_DATA_CHANNEL=dev electron .",
@@ -17,7 +18,8 @@
     "fetch-whisper-model": "node scripts/fetch-whisper-model.mjs",
     "fetch-whisper-binaries": "node scripts/fetch-whisper-binaries.mjs",
     "package:universal": "npm run build-app-icon && npm run build-speech-helper && node scripts/package-universal.mjs && codesign --force --deep --sign - 'dist/びくたん-darwin-universal/びくたん.app'",
-    "package:win": "npm run build-windows-icon && node scripts/package-windows.mjs"
+    "package:win": "npm run build-windows-icon && node scripts/package-windows.mjs",
+    "release:win": "node scripts/release-windows.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

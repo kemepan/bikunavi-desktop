@@ -70,6 +70,16 @@ async function main() {
     overwrite: true,
     asar: false,
     appCopyright: "Copyright © 2026 びくに. All rights reserved.",
+    // .exe のプロパティ（右クリック→プロパティ→詳細）に出る情報。
+    // 空だとタスクバーもプロパティも「bikutan」だけになる。署名していない
+    // アプリなので、せめて素性が見える方が受け取る側は判断しやすい。
+    win32metadata: {
+      CompanyName: "びくに",
+      ProductName: "びくたん",
+      FileDescription: "びくたん — Live2Dデスクトップマスコット",
+      InternalName: "bikutan",
+      OriginalFilename: "bikutan.exe"
+    },
     // アイコンは .ico が要る（`npm run build-windows-icon` が作る）。
     // 無い時は Electron の既定アイコンのまま進むが、配布物としては
     // 目立って困るので reportIconState() で知らせる。

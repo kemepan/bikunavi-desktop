@@ -71,8 +71,8 @@ function findExecutable(name, extraCandidates = []) {
   return firstExistingPath(candidates);
 }
 
-function augmentedPath() {
-  const current = process.env.PATH || "";
+function augmentedPath(basePath = process.env.PATH || "") {
+  const current = String(basePath || "");
   // 区切りはOSで違う（macOS/Linuxは":"、Windowsは";"）。
   // ここを ":" 固定にすると、WindowsではPATH全体が壊れて子プロセスが
   // 何も見つけられなくなる。
@@ -81,6 +81,29 @@ function augmentedPath() {
     if (!parts.includes(dir)) parts.push(dir);
   }
   return parts.join(path.delimiter);
+}
+
+// 子プロセスへ渡す環境変数。PATH は増強したものへ差し替える。
+//
+// Windowsの環境変数は大文字小文字を区別しない。OSが持っているのは通常 "Path"
+// なので、`{ ...process.env, PATH: ... }` と書くと "Path" と "PATH" が両方
+// 入った env を子へ渡すことになる。どちらが採用されるかは保証がなく、外れると
+// 増強が黙って無効になり、CLI が見つかっているのに起動できない形で壊れる。
+// 既存のキーを大小文字を無視して消してから入れ直す。
+//
+// 元の値も、キー名の大小文字に頼らず拾う。`process.env.PATH` で読めるのは
+// Windowsの process.env が大小文字を無視して引けるからで、その性質に
+// 寄りかからない方が確実だし、検査もできる。
+function childEnvironment() {
+  const env = { ...process.env };
+  let basePath = "";
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() !== "path") continue;
+    if (!basePath) basePath = env[key];
+    delete env[key];
+  }
+  env.PATH = augmentedPath(basePath);
+  return env;
 }
 
 // Windowsで .cmd / .bat を起動するには cmd.exe を挟むしかない
@@ -367,7 +390,7 @@ function runCli(command, args, options = {}) {
       {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: options.cwd,
-        env: { ...process.env, PATH: augmentedPath() },
+        env: childEnvironment(),
         shell: useWindowsShell,
         // .cmd 経由（shell: true）だと会話のたびに cmd.exe の黒い窓が
         // 出てしまうのを抑える（macOS では効果なし・無害）
@@ -710,7 +733,7 @@ module.exports = {
   verifyApiKey,
   // 検査用。Windowsでのコマンド探索と引用は実機が無いと確かめにくいので、
   // 部品だけ取り出して落ち着いて見られるようにしておく。
-  _internals: { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell, maskHome },
+  _internals: { augmentedPath, executableFileNames, quoteWindowsArgument, needsWindowsShell, maskHome, childEnvironment },
   getGeminiApiKey: geminiApiKey,
   isChatAbortError,
   resolveProviderId,

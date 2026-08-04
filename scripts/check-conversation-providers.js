@@ -215,3 +215,32 @@ console.log("conversation-providers（Windowsのコマンド探索と引用）: 
 }
 
 console.log("conversation-providers（診断のアカウント名伏せ）: OK");
+
+// --- 子プロセスへ渡す環境変数 ---
+{
+  const path = require("node:path");
+  const { childEnvironment } = require("../conversation-providers")._internals;
+
+  const originalEnv = process.env;
+  // Windows は環境変数を大文字小文字で区別しない。OSが持っているのは "Path"。
+  // そこへ "PATH" を足すと、同じ変数が2つ入った env を子へ渡すことになり、
+  // どちらが採用されるか保証がない（増強が黙って無効になる）。
+  process.env = { Path: ["a", "b"].join(path.delimiter), OTHER: "keep" };
+  const env = childEnvironment();
+  const pathKeys = Object.keys(env).filter((key) => key.toLowerCase() === "path");
+  assert.deepEqual(pathKeys, ["PATH"]);
+  assert.equal(env.OTHER, "keep");
+  assert.ok(env.PATH.startsWith(`a${path.delimiter}b${path.delimiter}`));
+
+  // 大文字の PATH しか無い環境（macOS/Linux）でも増えない。
+  process.env = { PATH: "/x" };
+  assert.deepEqual(Object.keys(childEnvironment()).filter((k) => k.toLowerCase() === "path"), ["PATH"]);
+
+  // 変な大小文字混在でも1つにまとまる。
+  process.env = { PaTh: "/y" };
+  assert.deepEqual(Object.keys(childEnvironment()).filter((k) => k.toLowerCase() === "path"), ["PATH"]);
+
+  process.env = originalEnv;
+}
+
+console.log("conversation-providers（子プロセスのPATH）: OK");

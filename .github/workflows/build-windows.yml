@@ -12,7 +12,12 @@ on:
       - "docs/**"
       - "**.md"
   pull_request:
-    branches: [main]
+    # wip ブランチ宛ての PR でも走らせる。v0.4 の PR #1 が base = codex/v0.4-wip で
+    # どのトリガにも当たらず、マージ前に手動実行が要った反省から。
+    branches: [main, "codex/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   # 手で動かしたい時のため
   workflow_dispatch:
 

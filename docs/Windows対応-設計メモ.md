@@ -83,6 +83,33 @@ Electron には `app.setLoginItemSettings()` があり、**両OSで使える**�
 
 **ここまで全て完了。** 以降の Windows 対応は実機で見つかった不具合の修正フェーズに入っている。
 
+## 実機での確認状況（2026-08-04 時点）
+
+Windows は共同作業者の実機、macOS は作者の実機で見ている。**CI に macOS ジョブが無い**ため、Windows 側の改修が macOS を壊していないかは手動で確かめるしかない。
+
+### macOS 側で確認済み
+
+`BIKUNAVI_DATA_CHANNEL=mactest` で常駐インスタンスから隔離して検証した（常駐が dev チャンネルを使っているため、`npm start` を重ねると state を奪い合う）。
+
+| 見たもの | 結果 |
+|---|---|
+| 通常の afplay 経路（読み上げ・占い） | `afplay` の起動を実測。`Audio via renderer` は0回 |
+| renderer 音声経路（`BIKUNAVI_FORCE_RENDERER_AUDIO=1`） | 読み上げが4回連続で流れた。修正前は `speakAndWait` が毎回45秒詰まるので、終了処理の修正が効いている裏付け |
+| 相づちのチャンネル分離 | 相づち → 本回答の順序をログで確認。ファイルのインデックスと実際に聞こえた言葉（`AIZUCHI_PHRASES[3]`「えっと、ですね。」）が一致。切れない・被らない・表情が変わる、を耳と目で確認 |
+| 終了まわり | トレイの「終了」は `role: "quit"` で、`window-all-closed` は暗黙終了の経路にしか効かない。macOS の挙動は不変 |
+
+### Windows 実機でしか判断できない残件
+
+手元（macOS）では理屈までしか詰められないもの。
+
+1. 透過・枠なしウィンドウの描画 — GPU/ドライバ依存の黒箱化・ちらつき。出た場合の逃げ道は `disable-gpu-compositing`
+2. whisper への日本語 `--prompt` の文字化け — MSVC コンソールアプリの ANSI argv 問題
+3. 48kHz 録音 WAV のリサンプル — whisper.cpp v1.7+ なら内部対応のはずだが、同梱バイナリで実測が要る
+4. ハンズフリーの VAD 誤反応 — しきい値が macOS の AGC 実測で調整されており、Whisper は信頼度を返さないため誤認識フィルタの一段が Windows では効かない
+5. メニューの `type: "header"` の描画 — ドキュメント上 macOS 14+ 専用。ラベル表示になるか死にクリックになるか目視が要る
+6. Codex CLI の `--sandbox read-only` — ネイティブ Windows でのサンドボックス対応は限定的
+7. 考え中の効果音の renderer 対応 — 今は afplay 専用で、他OSではメニューごと無効化してある。鳴らすなら音声チャンネルに手を入れることになる
+
 ### 自動起動について（2026-07-30 に追加）
 
 これまで自動起動は `scripts/deploy-launchagent.sh`（LaunchAgent）だけで、**開発者向けの手順**だった。

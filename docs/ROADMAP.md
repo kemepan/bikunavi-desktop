@@ -72,6 +72,40 @@
 
 - Windows版のリリース（実機での確認後）。
 
+### 音楽か、それ以外の音かを見分ける（2026-08-05・調査済み）
+
+**症状**: 動画やポッドキャストを流していても「このBGM、テンポいいですね」と
+言ってくる。鳴っているのが音楽とは限らない。
+
+**原因**: 判別する材料は取れるのに、**今は全部捨てている**。再生検出は
+「鳴っているか / いないか」の真偽値しか扱っていない。
+
+macOS は2つの経路がある。
+
+| 経路 | 今見ているもの | 取れるはずのもの |
+|---|---|---|
+| `native/now-playing`（MediaRemote） | `MRMediaRemoteGetNowPlayingApplicationIsPlaying` の真偽値だけ | `MRMediaRemoteGetNowPlayingInfo` に曲名・アーティスト・アルバム・**MediaType（音楽か動画か）**・再生時間がある |
+| `detectBrowserAudioPlayback`（`pmset -g assertions`） | `named: "Playing audio"` の有無だけ | 実は**プロセス名まで出ている**（例: `pid 700(Google Chrome)`） |
+
+Windows（`native/now-playing.ps1`）も同じで、SMTC の
+`GetPlaybackInfo().PlaybackType` が **Music / Video / Image を直接返す**のに、
+`playing / stopped / unknown` へ潰している。`TryGetMediaPropertiesAsync()` で
+曲名・アーティストも取れるし、`SourceAppUserModelId` でアプリも分かる。
+
+**直し方の見当**（実装はまだ）
+
+1. **Windows が一番簡単。** `PlaybackType` が `Music` の時だけ音楽扱いにする。
+   ヘルパーの出力語彙を `music / other / stopped / unknown` へ増やす
+2. **macOS は MediaRemote のメタデータを取りに行く。** MediaType と、
+   アーティストが空かどうかで大きく絞れる。**ただし新しめの macOS では
+   署名・entitlement の無いプロセスからメタデータが取れないことがある**ので、
+   実機で取れるか先に確かめる必要がある
+3. **`pmset` 経路は判別できない。** ブラウザが鳴らしている音が音楽か会話かは
+   区別しようがない。プロセス名で足切りする（Zoom・Teams・Discord などは
+   除外）か、MediaRemote が音楽と言った時だけ信じる形に格下げする
+4. 分からない時は**音楽と決めつけない**。「BGM」と言い切らず、
+   「何か流れてますね」程度に留めるのが安全
+
 ### 会話から覚える（2026-08-05に使っていて出た要望）
 
 **根っこは1つ。「会話で話したことが、記憶として残らない」。** いま覚えるのは、

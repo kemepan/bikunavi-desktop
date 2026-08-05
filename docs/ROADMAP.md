@@ -92,19 +92,47 @@ Windows（`native/now-playing.ps1`）も同じで、SMTC の
 `playing / stopped / unknown` へ潰している。`TryGetMediaPropertiesAsync()` で
 曲名・アーティストも取れるし、`SourceAppUserModelId` でアプリも分かる。
 
-**直し方の見当**（実装はまだ）
+**macOS の実現可否を確かめた（2026-08-05・macOS 26.4.1 実機）**
 
-1. **Windows が一番簡単。** `PlaybackType` が `Music` の時だけ音楽扱いにする。
-   ヘルパーの出力語彙を `music / other / stopped / unknown` へ増やす
-2. **macOS は MediaRemote のメタデータを取りに行く。** MediaType と、
-   アーティストが空かどうかで大きく絞れる。**ただし新しめの macOS では
-   署名・entitlement の無いプロセスからメタデータが取れないことがある**ので、
-   実機で取れるか先に確かめる必要がある
-3. **`pmset` 経路は判別できない。** ブラウザが鳴らしている音が音楽か会話かは
-   区別しようがない。プロセス名で足切りする（Zoom・Teams・Discord などは
-   除外）か、MediaRemote が音楽と言った時だけ信じる形に格下げする
-4. 分からない時は**音楽と決めつけない**。「BGM」と言い切らず、
-   「何か流れてますね」程度に留めるのが安全
+**メタデータ経路は閉じていた。** 検証プログラムを書いて確認した結果:
+
+```
+シンボル IsPlaying: あり / NowPlayingInfo: あり
+NowPlayingInfo: 空（取得できない）
+```
+
+`MRMediaRemoteGetNowPlayingInfo` はシンボルもあり呼び出しも成功するが、
+**空の辞書が返る**。署名・entitlement の無いプロセスからは中身を取れない
+（macOS 15.4 以降の締め付け）。曲名もアーティストも MediaType も読めない。
+
+**さらに `IsPlaying` 自体も当てにならない。** Chrome が音を鳴らしている
+（`pmset` が `Playing audio` を報告している）最中に、MediaRemote は
+`stopped` を返した。同時刻に両方を叩いて確認済み。
+
+```
+pmset:                pid 700(Google Chrome) … named: "Playing audio"
+MediaRemote(IsPlaying): stopped
+```
+
+**つまり今の macOS では、音楽反応は実質 `pmset` 経路だけで動いている。**
+`pmset` は「何か音が鳴っているか」しか分からないので、動画でもポッドキャストでも
+通話でも「BGM」になる。訴えの症状と一致する。
+
+**直し方（実装はまだ）**
+
+1. **Windows から入る。** SMTC の `PlaybackType` が `Music` の時だけ音楽扱いに
+   する。ヘルパーの出力語彙を `music / other / stopped / unknown` へ増やすだけ。
+   ここは素直に効く
+2. **macOS はプロセス名で判断するしかない。** `pmset` の出力にはプロセス名が
+   出ている（`pid 700(Google Chrome)`）。今は `named: "Playing audio"` の有無しか
+   見ていないので、ここを読む
+   - 音楽と見なす: Music、Spotify、Podcasts 以外の音楽プレイヤー
+   - 音楽ではない: zoom.us、Teams、Discord、FaceTime、QuickTime
+   - **どちらとも言えない: ブラウザ**（音楽も動画も通話も同じ）
+3. **分からない時は音楽と決めつけない。** ブラウザの音は「BGM」と言い切らず、
+   「何か流れてますね」程度に留める。外しても失礼にならない言い方にする
+4. MediaRemote 経路（`native/now-playing`）は、この macOS では役に立って
+   いない。消すかどうかは、古い macOS での挙動を確かめてから決める
 
 ### 会話から覚える（2026-08-05に使っていて出た要望）
 

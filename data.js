@@ -5,6 +5,14 @@ const sectionsRoot = document.querySelector("#sections");
 const isWindows = new URLSearchParams(window.location.search).get("platform") === "win32";
 const geminiKeyLocation = isWindows ? "%USERPROFILE%\\.gemini\\.env" : "~/.gemini/.env";
 
+// 教えたものか、会話から勝手に拾ったものか。見分けられないと
+// 「こんなの教えてない」と思った時に、消してよいか判断できない。
+function pickupLabel(entry) {
+  const date = String(entry?.date || "");
+  if (!entry?.fromConversation) return date;
+  return date ? `${date}・会話から` : "会話から";
+}
+
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   Object.assign(node, props);
@@ -117,11 +125,11 @@ async function render() {
   }));
 
   sectionsRoot.append(renderSection({
-    title: "ことば帳（教えた言葉）",
+    title: "ことば帳（教えた言葉・会話から覚えた言葉）",
     count: data.learnedWords.length,
     onClearAll: () => clearCategory("learnedWords", "ことば帳"),
     items: data.learnedWords.map((word, index) =>
-      listItem(word.text, word.date, {
+      listItem(word.text, pickupLabel(word), {
         onEdit: (value) => updateItem("learnedWord", index, value),
         onDelete: () => deleteItem("learnedWord", index, "この言葉")
       }))
@@ -132,7 +140,7 @@ async function render() {
     count: data.sharedMemories.length,
     onClearAll: () => clearCategory("sharedMemories", "思い出帳"),
     items: data.sharedMemories.map((memory, index) =>
-      listItem(memory.text, memory.date, {
+      listItem(memory.text, pickupLabel(memory), {
         onEdit: (value) => updateItem("sharedMemory", index, value),
         onDelete: () => deleteItem("sharedMemory", index, "この思い出")
       }))

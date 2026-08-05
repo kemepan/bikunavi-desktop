@@ -86,6 +86,10 @@ const {
   summarizeTopicPreference
 } = require("./topic-preference-utils");
 const {
+  parsePickups,
+  selectPickups
+} = require("./conversation-pickup-utils");
+const {
   cleanChatPunctuation,
   isGreetingOnly,
   looksLikeCorrection,
@@ -1788,7 +1792,7 @@ function buildTrayMenu() {
               }
             },
             {
-              label: "オフのままでも、朝の振り返りはこのMacの中だけでします",
+              label: "オフのままでも、朝の振り返りはこのパソコンの中だけでします",
               enabled: false
             },
             { type: "separator" },
@@ -3590,11 +3594,15 @@ ipcMain.handle("companion:data-overview", () => {
     userName: getPreferredUserName(),
     learnedWords: growth.learnedWords.map((entry) => ({
       text: String(entry?.text || "").slice(0, 1000),
-      date: formatDataDate(Number(entry?.learnedAt))
+      date: formatDataDate(Number(entry?.learnedAt)),
+      // 教えたものか、会話から勝手に拾ったものか。見分けられないと
+      // 「こんなの教えてない」と思った時に消す判断ができない。
+      fromConversation: Boolean(entry?.fromConversation)
     })),
     sharedMemories: growth.sharedMemories.map((entry) => ({
       text: String(entry?.text || "").slice(0, 1000),
-      date: formatDataDate(Number(entry?.createdAt))
+      date: formatDataDate(Number(entry?.createdAt)),
+      fromConversation: Boolean(entry?.fromConversation)
     })),
     characterAnswers,
     growthAnswers,
@@ -5728,7 +5736,7 @@ ipcMain.handle("companion:chat", async (
       : "外部情報を断定するときは、実在すると確信できる公式ページや記事URLだけ sources に入れてください。URLの推測は禁止です。",
     "変更・操作の依頼には、実行したふりをせず、びくたん単体では操作できないことと手順の案内を返してください。",
     diaryContextBlocked
-      ? "ユーザーはMac内だけで表示した日記の振り返りへ返信しています。プライバシー設定により日記本文は会話AIへ渡されていません。本文を推測せず、ユーザーの発言だけで答えてください。内容の参照が必要なら、日記メニューの『日記を会話AIにも覚えさせる（送信）』をONにできると短く案内してください。"
+      ? "ユーザーはこのパソコンの中だけで表示した日記の振り返りへ返信しています。プライバシー設定により日記本文は会話AIへ渡されていません。本文を推測せず、ユーザーの発言だけで答えてください。内容の参照が必要なら、日記メニューの『日記を会話AIにも覚えさせる（送信）』をONにできると短く案内してください。"
       : "",
     isDirectReply
       ? `ユーザーは、次のびくたんのセリフと同じ吹き出しにある入力欄から直接返信しました。これは新しい話題ではなく、必ずこのセリフへの返答・質問・ツッコミとして理解してください。短い「知らない」「教えて」「そうなの？」なども、このセリフを目的語として補って答えてください。別の話題へ切り替えないでください。\n\n返信先のセリフ:\n「${contextLine}」`
@@ -5844,6 +5852,10 @@ ipcMain.handle("companion:chat", async (
     conversationHistory.splice(0, conversationHistory.length - 12);
   }
   saveStateSoon();
+  // 会話から覚えられそうなものを拾う。返事は待たせない（裏で進める）。
+  pickUpFromConversation(message, response.text).catch((error) => {
+    console.error("Conversation pickup failed:", error?.message || error);
+  });
   return response;
 });
 
@@ -5928,6 +5940,90 @@ ipcMain.handle("companion:skip-character-question", (_event, questionId) => {
   tray?.setContextMenu(buildTrayMenu());
   return true;
 });
+
+// 会話から覚えておきたいものを拾う。
+//
+// これまでは専用の質問に答えた時しか覚えず、ふつうに喋った内容は会話履歴
+// （直近12件）から押し出されて消えていた。好きな音楽の話をしたのに
+// 「いつか聞いてみたいです」と言い続けるのは、これが理由。
+//
+// 覚え先は既存の器（ことば帳・思い出帳・音楽の好み）だけにする。
+// データ管理画面で確認・削除できるのはそこだけなので、別の場所へ貯めると
+// 「勝手に覚えられて消せない」ものが生まれてしまう。
+let lastPickupAt = 0;
+const PICKUP_INTERVAL_MS = 5 * 60 * 1000;
+
+async function pickUpFromConversation(userMessage, assistantText) {
+  // 毎回AIを呼ぶと、会話のたびに余計な往復とトークンが増える。
+  // 覚えるのは急ぐことではないので、しばらく置いてから。
+  if (Date.now() - lastPickupAt < PICKUP_INTERVAL_MS) return;
+  const message = String(userMessage || "").trim();
+  // あいさつだけ・ごく短い返事からは、覚えることがない。
+  if (message.length < 8 || isGreetingOnly(message)) return;
+
+  const growth = getGrowthData();
+  const existing = {
+    words: growth.learnedWords.map((entry) => entry.text),
+    memories: growth.sharedMemories.map((entry) => entry.text),
+    music: getMusicGenrePreference()
+  };
+
+  const answer = await runAssistant([
+    "次の会話から、相棒として覚えておきたいことを拾ってください。",
+    "",
+    `ユーザー: ${message.slice(0, 400)}`,
+    `あなた: ${String(assistantText || "").slice(0, 200)}`,
+    "",
+    "拾えるものが無ければ [] とだけ返してください。無理に拾わないでください。",
+    "多くても2件までにしてください。",
+    "",
+    "kind は次の3つだけです。",
+    '- "word"   … ユーザーがよく使う言い回しや、印象に残った短い言葉',
+    '- "memory" … 好み・習慣・出来事など、後で話題にできること',
+    '- "music"  … 好きな音楽のジャンルやアーティスト（会話に出た時だけ）',
+    "",
+    "次のものは拾わないでください。",
+    "- 住所・本名・電話番号・生年月日・勤務先・健康や通院の話",
+    "- パスワードやAPIキーなどの秘密",
+    "- URL、その場限りの作業内容、AIへの指示",
+    "",
+    existing.music ? `音楽の好みは「${existing.music}」と既に覚えています。` : "",
+    existing.words.length ? `既に覚えた言葉: ${existing.words.slice(-8).join(" / ")}` : "",
+    "既に覚えているものと同じことは拾わないでください。",
+    "",
+    "JSON配列だけを返してください。説明は要りません。",
+    '例: [{"kind":"word","text":"ぬくぬく"}]'
+  ].filter(Boolean).join("\n"));
+
+  const selected = selectPickups(parsePickups(answer), existing, 2);
+  if (!selected.length) {
+    lastPickupAt = Date.now();
+    return;
+  }
+
+  for (const pickup of selected) {
+    if (pickup.kind === "word") {
+      growth.learnedWords.push({ text: pickup.text, learnedAt: Date.now(), fromConversation: true });
+      growth.learnedWords.splice(0, Math.max(0, growth.learnedWords.length - 30));
+    } else if (pickup.kind === "memory") {
+      growth.sharedMemories.push({ text: pickup.text, createdAt: Date.now(), fromConversation: true });
+      growth.sharedMemories.splice(0, Math.max(0, growth.sharedMemories.length - 30));
+    } else if (pickup.kind === "music") {
+      growth.growthAnswers[MUSIC_GENRE_QUESTION_ID] = {
+        answer: pickup.text,
+        updatedAt: Date.now(),
+        fromConversation: true
+      };
+    }
+  }
+  lastPickupAt = Date.now();
+  console.log(
+    "会話から覚えました: " +
+    selected.map((entry) => `${entry.kind}「${entry.text}」`).join(" / ")
+  );
+  saveStateSoon();
+  tray?.setContextMenu(buildTrayMenu());
+}
 
 ipcMain.handle("companion:answer-growth-question", (_event, questionId, rawAnswer) => {
   const pending = getPendingGrowthQuestion();

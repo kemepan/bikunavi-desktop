@@ -279,10 +279,17 @@ let alwaysOnTopWanted = persistedState.alwaysOnTop !== false;
 // Windows で落ちた TOPMOST を自力で戻す。macOS では落ちないので何もしない
 // （挙動を変えない）。false→true の入れ直しで SetWindowPos(HWND_TOPMOST) が
 // 改めて発行され、moveTop で最前面グループ内でも先頭へ上がる。
+let lastAlwaysOnTopReassertAt = 0;
+
 function reassertAlwaysOnTop() {
   if (process.platform !== "win32") return;
   if (!alwaysOnTopWanted) return;
   if (!companionWindow || companionWindow.isDestroyed() || !companionWindow.isVisible()) return;
+  // moved は setBounds 1回ごとに飛ぶ（macOS・Electron 37 で実測。20回中19回）。
+  // 自動移動は33msごとに setBounds を呼ぶので、間引かないと1回のお出かけで
+  // 200〜600回、最前面の張り直しが走る。歩いている間ずっとZ順を奪い合う。
+  if (Date.now() - lastAlwaysOnTopReassertAt < 1000) return;
+  lastAlwaysOnTopReassertAt = Date.now();
   companionWindow.setAlwaysOnTop(false);
   companionWindow.setAlwaysOnTop(true);
   companionWindow.moveTop();

@@ -20,9 +20,25 @@ assert.equal(matchesContext({ text: "x" }, { slot: "深夜", music: true }), tru
 
 // 音楽・ポモドーロの指定。
 {
-  const music = { text: "曲の話", when: { music: true } };
+  // music は "music"（音楽と分かっている）と "audio"（何か鳴っているが不明）を
+  // 区別する。ブラウザの音は音楽も動画も通話も同じに見えるので、曲だと
+  // 決めつけると「このBGMいいですね」が会話へ向かって出てしまう。
+  const music = { text: "曲の話", when: { music: "music" } };
+  assert.equal(matchesContext(music, { music: "music" }), true);
+  assert.equal(matchesContext(music, { music: "audio" }), false);
+  assert.equal(matchesContext(music, { music: "" }), false);
+
+  const audio = { text: "何か鳴ってる話", when: { music: "audio" } };
+  assert.equal(matchesContext(audio, { music: "audio" }), true);
+  assert.equal(matchesContext(audio, { music: "music" }), false);
+
+  // 真偽値だった頃の呼び出しも受ける（true は音楽扱い）。
   assert.equal(matchesContext(music, { music: true }), true);
   assert.equal(matchesContext(music, { music: false }), false);
+  const anyAudio = { text: "何か鳴ってれば", when: { music: true } };
+  assert.equal(matchesContext(anyAudio, { music: "audio" }), true);
+  assert.equal(matchesContext(anyAudio, { music: "music" }), true);
+  assert.equal(matchesContext(anyAudio, { music: "" }), false);
 
   const focus = { text: "集中の話", when: { pomodoro: "focus" } };
   assert.equal(matchesContext(focus, { pomodoro: "focus" }), true);
@@ -37,9 +53,15 @@ assert.equal(matchesContext({ text: "x" }, { slot: "深夜", music: true }), tru
   assert.ok(line.when?.slots?.includes("深夜"), text);
 }
 {
-  const text = selectFallbackLine({ music: true }, [], () => 0);
+  const text = selectFallbackLine({ music: "music" }, [], () => 0);
   const line = FALLBACK_LINES.find((item) => item.text === text);
-  assert.equal(line.when?.music, true, text);
+  assert.equal(line.when?.music, "music", text);
+}
+{
+  // 何か鳴っているだけの時に、曲だと決めつけた行を出さない。
+  const text = selectFallbackLine({ music: "audio" }, [], () => 0);
+  const line = FALLBACK_LINES.find((item) => item.text === text);
+  assert.equal(line.when?.music, "audio", text);
 }
 
 // 状況の行を言い尽くしたら、いつでも言える行へ落ちる（無言にならない）。

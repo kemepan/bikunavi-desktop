@@ -60,9 +60,15 @@
     { text: "そろそろ切り上げどきかもしれません。続きは明日の自分に任せましょう。", when: { slots: ["深夜"] } },
     { text: "夜更かしは、次の日の自分から借金するようなものですよね。", when: { slots: ["深夜"] } },
 
-    // --- 音楽が鳴っている時 ---
-    { text: "この曲、作業のテンポに合っていますね。", when: { music: true } },
-    { text: "音楽があると、手がよく動く気がします。", when: { music: true } },
+    // --- 音楽だと分かっている時 ---
+    { text: "この曲、作業のテンポに合っていますね。", when: { music: "music" } },
+    { text: "音楽があると、手がよく動く気がします。", when: { music: "music" } },
+
+    // --- 何か鳴っているが、音楽かどうかは分からない時 ---
+    // ブラウザの音は、音楽も動画も通話も同じに見える。曲だと決めつけると
+    // 「このBGMいいですね」が会話や動画に向かって出てしまう。
+    { text: "何か流れてますね。邪魔しないでおきます。", when: { music: "audio" } },
+    { text: "音がしますね。集中したい時は言ってください、静かにします。", when: { music: "audio" } },
 
     // --- ポモドーロ中 ---
     { text: "いまは手を止めずにいきましょう。終わったら伸びをしましょうね。", when: { pomodoro: "focus" } },
@@ -73,7 +79,12 @@
     const when = line?.when;
     if (!when) return true;
     if (Array.isArray(when.slots) && !when.slots.includes(context.slot)) return false;
-    if (when.music === true && !context.music) return false;
+    // music は "music"（音楽と分かっている）/ "audio"（何か鳴っているが不明）。
+    // 真偽値だった頃の呼び出しも受ける（true は音楽扱い）。
+    if (when.music) {
+      const kind = context.music === true ? "music" : String(context.music || "");
+      if (when.music === true ? !kind : when.music !== kind) return false;
+    }
     if (when.pomodoro && when.pomodoro !== context.pomodoro) return false;
     return true;
   }

@@ -89,6 +89,7 @@ const {
   parsePickups,
   selectPickups
 } = require("./conversation-pickup-utils");
+const { classifyAudioAssertions } = require("./audio-source-utils");
 const {
   cleanChatPunctuation,
   isGreetingOnly,
@@ -478,7 +479,7 @@ for (const entry of (Array.isArray(persistedState.lineHistory) ? persistedState.
 function fallbackLineContext() {
   return {
     slot: getJstTimeContext().slot,
-    music: Boolean(musicPlaying),
+    music: musicPlayingKind,
     // 局面は focus90 / break15 のような名前なので、前方一致で見る。
     pomodoro: pomodoroState.active
       ? (String(pomodoroState.phase || "").startsWith("break") ? "break" : "focus")
@@ -671,6 +672,8 @@ const sttDefaultModelPath = path.join(__dirname, "models", "ggml-base.bin");
 let mediaPlaybackTimer;
 let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
+// 鳴っているものの種類。"music" / "audio" / ""。定型セリフの言い回しを分ける。
+let musicPlayingKind = "";
 // Windows の再生検出ヘルパー（native/now-playing.ps1）と、その最新報告
 let windowsMediaHelperProcess;
 let windowsMediaPlaying;
@@ -2059,6 +2062,7 @@ function buildTrayMenu() {
             musicReactEnabled = item.checked;
             if (!musicReactEnabled && musicPlaying) {
               musicPlaying = false;
+              musicPlayingKind = "";
               companionWindow?.webContents.send("companion:music-playing", false);
             }
             // Windows の検出ヘルパーはトグルに合わせて起動・停止する
@@ -4921,7 +4925,9 @@ function detectBrowserAudioPlayback() {
     });
     child.on("close", () => {
       clearTimeout(timeout);
-      resolve(/named:\s*"Playing audio"/i.test(output));
+      // 「鳴っているか」だけでなく、鳴らしているアプリまで見る。
+      // pmset の出力には pid 700(Google Chrome) のようにプロセス名が出ている。
+      resolve(classifyAudioAssertions(output));
     });
   });
 }
@@ -4953,8 +4959,11 @@ function startWindowsMediaHelper() {
       buffered = lines.pop();
       for (const line of lines) {
         const status = line.trim();
-        if (status === "playing") windowsMediaPlaying = true;
-        else if (status === "stopped") windowsMediaPlaying = false;
+        // ヘルパーは music / audio / stopped / unknown を返す。
+        // playing は語彙を分ける前の版との互換（音楽扱いにする）。
+        if (status === "music" || status === "playing") windowsMediaPlaying = "music";
+        else if (status === "audio") windowsMediaPlaying = "audio";
+        else if (status === "stopped") windowsMediaPlaying = "";
         else if (status === "unknown") windowsMediaPlaying = undefined;
       }
     });
@@ -4993,15 +5002,23 @@ function stopWindowsMediaHelper() {
   child?.kill("SIGTERM");
 }
 
+// 何が鳴っているかを返す。"music"（音楽と分かっている）/ "audio"（何か鳴って
+// いるが不明）/ ""（鳴っていない）/ undefined（読めなかった）。
+//
+// 「鳴っている＝音楽」と扱っていたので、動画でも通話でも「このBGM、テンポ
+// いいですね」と言っていた。ブラウザの音は音楽も動画も通話も同じに見えるので、
+// そこは "audio" に留めて、曲だと決めつけない。
 async function detectMusicPlayback() {
   // Windows は常駐ヘルパーが届けてきた最新の状態を使う（無ければ undefined）
   if (process.platform === "win32") return windowsMediaPlaying;
-  const [mediaRemotePlaying, browserAudioPlaying] = await Promise.all([
+  const [mediaRemoteKind, browserAudioKind] = await Promise.all([
     detectMediaRemotePlayback(),
     detectBrowserAudioPlayback()
   ]);
-  if (mediaRemotePlaying === true || browserAudioPlaying === true) return true;
-  if (mediaRemotePlaying === false || browserAudioPlaying === false) return false;
+  // 音楽と分かっている方を優先する。
+  if (mediaRemoteKind === "music" || browserAudioKind === "music") return "music";
+  if (mediaRemoteKind === "audio" || browserAudioKind === "audio") return "audio";
+  if (mediaRemoteKind === "" || browserAudioKind === "") return "";
   return undefined;
 }
 
@@ -5010,9 +5027,12 @@ async function updateMusicPlayback() {
   if (!musicReactEnabled) return;
   mediaPlaybackCheckRunning = true;
   try {
-    const playing = await detectMusicPlayback();
-    if (playing === undefined || playing === musicPlaying) return;
-    musicPlaying = playing;
+    const kind = await detectMusicPlayback();
+    if (kind === undefined || kind === musicPlayingKind) return;
+    musicPlayingKind = kind;
+    // 踊る・自動移動を止めるといった振る舞いは、音楽でなくても音が鳴っていれば
+    // 従来どおり働かせる。変えるのは「曲だと決めつけた言い方」だけ。
+    musicPlaying = Boolean(kind);
     if (musicPlaying) clearInterval(autoMoveTimer);
     companionWindow?.webContents.send("companion:music-playing", musicPlaying);
   } finally {

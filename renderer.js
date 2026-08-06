@@ -604,7 +604,12 @@ function processHandsFreeAudio(recorder, chunk) {
     Date.now() < handsFreeIgnoreUntil
   ) {
     recorder.detector.reset();
-    clearHandsFreePreRoll(recorder);
+    // ここでプリロールを捨てない。捨てると、びくたんが喋り終わった直後
+    // （280msの待ち）に話しかけられた時、その出だしまで消えてしまう。
+    // 「最初の音を拾えない」の残りはこれだった。
+    // びくたん自身の声は speech-started / speech-ended の時点で捨てており、
+    // ここで貯まるのは待っている間の部屋の音（＝人の声の出だし）。
+    if (!handsFreeUtterance) appendHandsFreePreRoll(recorder, chunk);
     return;
   }
 

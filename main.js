@@ -544,11 +544,21 @@ function makeBikutanWorkLine(force = false) {
     sharedMemories.length
       ? `思い出帳を${sharedMemories.length}件分、読み返しています。`
       : "思い出帳に、今日の余白を作っています。",
-    musicPreference
-      ? `教えてもらった音楽の好み（${musicPreference.slice(0, 24)}）を、ちゃんと覚えています。`
-      : "好きな音楽の話も、いつか聞いてみたいです。",
+    // 好みは「覚えています」で終わらせない。それだと報告で話が閉じてしまう。
+    // 覚えた中身を使って何かする（頭の中で流す・次を探す）か、話を返す。
+    ...(musicPreference
+      ? [
+        `${musicPreference.slice(0, 24)}の気分に合いそうな曲を、頭の中で流していました。`,
+        `${musicPreference.slice(0, 24)}が好きと聞いてから、似た雰囲気のものを探しています。`,
+        {
+          text: `${musicPreference.slice(0, 24)}って、作業中と休憩中でどちらが多いですか？`,
+          choices: ["作業中", "休憩中", "どっちも"]
+        }
+      ]
+      : ["好きな音楽の話も、いつか聞いてみたいです。"]),
+    // ここも「育てています」だけだと中身が無い。何が変わったのかを言う。
     Object.keys(growthAnswers).length
-      ? "この前話した好みを、びくたんの中で少し育てています。"
+      ? "この前答えたことを読み返して、自分ならどう答えるか考え直していました。"
       : "びくたん自身の好きなものも、少しずつ学んでいます。",
     topicCount
       ? `気になる見出しを${topicCount}件ほど並べ直しています。`
@@ -561,9 +571,15 @@ function makeBikutanWorkLine(force = false) {
       : "記事の👍と👎をもらえると、次から話題を選びやすくなります。"
   ];
   for (let attempt = 0; attempt < candidateLines.length; attempt += 1) {
-    const text = candidateLines[bikutanWorkLineIndex % candidateLines.length];
+    const candidate = candidateLines[bikutanWorkLineIndex % candidateLines.length];
     bikutanWorkLineIndex += 1;
+    // 「AとBのどちら？」は定型の選択肢を作れないので（suggestReplyChoices は
+    // 共感・許可・Yes/No だけ）、候補の側に持たせられるようにする。
+    const text = typeof candidate === "string" ? candidate : candidate.text;
     const item = { text, sources: [], kind: "bikutan-work" };
+    if (typeof candidate !== "string" && candidate.choices?.length) {
+      item.choices = candidate.choices;
+    }
     if (force || !isRecentIdle(item)) {
       lastBikutanWorkLineAt = now;
       currentBikutanActivity = text;

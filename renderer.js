@@ -3000,10 +3000,12 @@ bikunavi.on("companion:pomodoro", (state) => {
 // afplay が無いため。鳴り終わったことを返さないと、次の文へ進めない。
 // 読み上げと相づちは別チャンネルで持ち、互いに止め合わない
 //（main 側の speechProcess / aizuchiProcess の分離と同じ形）。
-const rendererAudioChannels = { speech: undefined, aizuchi: undefined };
+const rendererAudioChannels = { speech: undefined, aizuchi: undefined, thinking: undefined };
 
 function audioChannelName(channel) {
-  return channel === "aizuchi" ? "aizuchi" : "speech";
+  return rendererAudioChannels[channel] !== undefined || channel in rendererAudioChannels
+    ? channel
+    : "speech";
 }
 
 function stopRendererAudio(channel) {
@@ -3015,7 +3017,7 @@ function stopRendererAudio(channel) {
   audio.src = "";
 }
 
-bikunavi.on("companion:play-audio", async ({ id, data, volume, channel } = {}) => {
+bikunavi.on("companion:play-audio", async ({ id, data, volume, channel, mime } = {}) => {
   const name = audioChannelName(channel);
   stopRendererAudio(name);
   if (!data) {
@@ -3026,7 +3028,8 @@ bikunavi.on("companion:play-audio", async ({ id, data, volume, channel } = {}) =
     // data: URL ではなく Blob を使う。CSP を data: まで開けずに済み、
     // 長い音声でも URL 文字列にせずに扱える。
     const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+    // 読み上げは wav、効果音は mp3。中身に合わせないと鳴らない環境がある。
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime || "audio/wav" }));
     const audio = new Audio(url);
     audio.volume = Math.max(0, Math.min(1, Number(volume) || 1));
     rendererAudioChannels[name] = audio;

@@ -91,6 +91,12 @@ const {
 } = require("./conversation-pickup-utils");
 const { classifyAudioAssertions } = require("./audio-source-utils");
 const {
+  countTogetherDays,
+  describeTogetherDays,
+  estimateFirstLaunchAt,
+  shouldMention: shouldMentionTogetherDays
+} = require("./together-days-utils");
+const {
   cleanChatPunctuation,
   isGreetingOnly,
   looksLikeCorrection,
@@ -183,6 +189,10 @@ const DEFAULT_STATE = {
   clickThroughEnabled: true,
   dimWhenIdleEnabled: true,
   lastLaunchAt: 0,
+  // 初めて起動した日。「今日で何日目」を数えるのに使う。
+  firstLaunchAt: 0,
+  // 最後に何日目を言った時の日数。同じ節目を二度言わないため。
+  lastTogetherDaysMentioned: 0,
   bgmSuggestHistory: { date: "", dayparts: [] },
   thinkingSoundEnabled: true,
   fortuneAutoEnabled: true,
@@ -684,6 +694,8 @@ let pomodoroTimer;
 let pomodoroChimeProcess;
 let thinkingSoundProcess;
 let thinkingSoundRequested = false;
+// renderer 経路には kill できるプロセスが無いので、世代で鳴らし直しを断つ。
+let thinkingSoundGeneration = 0;
 let pomodoroState = {
   active: false,
   running: false,
@@ -1346,6 +1358,8 @@ const pendingAudioPlays = new Map();
 let audioPlayCounter = 0;
 
 function playAudioInRenderer(filePath, volumeScale, channel = "speech") {
+  // 拡張子から中身を伝える。renderer 側が Blob の型に使う。
+  const mime = path.extname(filePath).toLowerCase() === ".mp3" ? "audio/mpeg" : "audio/wav";
   if (!companionWindow || companionWindow.isDestroyed()) return Promise.resolve(false);
   const id = `audio-${++audioPlayCounter}`;
   let data;
@@ -1369,8 +1383,9 @@ function playAudioInRenderer(filePath, volumeScale, channel = "speech") {
       id,
       data,
       volume: Number(volumeScale),
-      // 読み上げと相づちは別チャンネル。afplay 経路の speechProcess /
-      // aizuchiProcess の分離と同じで、互いの再生を止め合わない。
+      mime,
+      // 読み上げ・相づち・考え中の音は別チャンネル。afplay 経路の
+      // speechProcess / aizuchiProcess の分離と同じで、互いの再生を止め合わない。
       channel
     });
   });
@@ -1393,6 +1408,13 @@ function stopThinkingSound() {
   thinkingSoundIsPreview = false;
   const processToStop = thinkingSoundProcess;
   thinkingSoundProcess = undefined;
+  // renderer で鳴らしている時はプロセスが無いので kill では止まらない。
+  // 世代を進めて鳴らし直しを断ち、鳴っている分は renderer 側へ止めさせる。
+  thinkingSoundGeneration += 1;
+  if (processToStop?.renderer) {
+    stopAudioInRenderer("thinking");
+    return;
+  }
   processToStop?.kill("SIGTERM");
 }
 
@@ -1403,9 +1425,24 @@ function startThinkingSound() {
   const soundPath = path.join(__dirname, "assets", "sounds", "thinking-countdown.mp3");
   if (!fs.existsSync(soundPath)) return;
   const volume = Math.max(0.12, Math.min(0.35, (speechVolume / 100) * 0.6)).toFixed(2);
-    // 他のOSでは afplay が無い。考え中の音は renderer 側に受け口が無いので、
-    // 鳴らさず静かに諦める（無くても会話は成立する）。
-    if (!canUseAfplay()) return;
+  // afplay が無いOSでは renderer に鳴らしてもらう。読み上げ・相づちとは
+  // 別チャンネルなので、考え中の音が本回答の読み上げを止めることはない。
+  if (!canUseAfplay()) {
+    const generation = ++thinkingSoundGeneration;
+    thinkingSoundProcess = { renderer: true, generation };
+    playAudioInRenderer(soundPath, volume, "thinking")
+      .catch(() => false)
+      .then(() => {
+        // 止められた後（世代が進んだ後）は、鳴らし直さない。
+        if (thinkingSoundGeneration !== generation) return;
+        thinkingSoundProcess = undefined;
+        // 1.8秒の短いジングルを、返答が来るまで繰り返す。
+        if (thinkingSoundRequested && !systemSleeping && thinkingSoundEnabled) {
+          startThinkingSound();
+        }
+      });
+    return;
+  }
   try {
     const child = spawn("/usr/bin/afplay", ["-v", volume, soundPath], { stdio: "ignore" });
     thinkingSoundProcess = child;
@@ -2009,14 +2046,12 @@ function buildTrayMenu() {
           }
         })),
         { type: "separator" },
-        // 考え中の音は afplay でしか鳴らせない（renderer 側に受け口が無い）。
-        // 鳴らない環境でスイッチと試聴だけ生きていると、押しても無反応で
-        // 壊れているように見える。理由を書いて触れなくする。
+        // afplay が無いOSでは renderer に鳴らしてもらう（別チャンネル）。
+        // 以前はここで無効化していたが、鳴らせるようになったので戻した。
         {
-          label: canUseAfplay() ? "考え中の効果音" : "考え中の効果音（このOSでは鳴りません）",
+          label: "考え中の効果音",
           type: "checkbox",
-          checked: thinkingSoundEnabled && canUseAfplay(),
-          enabled: canUseAfplay(),
+          checked: thinkingSoundEnabled,
           click: (item) => {
             thinkingSoundEnabled = item.checked;
             if (!thinkingSoundEnabled) stopThinkingSound();
@@ -2026,7 +2061,7 @@ function buildTrayMenu() {
         },
         {
           label: "考え中の音を試す",
-          enabled: thinkingSoundEnabled && canUseAfplay(),
+          enabled: thinkingSoundEnabled,
           click: () => previewThinkingSound()
         },
         { type: "separator" },
@@ -3157,6 +3192,7 @@ app.whenReady().then(() => {
   maybeShowVoicevoxGuide();
   maybeShowTrayGuide();
   maybeWelcomeBack();
+  maybeMentionTogetherDays();
   // 保存された設定と、OS側の登録状態を合わせておく。
   // アプリを入れ直すと登録が消えることがあるため。
   applyOpenAtLogin(persistedState.openAtLogin);
@@ -3238,6 +3274,41 @@ function bgmLineForPomodoroStart() {
     text: describeBgmSuggestion(name, { focus: true }),
     source: makeYoutubeSearchSource(`${name} 作業用 BGM`)
   };
+}
+
+// 「今日で何日目ですね」。節目の日だけ言う。
+//
+// 毎日言われると挨拶になってしまい、特別さが無くなる。3日・7日・10日ごと・
+// 30日ごと・1年ちょうど、といった区切りでだけ触れる。
+function maybeMentionTogetherDays() {
+  // 途中から入れた機能なので、初回起動日を持っていない人がいる。
+  // 手元のいちばん古い記録から遡って推定する。何も無ければ今日から。
+  if (!Number(persistedState.firstLaunchAt)) {
+    const growth = getGrowthData();
+    persistedState.firstLaunchAt = estimateFirstLaunchAt([
+      ...growth.learnedWords.map((entry) => entry?.learnedAt),
+      ...growth.sharedMemories.map((entry) => entry?.createdAt),
+      ...getDailyDiaries().map((entry) => Date.parse(`${entry?.date} 00:00:00+09:00`)),
+      persistedState.lastLaunchAt
+    ]);
+    saveStateSoon();
+  }
+
+  const days = countTogetherDays(persistedState.firstLaunchAt);
+  if (!shouldMentionTogetherDays(days, {
+    lastMentionedDays: persistedState.lastTogetherDaysMentioned
+  })) return;
+
+  persistedState.lastTogetherDaysMentioned = days;
+  saveStateSoon();
+  // 「おかえり」は22秒後に出る。重ならないよう、さらに後ろへ置く。
+  setTimeout(() => {
+    showAmbientLine({
+      text: `${describeTogetherDays(days)}。これからもよろしくお願いします。`,
+      sources: [],
+      kind: "together-days"
+    });
+  }, 32000);
 }
 
 function maybeWelcomeBack() {

@@ -270,9 +270,27 @@ persistedState.chatEntries = (Array.isArray(persistedState.chatEntries)
 if (needsLegacyUserVocativeRepair) persistedState.legacyUserVocativeRepairV2 = Date.now();
 let stateSaveTimer;
 
+// 「いつも手前」のユーザーの意思。OSの実際の状態（isAlwaysOnTop）とは分けて持つ。
+// Windows は他アプリの最前面ウィンドウや UAC からの復帰などで TOPMOST を勝手に
+// 落とすことがあり、OSの現在値を読み戻して保存すると、その事故が state.json に
+// 焼き付いて次回起動から常に手前でなくなる（実機で発生）。保存するのは意思の方。
+let alwaysOnTopWanted = persistedState.alwaysOnTop !== false;
+
+// Windows で落ちた TOPMOST を自力で戻す。macOS では落ちないので何もしない
+// （挙動を変えない）。false→true の入れ直しで SetWindowPos(HWND_TOPMOST) が
+// 改めて発行され、moveTop で最前面グループ内でも先頭へ上がる。
+function reassertAlwaysOnTop() {
+  if (process.platform !== "win32") return;
+  if (!alwaysOnTopWanted) return;
+  if (!companionWindow || companionWindow.isDestroyed() || !companionWindow.isVisible()) return;
+  companionWindow.setAlwaysOnTop(false);
+  companionWindow.setAlwaysOnTop(true);
+  companionWindow.moveTop();
+}
+
 function collectState() {
   persistedState.size = currentSize;
-  persistedState.alwaysOnTop = companionWindow?.isAlwaysOnTop() ?? persistedState.alwaysOnTop;
+  persistedState.alwaysOnTop = alwaysOnTopWanted;
   persistedState.speechEnabled = speechEnabled;
   persistedState.idleSpeechEnabled = idleSpeechEnabled;
   persistedState.speechRate = speechRate;
@@ -919,7 +937,7 @@ function createWindow() {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    alwaysOnTop: persistedState.alwaysOnTop !== false,
+    alwaysOnTop: alwaysOnTopWanted,
     skipTaskbar: true,
     show: false,
     webPreferences: {
@@ -947,6 +965,11 @@ function createWindow() {
     sendWindowEdgeState();
     saveStateSoon();
   });
+  // 手前が外れやすい契機で張り直す。blur は「他のウィンドウを触った時」、
+  // moved は「びくたんを動かし終えた時」にあたる（どちらも終了時に1回だけ。
+  // moveCompanionWindow の中だと 33ms ごとになるので入れない）。
+  companionWindow.on("blur", reassertAlwaysOnTop);
+  companionWindow.on("moved", reassertAlwaysOnTop);
   companionWindow.loadURL(`${APP_SCHEME}://app/index.html`);
   companionWindow.webContents.on("did-finish-load", () => {
     lastTopDocked = undefined;
@@ -2175,8 +2198,11 @@ function buildTrayMenu() {
         {
           label: "いつも手前",
           type: "checkbox",
-          checked: companionWindow?.isAlwaysOnTop() ?? true,
+          // isAlwaysOnTop() はOSの現在値で、Windows で TOPMOST が勝手に落ちると
+          // 設定はONのままなのにチェックが外れて見える。意思の方を見せる。
+          checked: alwaysOnTopWanted,
           click: (item) => {
+            alwaysOnTopWanted = item.checked;
             companionWindow?.setAlwaysOnTop(item.checked);
             saveStateSoon();
           }
@@ -3180,6 +3206,11 @@ app.whenReady().then(() => {
     tray.on("click", () => tray?.popUpContextMenu());
   }
   startMusicPlaybackMonitor();
+  // blur / moved で拾えない外れ方（UAC からの復帰・DWM の再起動など）への保険。
+  // 5秒ごとに SetWindowPos 1回ぶんなので負荷は無視できる。
+  if (process.platform === "win32") {
+    setInterval(reassertAlwaysOnTop, 5000);
+  }
   powerMonitor.on("suspend", () => {
     setSystemSleeping(true);
   });
@@ -3535,7 +3566,12 @@ ipcMain.on("companion:set-mouse-ignore", (_event, ignore) => {
 // 出てしまい、押した場所から遠い。menu.popup はカーソル位置に出る。
 ipcMain.on("companion:open-menu", () => {
   if (!companionWindow || companionWindow.isDestroyed()) return;
-  buildTrayMenu().popup({ window: companionWindow });
+  // popup 中に GC されないようローカル参照を持つ。閉じた後は、メニュー
+  // （それ自体が最前面のネイティブ窓）とのやり取りで TOPMOST が外れて
+  // いることがあるので張り直す。
+  const menu = buildTrayMenu();
+  menu.once("menu-will-close", () => setTimeout(reassertAlwaysOnTop, 0));
+  menu.popup({ window: companionWindow });
 });
 
 ipcMain.on("companion:focus-window", () => {

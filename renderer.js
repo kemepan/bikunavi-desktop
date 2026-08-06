@@ -180,17 +180,17 @@ const VOICE_INPUT_MAX_MS = 15000;
 // 900ms なら 48kHz float32 でも約173KB。常に持ち歩いても負担にならない。
 const HANDS_FREE_PRE_ROLL_MS = 900;
 const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
-// 「本当に人が喋った」とみなす音の大きさ（録音中の最大RMS）。
+// 「たぶん人が喋った」とみなす音の大きさを、開始しきい値からの倍率で決める。
 //
-// 開始しきい値（0.045〜0.090）は、遠くの声や小さい入りを取りこぼさないよう
-// 低めに置いてある。その代わり物音でも始まってしまい、継続しきい値も低い
-// （0.018）ので、そのまま数秒ぶん何も無い音を録り続ける。
+// 最初は 0.32 の固定値にしていたが、これは測った環境（48kHz・その時のマイク
+// 設定）でしか通用しなかった。別の環境（44.1kHz）では実際の声が 0.084〜0.164
+// までしか出ず、**話しかけても全部捨てられた**（2026-08-05に発生）。
 //
-// 2026-08-05の実測（macOS実機）:
-//   実際に喋った時   … peak RMS 0.368 / 0.527 → 文字起こし成功（confidence 0.97）
-//   雑音で始まった時 … peak RMS 0.097〜0.286 → すべて0文字
-// この間で切る。
-const HANDS_FREE_VOICE_PEAK_RMS = 0.32;
+// 開始しきい値は環境ノイズに追従して動く（noiseFloor * 3、上限0.075）ので、
+// そこからの相対にすれば環境が変わってもついてくる。
+// 1.5倍にしているのは、上のケースで声（0.084〜）は超え、開始しきい値ぎりぎりの
+// 物音は超えない位置だから。
+const HANDS_FREE_VOICE_PEAK_MULTIPLIER = 1.5;
 const HANDS_FREE_BUFFER_SIZE = 4096;
 // 続きものの次の行までの間。吹き出しを出したまま差し替えるので、
 // 消して出し直していた頃より短くてよい。
@@ -512,17 +512,12 @@ async function finishHandsFreeUtterance(utterance) {
     restoreHandsFreeCaptureState(utterance);
     return;
   }
-  // 一度も声の大きさに届かなかった録音は、人の声ではなく物音とみなす。
-  // 実測では、この手のものは文字起こしへ送っても例外なく0文字で返ってきた。
-  // ヘルパーを起動するだけ無駄なので、ここで捨てる。
-  if (!utterance.reachedVoice) {
-    console.log(
-      `Hands-free utterance dropped: 声の大きさに届かず ` +
-      `peak RMS ${utterance.peakRms.toFixed(3)} < ${HANDS_FREE_VOICE_PEAK_RMS}`
-    );
-    restoreHandsFreeCaptureState(utterance);
-    return;
-  }
+  // 声の大きさに届かなかった録音も、**捨てずに文字起こしへ送る**。
+  //
+  // 以前はここで捨てていたが、しきい値が環境に合わないと話しかけても全部
+  // 消える（実際に起きた）。聞き取れないのが一番困るので、判断は文字起こしに
+  // 任せる。物音なら0文字で返ってきて、そこで落ちる。
+  // このしきい値は「読み上げを遮ってよいか」の判断だけに使う。
   const samples = mergeAudioChunks(utterance.chunks);
   const durationMs = samples.length / utterance.sampleRate * 1000;
   if (durationMs < 420) {
@@ -639,8 +634,10 @@ function processHandsFreeAudio(recorder, chunk) {
     clearHandsFreePreRoll(recorder);
     // ここではまだ読み上げを止めない。物音でも開始してしまうため、
     // 遮ってから0文字で終わると「急に黙った」だけになる。
-    // 声らしい大きさに届いた時点（下の interruptedAt）で初めて踏み込む。
-    if (handsFreeUtterance.peakRms >= HANDS_FREE_VOICE_PEAK_RMS) {
+    // 声らしい大きさに届いた時点で初めて踏み込む。
+    handsFreeUtterance.voicePeakThreshold =
+      decision.startThreshold * HANDS_FREE_VOICE_PEAK_MULTIPLIER;
+    if (handsFreeUtterance.peakRms >= handsFreeUtterance.voicePeakThreshold) {
       handsFreeUtterance.reachedVoice = true;
       interruptChatForHandsFree();
     }
@@ -652,7 +649,10 @@ function processHandsFreeAudio(recorder, chunk) {
     handsFreeUtterance.chunks.push(chunk);
     handsFreeUtterance.peakRms = Math.max(handsFreeUtterance.peakRms, decision.level);
     // 録音の途中で声の大きさに届いたら、そこで読み上げ・生成へ割り込む。
-    if (!handsFreeUtterance.reachedVoice && handsFreeUtterance.peakRms >= HANDS_FREE_VOICE_PEAK_RMS) {
+    if (
+      !handsFreeUtterance.reachedVoice &&
+      handsFreeUtterance.peakRms >= (handsFreeUtterance.voicePeakThreshold || 0)
+    ) {
       handsFreeUtterance.reachedVoice = true;
       interruptChatForHandsFree();
     }

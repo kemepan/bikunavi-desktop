@@ -198,6 +198,11 @@ const DEFAULT_STATE = {
   fortuneAutoEnabled: true,
   autoMoveEnabled: true,
   musicReactEnabled: true,
+  // ブラウザの音を音楽として扱うか。
+  // pmset も SMTC も「ブラウザが鳴らしている」までしか教えてくれず、
+  // YouTubeの音楽・動画・通話は同じに見える。どちらの間違いを選ぶかは
+  // 使い方次第なので、利用者に決めてもらう。既定は踊る側。
+  browserAudioCountsAsMusic: true,
   idleIntervalMs: 30000,
   lineHistory: [],
   chatEntries: [],
@@ -310,6 +315,7 @@ function collectState() {
   persistedState.fortuneAutoEnabled = fortuneAutoEnabled;
   persistedState.autoMoveEnabled = autoMoveEnabled;
   persistedState.musicReactEnabled = musicReactEnabled;
+  persistedState.browserAudioCountsAsMusic = browserAudioCountsAsMusic;
   persistedState.idleIntervalMs = idleIntervalMs;
   persistedState.conversationProvider = conversationProvider;
   // 暗号化できる環境では平文キーをstate.jsonへ残さない
@@ -730,6 +736,7 @@ let mediaPlaybackCheckRunning = false;
 let musicPlaying = false;
 // 鳴っているものの種類。"music" / "audio" / ""。定型セリフの言い回しを分ける。
 let musicPlayingKind = "";
+let browserAudioCountsAsMusic = persistedState.browserAudioCountsAsMusic !== false;
 // Windows の再生検出ヘルパー（native/now-playing.ps1）と、その最新報告
 let windowsMediaHelperProcess;
 let windowsMediaPlaying;
@@ -2154,6 +2161,23 @@ function buildTrayMenu() {
             // Windows の検出ヘルパーはトグルに合わせて起動・停止する
             if (musicReactEnabled) startWindowsMediaHelper();
             else stopWindowsMediaHelper();
+            tray.setContextMenu(buildTrayMenu());
+            saveStateSoon();
+          }
+        },
+        {
+          // ブラウザの音は、音楽・動画・通話が同じに見える（pmset も SMTC も
+          // アプリまでしか教えてくれない）。どちらの間違いを選ぶかを決めてもらう。
+          label: "ブラウザの音も音楽として扱う（動画や通話でもノります）",
+          type: "checkbox",
+          checked: browserAudioCountsAsMusic,
+          enabled: musicReactEnabled,
+          click: (item) => {
+            browserAudioCountsAsMusic = item.checked;
+            // 次の見回りを待たずに、今の状態へ反映し直す。
+            musicPlayingKind = "";
+            musicPlaying = false;
+            updateMusicPlayback().catch(console.error);
             tray.setContextMenu(buildTrayMenu());
             saveStateSoon();
           }
@@ -5162,8 +5186,12 @@ async function updateMusicPlayback() {
   if (!musicReactEnabled) return;
   mediaPlaybackCheckRunning = true;
   try {
-    const kind = await detectMusicPlayback();
-    if (kind === undefined || kind === musicPlayingKind) return;
+    const detected = await detectMusicPlayback();
+    if (detected === undefined) return;
+    // 「何か鳴っているが音楽か分からない」（＝ほぼブラウザ）を、
+    // 音楽として扱うかどうか。設定で決める。
+    const kind = detected === "audio" && browserAudioCountsAsMusic ? "music" : detected;
+    if (kind === musicPlayingKind) return;
     musicPlayingKind = kind;
     // 踊る・自動移動を止めるといった振る舞いは、音楽でなくても音が鳴っていれば
     // 従来どおり働かせる。変えるのは「曲だと決めつけた言い方」だけ。

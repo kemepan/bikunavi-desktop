@@ -5169,7 +5169,9 @@ async function updateMusicPlayback() {
     // 従来どおり働かせる。変えるのは「曲だと決めつけた言い方」だけ。
     musicPlaying = Boolean(kind);
     if (musicPlaying) clearInterval(autoMoveTimer);
-    companionWindow?.webContents.send("companion:music-playing", musicPlaying);
+    // 種類も渡す。ノる動きは「音楽と分かっている時」だけにしたい。
+    // 動画や通話でも踊ると、言い方だけ直しても振る舞いで嘘をつくことになる。
+    companionWindow?.webContents.send("companion:music-playing", musicPlayingKind);
   } finally {
     mediaPlaybackCheckRunning = false;
   }
@@ -6301,7 +6303,7 @@ ipcMain.handle("companion:speak", (_event, text, kind = "answer") => {
   return speakText(text, kind);
 });
 
-ipcMain.handle("companion:music-playing", () => musicPlaying);
+ipcMain.handle("companion:music-playing", () => musicPlayingKind);
 
 ipcMain.handle("companion:system-sleeping", () => systemSleeping);
 

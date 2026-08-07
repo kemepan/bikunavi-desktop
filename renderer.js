@@ -116,7 +116,11 @@ let suppressHoverUntilLeave = false;
 let currentSpeechId;
 let currentSpeechKind;
 let currentSpeechHoldMs = 900;
-let musicPlaying = false;
+// 鳴っているものの種類。"music"（音楽と分かっている）/ "audio"（何か鳴って
+// いるが不明）/ ""（鳴っていない）。
+// ノる動きは music の時だけ。動画や通話に合わせて踊ると、言い方を直しても
+// 振る舞いの方で嘘をつくことになる。
+let musicPlayingKind = "";
 let musicDanceWeight = 0;
 let idleGazeX = 0;
 let idleGazeY = 0;
@@ -1742,7 +1746,7 @@ function showPomodoroBubble(state = pomodoroState, force = false) {
     setEmote("joy");
     pomodoroHideTimer = setTimeout(() => hideBubble(), 9000);
   } else if (state.active) {
-    setEmote(musicPlaying ? "joy" : getPomodoroEmote(state));
+    setEmote(musicPlayingKind === "music" ? "joy" : getPomodoroEmote(state));
   }
 }
 
@@ -2233,7 +2237,7 @@ function showLineEmote(lineItem, motionGroup = "Happy") {
 
 function resumeAmbientState() {
   stopMotions();
-  if (musicPlaying && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
+  if (musicPlayingKind === "music" && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
     setEmote("joy");
   } else if (pomodoroState.active && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking) {
     setEmote(getPomodoroEmote(pomodoroState));
@@ -2550,7 +2554,8 @@ async function start() {
       updatePomodoroQuickVisibility();
       updateSoundToggle();
       const danceActive =
-        musicPlaying && !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking;
+        musicPlayingKind === "music" &&
+        !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking;
       const idleGazeActive =
         !isHovered && !dragging && !chatActive && !isThinking && !isSpeaking && !pomodoroState.active;
       updateIdleGaze(seconds, pixiApp.ticker.deltaMS, idleGazeActive);
@@ -2746,7 +2751,7 @@ async function start() {
 
     startChatter();
     startFloating();
-    musicPlaying = Boolean(await bikunavi.invoke("companion:music-playing"));
+    musicPlayingKind = String(await bikunavi.invoke("companion:music-playing") || "");
     systemSleeping = Boolean(await bikunavi.invoke("companion:system-sleeping"));
     pomodoroState = await bikunavi.invoke("companion:pomodoro-state");
     if (pomodoroState.active) showPomodoroBubble(pomodoroState);
@@ -2921,8 +2926,9 @@ bikunavi.on("companion:speech-started", (payload) => {
   armSpeechWatchdog(displayedLineItem?.text || latestAmbientLineItem?.text);
 });
 
-bikunavi.on("companion:music-playing", (playing) => {
-  musicPlaying = Boolean(playing);
+bikunavi.on("companion:music-playing", (kind) => {
+  // 真偽値だった頃の呼び出しも受ける（true は音楽扱い）。
+  musicPlayingKind = kind === true ? "music" : String(kind || "");
   resumeAmbientState();
 });
 

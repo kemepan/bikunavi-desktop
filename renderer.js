@@ -200,6 +200,9 @@ const recentVoicePeaks = [];
 // 自分の声を測って、その上に線を引く。上がる時は速く、下がる時は遅く
 // 追従させる（一度の割り込みで下がりきらないように）。
 let selfHeardLevel = 0;
+// 割り込めなかった時の案内。連続で出すとうるさいので間隔を空ける。
+const HANDS_FREE_INTERRUPT_HINT_MS = 6000;
+let lastInterruptHintAt = 0;
 
 function updateSelfHeardLevel(level) {
   const value = Number(level) || 0;
@@ -723,6 +726,21 @@ function processHandsFreeAudio(recorder, chunk) {
     ) {
       handsFreeUtterance.reachedVoice = true;
       interruptChatForHandsFree();
+    }
+  } else if (decision.nearMiss && guardedAgainstSelf) {
+    // びくたんが喋っている最中に、話しかけたのに届かなかった時。
+    //
+    // 自分の声（マイクに 0.05〜0.19 で返る）と人の普通の声（0.10〜0.40）は
+    // 大きさが重なるので、同じマイクで聞いている限り分けきれない。しきい値を
+    // 下げれば自分の声で誤発火する。だから割り込めないこと自体は残る。
+    // せめて黙って失敗しないようにして、どうすれば通るかを伝える。
+    if (Date.now() - lastInterruptHintAt >= HANDS_FREE_INTERRUPT_HINT_MS) {
+      lastInterruptHintAt = Date.now();
+      showStatusMessage("聞こえています。もう少し大きな声でどうぞ", 1800);
+      console.log(
+        `Hands-free interrupt near miss: RMS ${decision.level.toFixed(3)} < ` +
+        `threshold ${decision.startThreshold.toFixed(3)}（自分の声 ${selfHeardLevel.toFixed(3)}）`
+      );
     }
   } else if (decision.nearMiss && !guardedAgainstSelf) {
     // 「話したのに拾ってくれない」を後から確かめられるようにする。

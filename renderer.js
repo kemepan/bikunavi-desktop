@@ -193,19 +193,36 @@ const HANDS_FREE_SPEAKING_THRESHOLD_MAX = 0.09;
 const HANDS_FREE_SPEAKING_THRESHOLD_RATIO = 0.3;
 // 自己較正に使う、直近の「聞き取れた発話」の音量。
 const recentVoicePeaks = [];
+// びくたん自身の声が、マイクにどのくらいの大きさで返ってきているか。
+//
+// 音量を上げれば自分の声も大きく録れる（実機で自己検知が発生）。
+// 「声の大きさ」だけでは人の声と区別できないので、実際に聞こえている
+// 自分の声を測って、その上に線を引く。上がる時は速く、下がる時は遅く
+// 追従させる（一度の割り込みで下がりきらないように）。
+let selfHeardLevel = 0;
+
+function updateSelfHeardLevel(level) {
+  const value = Number(level) || 0;
+  const rate = value > selfHeardLevel ? 0.25 : 0.02;
+  selfHeardLevel += (value - selfHeardLevel) * rate;
+}
 
 // びくたん自身の声を人の発話と誤認しないためのしきい値。
 // 利用者の声が実際どのくらいで録れているかから決める。まだ実績が無い間は
 // 従来の 0.09 を使う。VAD 側が config.minStartRms（0.045）で下限を押さえ、
 // 雑音床にも追従するので、ここは上限だけ決めれば足りる。
 function speakingGuardThreshold() {
-  if (!recentVoicePeaks.length) return HANDS_FREE_SPEAKING_THRESHOLD_MAX;
-  const sorted = [...recentVoicePeaks].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  return Math.min(
-    HANDS_FREE_SPEAKING_THRESHOLD_MAX,
-    median * HANDS_FREE_SPEAKING_THRESHOLD_RATIO
-  );
+  const fromVoice = recentVoicePeaks.length
+    ? (() => {
+      const sorted = [...recentVoicePeaks].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      return Math.min(HANDS_FREE_SPEAKING_THRESHOLD_MAX, median * HANDS_FREE_SPEAKING_THRESHOLD_RATIO);
+    })()
+    : HANDS_FREE_SPEAKING_THRESHOLD_MAX;
+  // 自分の声より低い線を引いても意味がない。実際に聞こえている自分の声の
+  // 上へ必ず出す。音量を上げれば上がり、下げれば下がるので、設定を変えても
+  // ついてくる。人の声が自分の声より小さい時は、そもそも区別できない。
+  return Math.max(fromVoice, selfHeardLevel * 1.6);
 }
 
 // 聞き取れた発話だけを較正に使う。物音や空振りを混ぜると目安が狂う。
@@ -216,6 +233,7 @@ function rememberVoicePeak(peakRms) {
   if (recentVoicePeaks.length > 8) recentVoicePeaks.shift();
   console.log(
     `Hands-free voice level: peak ${value.toFixed(3)} / ` +
+    `自分の声 ${selfHeardLevel.toFixed(3)} / ` +
     `直近${recentVoicePeaks.length}件から割り込みしきい値 ${speakingGuardThreshold().toFixed(3)}`
   );
 }
@@ -659,7 +677,11 @@ function processHandsFreeAudio(recorder, chunk) {
   // 読み上げ中・生成中はびくたん自身の声や環境音を拾いやすいので、高い閾値で待つ。
   // ここを越えた時だけ、読み上げの停止や生成の中断まで踏み込む。
   const guardedAgainstSelf = isSpeaking || isThinking;
-  const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, guardedAgainstSelf
+  const level = calculateRms(chunk);
+  // 喋っている間にマイクへ入ってくる音は、ほぼ自分の声。ここで測っておく。
+  // 録音が始まっている間は人の声が混ざるので測らない。
+  if (isSpeaking && !handsFreeUtterance) updateSelfHeardLevel(level);
+  const decision = recorder.detector.process(level, elapsedMs, guardedAgainstSelf
     ? { minStartRms: speakingGuardThreshold(), startMs: 420 }
     : undefined);
 

@@ -179,7 +179,46 @@ const VOICE_INPUT_MAX_MS = 15000;
 //
 // 900ms なら 48kHz float32 でも約173KB。常に持ち歩いても負担にならない。
 const HANDS_FREE_PRE_ROLL_MS = 900;
-const HANDS_FREE_SPEAKING_THRESHOLD = 0.09;
+// びくたんが喋っている・考えている間の検知しきい値の上限。
+//
+// **これは上限であって、実際の値は利用者の声から自己較正する。**
+// 固定の 0.09 は環境で意味が変わってしまう。同じ「普通の声」でも
+// peak RMS は macOS検証機 0.368〜、Windows 0.125〜、macOS常駐機 0.084〜 と
+// 4倍以上ちがう。0.09 は最初の環境では声の24%（楽に超える）だが、
+// 常駐機では107%（**絶対に超えない**）になり、会話中は割り込めなくなる。
+// しかも検知段階で弾かれるのでログにも残らない（2026-08-05 の issue #8）。
+const HANDS_FREE_SPEAKING_THRESHOLD_MAX = 0.09;
+// 聞き取れた発話の peak RMS の何割を、割り込みの目安にするか。
+// 声の山だけでなく谷でも 420ms 超え続ける必要があるので、低めに取る。
+const HANDS_FREE_SPEAKING_THRESHOLD_RATIO = 0.3;
+// 自己較正に使う、直近の「聞き取れた発話」の音量。
+const recentVoicePeaks = [];
+
+// びくたん自身の声を人の発話と誤認しないためのしきい値。
+// 利用者の声が実際どのくらいで録れているかから決める。まだ実績が無い間は
+// 従来の 0.09 を使う。VAD 側が config.minStartRms（0.045）で下限を押さえ、
+// 雑音床にも追従するので、ここは上限だけ決めれば足りる。
+function speakingGuardThreshold() {
+  if (!recentVoicePeaks.length) return HANDS_FREE_SPEAKING_THRESHOLD_MAX;
+  const sorted = [...recentVoicePeaks].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return Math.min(
+    HANDS_FREE_SPEAKING_THRESHOLD_MAX,
+    median * HANDS_FREE_SPEAKING_THRESHOLD_RATIO
+  );
+}
+
+// 聞き取れた発話だけを較正に使う。物音や空振りを混ぜると目安が狂う。
+function rememberVoicePeak(peakRms) {
+  const value = Number(peakRms) || 0;
+  if (value <= 0) return;
+  recentVoicePeaks.push(value);
+  if (recentVoicePeaks.length > 8) recentVoicePeaks.shift();
+  console.log(
+    `Hands-free voice level: peak ${value.toFixed(3)} / ` +
+    `直近${recentVoicePeaks.length}件から割り込みしきい値 ${speakingGuardThreshold().toFixed(3)}`
+  );
+}
 // 「たぶん人が喋った」とみなす音の大きさを、開始しきい値からの倍率で決める。
 //
 // 最初は 0.32 の固定値にしていたが、これは測った環境（48kHz・その時のマイク
@@ -575,6 +614,8 @@ async function finishHandsFreeUtterance(utterance) {
       `Hands-free transcript ${grade}: ${text.length}文字, ` +
       `confidence ${confidence ? confidence.toFixed(3) : "なし"}`
     );
+    // 聞き取れた発話は、割り込みしきい値の較正に使う。
+    if (grade !== "ignore") rememberVoicePeak(utterance.peakRms);
     if (grade === "ignore") {
       // 環境音の誤認識とみなして会話へ送らない。話していないのに聞き返されると
       // それ自体が noise になるため、短い表示だけ出して黙る。
@@ -619,7 +660,7 @@ function processHandsFreeAudio(recorder, chunk) {
   // ここを越えた時だけ、読み上げの停止や生成の中断まで踏み込む。
   const guardedAgainstSelf = isSpeaking || isThinking;
   const decision = recorder.detector.process(calculateRms(chunk), elapsedMs, guardedAgainstSelf
-    ? { minStartRms: HANDS_FREE_SPEAKING_THRESHOLD, startMs: 420 }
+    ? { minStartRms: speakingGuardThreshold(), startMs: 420 }
     : undefined);
 
   if (decision.started) {

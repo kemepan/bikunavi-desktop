@@ -90,6 +90,7 @@ const {
   selectPickups
 } = require("./conversation-pickup-utils");
 const { classifyAudioAssertions } = require("./audio-source-utils");
+const { looksJapanese } = require("./language-utils");
 const {
   matchErrand,
   classifyConfirmation,
@@ -5647,8 +5648,13 @@ async function generateIdleLines() {
         : "",
       recentLinesForPrompt ? `直近のセリフ（再利用禁止）:\n${recentLinesForPrompt}` : "",
       "ファイルや外部情報は調べず、この依頼と下記見出しだけに答えてください。",
+      // 見出しには外国語のものが混ざる（Hacker Newsは英語、Google Newsも
+      // 日本語指定で外国語が来ることがある）。引きずられないよう明示する。
+      "**必ず日本語で書いてください。** 見出しが外国語でも、日本語に直して話してください。",
       latestTopicText ? `参考にする最新見出し:\n${latestTopicText}` : "",
       // 長いプロンプトの中ほどに置いた指示は落ちやすいので、最後にもう一度だけ数で指定する。
+      // 長いプロンプトの中ほどに置いた指示は落ちやすいので、最後にもう一度言う。
+      "出力はすべて日本語です。外国語の文が混ざっていないか、最後に見直してください。",
       "最後に確認してください。出力する20行のうち、`cont` で始まる行を合計5〜8行含めてください。`cont` 行は必ず、その話題を始めた行のすぐ下に置いてください。"
     ].filter(Boolean).join("\n");
     try {
@@ -5668,6 +5674,10 @@ async function generateIdleLines() {
           text: repairBikutanSelfReferences(item.text, preferredUserName)
         }));
       const isUsableIdleLine = (item) => (
+        // 見出しの言語に引きずられて外国語で作ることがある（ベトナム語で発生）。
+        // プロンプトでも日本語を指定しているが、長い指示は落ちることがあるので
+        // 出てきた文の側でも確かめる。
+        looksJapanese(item.text) &&
         isSafeIdleUserNameUsage(item.text, preferredUserName) &&
         isIdleCapabilitySafeLine(item.text) &&
         item.text.length >= 4 &&

@@ -93,6 +93,7 @@ const { classifyAudioAssertions } = require("./audio-source-utils");
 const {
   matchErrand,
   classifyConfirmation,
+  normalizeErrandRegistry,
   CONFIRM_CHOICES
 } = require("./errand-utils");
 const {
@@ -5797,40 +5798,63 @@ ipcMain.on("companion:audio-finished", (_event, { id, ok } = {}) => {
 
 // びくたんに頼める決まった仕事。
 //
-// 自由に動くエージェントにはしない。**ここに書いたものだけ**を、必ず確認を
-// 取ってから実行する。承認が2択で済むので小さな吹き出しに収まるし、
+// 自由に動くエージェントにはしない。**設定フォルダの中に置かれたものだけ**を、
+// 必ず確認を取ってから実行する。承認が2択で済むので小さな吹き出しに収まるし、
 // 危険な範囲が最初から限られる。
 //
-// 実体は Vault 側のスクリプト。無い環境（配布先など）では、その仕事を
-// 頼まれても「できません」と答える。存在しないものを実行しようとしない。
-const ERRAND_SCRIPTS = {
-  "organize-inbox": "scripts/organize-new-incoming.sh",
-  "daily-memo": "scripts/create-daily-memo.sh",
-  "work-summary": "scripts/create-daily-work-summary.sh"
-};
+// 置き場所（<userData>/errands/）の外は実行しない。設定に絶対パスを書けると、
+// ファイル1つでどこの何でも動かせる箱になってしまう。
+//
+// **設定が無ければ、この機能ごと眠る。** 使う人が自分で errands.json を
+// 置いた時だけ現れる。誰かの環境の都合（Inbox のようなフォルダ名）を、
+// 配るアプリの語彙へ焼き込まないため。
+//
+// 設定の例（<userData>/errands.json）:
+//   [{ "label": "Inboxの整理", "script": "organize-inbox.sh",
+//      "keywords": ["inbox", "インボックス"] }]
+// 実体は <userData>/errands/organize-inbox.sh に置く。
+function errandsDirectory() {
+  return path.join(app.getPath("userData"), "errands");
+}
+
 // 承認を待っている仕事。返事は次の発言で受ける。
 let pendingErrand;
 
-function errandScriptPath(errandId) {
-  const relative = ERRAND_SCRIPTS[errandId];
-  if (!relative) return "";
-  // Vault の「Mac内操作」配下にある。AIの作業フォルダ（既定は Documents/Brain）から辿る。
-  const full = path.join(aiWorkingDirectory(), "03_AI", "Mac内操作", relative);
+function loadErrandRegistry() {
+  try {
+    const configPath = path.join(app.getPath("userData"), "errands.json");
+    if (!fs.existsSync(configPath)) return [];
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // **AIの出力から自動生成しない。** 人が自分で置いたものだけを読む。
+    return normalizeErrandRegistry(raw);
+  } catch (error) {
+    console.error("Errand config could not be read:", error?.message || error);
+    return [];
+  }
+}
+
+function errandScriptPath(errand) {
+  const name = String(errand?.script || "").trim();
+  if (!name || /[\\/]/.test(name) || name.includes("..")) return "";
+  const full = path.join(errandsDirectory(), name);
+  // 念のため、解決後も置き場所の中に収まっているか確かめる。
+  const base = errandsDirectory() + path.sep;
+  if (!full.startsWith(base)) return "";
   return fs.existsSync(full) ? full : "";
 }
 
 // 頼まれた仕事を実行して、結果を短くまとめる。
 // 出力をそのまま読み上げると長すぎるので、最後の数行だけ拾う。
-function runErrand(errandId) {
-  const script = errandScriptPath(errandId);
+function runErrand(errand) {
+  const script = errandScriptPath(errand);
   if (!script) return Promise.resolve({ ok: false, summary: "実体が見つかりませんでした" });
   return new Promise((resolve) => {
     let output = "";
-    const child = spawn("/bin/bash", [script], {
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd: aiWorkingDirectory(),
-      windowsHide: true
-    });
+    // 置き場所を作業フォルダにする。仕事が相対パスで書かれていても、
+    // 設定フォルダの外を起点にしない。
+    const child = process.platform === "win32"
+      ? spawn(script, [], { stdio: ["ignore", "pipe", "pipe"], cwd: errandsDirectory(), windowsHide: true, shell: true })
+      : spawn("/bin/bash", [script], { stdio: ["ignore", "pipe", "pipe"], cwd: errandsDirectory(), windowsHide: true });
     // 止まったまま待ち続けない。人が見ていない所で長く走らせない。
     const timer = setTimeout(() => child.kill("SIGTERM"), 120000);
     child.stdout.on("data", (chunk) => { if (output.length < 8000) output += chunk.toString(); });
@@ -5876,7 +5900,7 @@ ipcMain.handle("companion:chat", async (
     if (answer === "yes") {
       pendingErrand = undefined;
       activeChatController = undefined;
-      const result = await runErrand(errand.id);
+      const result = await runErrand(errand);
       console.log(`Errand ${errand.id}: ${result.ok ? "成功" : "失敗"} / ${result.summary}`);
       return {
         text: result.ok
@@ -5896,12 +5920,17 @@ ipcMain.handle("companion:chat", async (
   }
 
   // 決まった仕事を頼まれたら、AIへ回さず確認を返す。
-  const errand = matchErrand(message);
+  // 設定していない人には、この分岐自体が起きない（登録が空なので必ず undefined）。
+  const registry = loadErrandRegistry();
+  const matched = matchErrand(message, registry);
+  const errand = matched
+    ? registry.find((entry) => entry.id === matched.id)
+    : undefined;
   if (errand) {
     activeChatController = undefined;
-    if (!errandScriptPath(errand.id)) {
+    if (!errandScriptPath(errand)) {
       return {
-        text: `${errand.label}は、このパソコンでは見つからなかったので実行できません。`,
+        text: `${errand.label}の中身が見つかりませんでした。設定フォルダの errands/ を確かめてください。`,
         sources: []
       };
     }

@@ -1,44 +1,18 @@
 // びくたんに「お願い」できる決まった仕事。
 //
-// 自由に動くエージェントにはしない。**名前のついた仕事だけ**を、必ず確認を
-// 取ってから実行する。承認が「お願い / やめておく」の2択で済むので、小さな
-// 吹き出しにも収まるし、危険な範囲が最初から限られる。
+// 自由に動くエージェントにはしない。**設定フォルダの中に置かれたものだけ**を、
+// 必ず確認を取ってから実行する。承認が2択で済むので小さな吹き出しにも収まるし、
+// 危険な範囲が最初から限られる。
 //
-// ここは「どの仕事を頼まれたか」を決めるところだけ。実際に何を動かすかは
-// main 側が持つ（実行できるものは環境によって違うため）。
+// ここは「どの仕事を頼まれたか」を決めるところだけ。実体の解決と実行は main 側。
 (function exposeErrandUtils(root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
   if (root) root.BikunaviErrand = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, () => {
-  // 頼み方の揺れを拾う。AIに判定させると、雑談を仕事の依頼と取り違えた時に
-  // 黙って実行してしまう。**確実に言葉で示された時だけ**動かす。
-  const ERRANDS = [
-    {
-      id: "organize-inbox",
-      label: "Inboxの整理",
-      // 「整理して」だけでは部屋の片付けとも取れるので、対象を必ず伴わせる。
-      subjects: [/inbox/i, /インボックス/, /受信箱/],
-      verbs: [/整理/, /片付け/, /かたづけ/, /仕分け/]
-    },
-    {
-      id: "daily-memo",
-      label: "今日のデイリーメモを作る",
-      subjects: [/デイリーメモ/, /日次メモ/, /今日のメモ/],
-      verbs: [/作/, /つく/, /用意/, /開/]
-    },
-    {
-      id: "work-summary",
-      label: "今日の作業サマリを作る",
-      subjects: [/作業サマリ/, /作業まとめ/, /サマリ/],
-      verbs: [/作/, /つく/, /用意/, /開/]
-    }
-  ];
-
   // 依頼の形かどうか。「Inboxどうなってる？」を実行と取らないため。
   const REQUEST_HINTS = [
     // 「〜しておいて」「〜してもらえますか」「〜してほしい」など。
-    // 動詞は仕事ごとに違うので、活用語尾の側で拾う。
     /て(?:おいて|もらえ|もらい|ください|くれ|ほしい|欲しい|ね|おこう)/,
     // 「作って」「整理して」のように、テ形で言い切る頼み方。
     /て[。．.！!]?\s*$/,
@@ -48,17 +22,31 @@
     /頼(?:む|める|んだ)/
   ];
 
-  function matchErrand(rawText) {
+  // 設定に書かれた語を、そのまま正規表現にしない（記号で壊れる・意図せぬ一致を招く）。
+  function includesWord(text, word) {
+    const needle = String(word || "").trim().toLowerCase();
+    if (!needle) return false;
+    return text.toLowerCase().includes(needle);
+  }
+
+  // registry: [{ id, label, keywords: [], verbs: [] }]
+  // keywords（対象）と verbs（動作）の両方が要る。「整理しておいて」だけでは
+  // 部屋の片付けとも取れるので動かさない。
+  function matchErrand(rawText, registry = []) {
     const text = String(rawText || "").trim();
     if (!text) return undefined;
+    if (!Array.isArray(registry) || !registry.length) return undefined;
+    const looksLikeRequest = REQUEST_HINTS.some((pattern) => pattern.test(text));
     // 疑問だけの文は依頼ではない。「Inbox整理した？」で動かさない。
-    if (/[?？]\s*$/.test(text) && !REQUEST_HINTS.some((p) => p.test(text))) return undefined;
-    if (!REQUEST_HINTS.some((pattern) => pattern.test(text))) return undefined;
-    for (const errand of ERRANDS) {
-      const hasSubject = errand.subjects.some((pattern) => pattern.test(text));
-      if (!hasSubject) continue;
-      const hasVerb = errand.verbs.some((pattern) => pattern.test(text));
-      if (hasVerb) return { id: errand.id, label: errand.label };
+    if (!looksLikeRequest) return undefined;
+    for (const errand of registry) {
+      const keywords = Array.isArray(errand?.keywords) ? errand.keywords : [];
+      const verbs = Array.isArray(errand?.verbs) && errand.verbs.length
+        ? errand.verbs
+        : ["整理", "片付", "かたづ", "仕分", "作", "つく", "用意", "実行", "動かし"];
+      if (!keywords.some((word) => includesWord(text, word))) continue;
+      if (!verbs.some((word) => includesWord(text, word))) continue;
+      return { id: errand.id, label: errand.label || errand.id };
     }
     return undefined;
   }
@@ -75,9 +63,47 @@
     return "unclear";
   }
 
-  function listErrandIds() {
-    return ERRANDS.map((errand) => errand.id);
+  // 設定から読んだ1件を、使える形か検査する。
+  //
+  // **script はファイル名だけ。** パス区切りや `..` を許すと、設定ファイル1つで
+  // どこの何でも実行できる箱になってしまう。実体は必ず設定フォルダの中に置く。
+  function normalizeErrandEntry(rawEntry) {
+    const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
+    const label = String(entry.label || "").trim().slice(0, 40);
+    const script = String(entry.script || "").trim();
+    const keywords = (Array.isArray(entry.keywords) ? entry.keywords : [])
+      .map((word) => String(word || "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const verbs = (Array.isArray(entry.verbs) ? entry.verbs : [])
+      .map((word) => String(word || "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    if (!label || !script || !keywords.length) return undefined;
+    if (/[\\/]/.test(script) || script.includes("..")) return undefined;
+    return { id: script, label, script, keywords, verbs };
   }
 
-  return { matchErrand, classifyConfirmation, listErrandIds, CONFIRM_CHOICES: ["お願い", "やめておく"] };
+  function normalizeErrandRegistry(rawList) {
+    if (!Array.isArray(rawList)) return [];
+    const seen = new Set();
+    const registry = [];
+    for (const raw of rawList) {
+      const entry = normalizeErrandEntry(raw);
+      if (!entry || seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      registry.push(entry);
+      // 一度にたくさん登録されても扱いきれない。
+      if (registry.length >= 12) break;
+    }
+    return registry;
+  }
+
+  return {
+    matchErrand,
+    classifyConfirmation,
+    normalizeErrandEntry,
+    normalizeErrandRegistry,
+    CONFIRM_CHOICES: ["お願い", "やめておく"]
+  };
 });

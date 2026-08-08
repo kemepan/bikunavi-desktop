@@ -91,6 +91,11 @@ const {
 } = require("./conversation-pickup-utils");
 const { classifyAudioAssertions } = require("./audio-source-utils");
 const {
+  matchErrand,
+  classifyConfirmation,
+  CONFIRM_CHOICES
+} = require("./errand-utils");
+const {
   countTogetherDays,
   describeTogetherDays,
   estimateFirstLaunchAt,
@@ -5790,6 +5795,58 @@ ipcMain.on("companion:audio-finished", (_event, { id, ok } = {}) => {
   resolve(Boolean(ok));
 });
 
+// びくたんに頼める決まった仕事。
+//
+// 自由に動くエージェントにはしない。**ここに書いたものだけ**を、必ず確認を
+// 取ってから実行する。承認が2択で済むので小さな吹き出しに収まるし、
+// 危険な範囲が最初から限られる。
+//
+// 実体は Vault 側のスクリプト。無い環境（配布先など）では、その仕事を
+// 頼まれても「できません」と答える。存在しないものを実行しようとしない。
+const ERRAND_SCRIPTS = {
+  "organize-inbox": "scripts/organize-new-incoming.sh",
+  "daily-memo": "scripts/create-daily-memo.sh",
+  "work-summary": "scripts/create-daily-work-summary.sh"
+};
+// 承認を待っている仕事。返事は次の発言で受ける。
+let pendingErrand;
+
+function errandScriptPath(errandId) {
+  const relative = ERRAND_SCRIPTS[errandId];
+  if (!relative) return "";
+  // Vault の「Mac内操作」配下にある。AIの作業フォルダ（既定は Documents/Brain）から辿る。
+  const full = path.join(aiWorkingDirectory(), "03_AI", "Mac内操作", relative);
+  return fs.existsSync(full) ? full : "";
+}
+
+// 頼まれた仕事を実行して、結果を短くまとめる。
+// 出力をそのまま読み上げると長すぎるので、最後の数行だけ拾う。
+function runErrand(errandId) {
+  const script = errandScriptPath(errandId);
+  if (!script) return Promise.resolve({ ok: false, summary: "実体が見つかりませんでした" });
+  return new Promise((resolve) => {
+    let output = "";
+    const child = spawn("/bin/bash", [script], {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: aiWorkingDirectory(),
+      windowsHide: true
+    });
+    // 止まったまま待ち続けない。人が見ていない所で長く走らせない。
+    const timer = setTimeout(() => child.kill("SIGTERM"), 120000);
+    child.stdout.on("data", (chunk) => { if (output.length < 8000) output += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { if (output.length < 8000) output += chunk.toString(); });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ ok: false, summary: String(error?.message || error).slice(0, 120) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      resolve({ ok: code === 0, summary: lines.slice(-3).join(" / ").slice(0, 200) });
+    });
+  });
+}
+
 ipcMain.handle("companion:chat", async (
   _event,
   rawMessage,
@@ -5812,6 +5869,50 @@ ipcMain.handle("companion:chat", async (
   // 「〜を検索して」と頼まれたら、AIへ回さずリンクを渡す。
   // びくたん自身は外のページを読まないので、読んだふりをさせない。
   // YouTube検索のリンクは前から渡しているので、それを広げた形。
+  // 承認待ちの仕事があれば、まずその返事として読む。
+  if (pendingErrand) {
+    const answer = classifyConfirmation(message);
+    const errand = pendingErrand;
+    if (answer === "yes") {
+      pendingErrand = undefined;
+      activeChatController = undefined;
+      const result = await runErrand(errand.id);
+      console.log(`Errand ${errand.id}: ${result.ok ? "成功" : "失敗"} / ${result.summary}`);
+      return {
+        text: result.ok
+          ? `${errand.label}、やっておきました。${result.summary ? `（${result.summary}）` : ""}`
+          : `${errand.label}はうまくできませんでした。${result.summary ? `（${result.summary}）` : ""}`,
+        sources: []
+      };
+    }
+    if (answer === "no") {
+      pendingErrand = undefined;
+      activeChatController = undefined;
+      return { text: `${errand.label}はやめておきますね。`, sources: [] };
+    }
+    // どちらとも取れない時は実行しない。**曖昧なまま動かさない。**
+    // 待たせ続けても邪魔なので、ここで忘れて普通の会話へ流す。
+    pendingErrand = undefined;
+  }
+
+  // 決まった仕事を頼まれたら、AIへ回さず確認を返す。
+  const errand = matchErrand(message);
+  if (errand) {
+    activeChatController = undefined;
+    if (!errandScriptPath(errand.id)) {
+      return {
+        text: `${errand.label}は、このパソコンでは見つからなかったので実行できません。`,
+        sources: []
+      };
+    }
+    pendingErrand = errand;
+    return {
+      text: `${errand.label}ですね。やってしまっていいですか？`,
+      sources: [],
+      choices: CONFIRM_CHOICES
+    };
+  }
+
   const searchQuery = extractSearchQuery(message);
   if (searchQuery) {
     activeChatController = undefined;

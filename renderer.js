@@ -2115,7 +2115,14 @@ async function runChat(rawMessage, { uncertain = false, replyTo } = {}) {
       time: Date.now()
     });
     latestAmbientLineItem = {
-      ...normalizeSpeechItem({ text: response.text, sources: response.sources, kind: "answer" }),
+      // **choices も引き継ぐ。** ここで捨てていたので、返事に選択肢を付けても
+      // 吹き出しにボタンが出なかった（お願いごとの確認で気づいた）。
+      ...normalizeSpeechItem({
+        text: response.text,
+        sources: response.sources,
+        choices: response.choices,
+        kind: "answer"
+      }),
       time: Date.now()
     };
     if (chatEntries.length > 10) chatEntries.shift();

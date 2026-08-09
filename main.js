@@ -5859,8 +5859,9 @@ function errandsConfigPath() {
 // JSONにコメントは書けないので、説明は _memo に入れて読める形にする。
 const ERRANDS_TEMPLATE = [
   {
-    _memo: "この行は説明です。消しても構いません。label は確認の時に読み上げる名前。",
-    label: "サンプル（このまま使わないでください）",
+    _memo: "これは動作を試すためのサンプルです。中身を自分の仕事へ書き換えてください。",
+    _memo0: "label は確認の時に読み上げる名前。説明の行（_ で始まるもの）は無視されます。",
+    label: "サンプルの仕事",
     _memo2: "script は errands フォルダの中のファイル名だけ。パスは書けません。",
     script: "sample.sh",
     _memo3: "keywords のどれかと、動作の言葉（整理・作る など）が両方そろった時だけ確認します。",
@@ -5890,7 +5891,11 @@ function prepareErrandsFolder() {
         "# ここへ置いたものだけが実行できます（外のパスは指定できません）。",
         "# 最後の3行が、そのまま報告として読み上げられます。",
         "set -euo pipefail",
-        'echo "サンプルの仕事を実行しました"',
+        '# 動いた証拠を残す。吹き出しは消えるので、見に行ける形にしておく。',
+        'stamp="$(TZ=Asia/Tokyo date "+%Y-%m-%d %H:%M:%S")"',
+        'echo "$stamp にサンプルを実行しました" >> "$(dirname "$0")/サンプルの実行あと.txt"',
+        'echo "サンプルを実行しました（$stamp）"',
+        'echo "証拠を errands/サンプルの実行あと.txt に残しました"',
         ""
       ].join("\n"),
       { encoding: "utf8", mode: 0o755 }
@@ -5926,6 +5931,29 @@ function errandScriptPath(errand) {
   return fs.existsSync(full) ? full : "";
 }
 
+// 実行した記録。吹き出しは時間で消えるので、後から確かめられる場所を持つ。
+// 置き場所の中に置くので、設定を消せば記録も一緒に消える。
+function appendErrandLog(errand, code, output) {
+  try {
+    const logPath = path.join(errandsDirectory(), "実行の記録.txt");
+    const stamp = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+    const body = [
+      `[${stamp}] ${errand.label}（${errand.script}） 終了コード ${code}`,
+      ...String(output || "").split(/\r?\n/).map((line) => `  ${line}`).filter((line) => line.trim()),
+      ""
+    ].join("\n");
+    fs.appendFileSync(logPath, body, "utf8");
+    // 際限なく伸びないよう、大きくなったら古い方を落とす。
+    const stat = fs.statSync(logPath);
+    if (stat.size > 200000) {
+      const kept = fs.readFileSync(logPath, "utf8").slice(-100000);
+      fs.writeFileSync(logPath, kept, "utf8");
+    }
+  } catch (error) {
+    console.error("Errand log could not be written:", error?.message || error);
+  }
+}
+
 // 頼まれた仕事を実行して、結果を短くまとめる。
 // 出力をそのまま読み上げると長すぎるので、最後の数行だけ拾う。
 function runErrand(errand) {
@@ -5949,7 +5977,10 @@ function runErrand(errand) {
     child.on("close", (code) => {
       clearTimeout(timer);
       const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      resolve({ ok: code === 0, summary: lines.slice(-3).join(" / ").slice(0, 200) });
+      // 何をしたかを後から確かめられるようにする。吹き出しは消えるので、
+      // 「本当に動いたのか」を見に行ける場所が要る。
+      appendErrandLog(errand, code, output);
+      resolve({ ok: code === 0, summary: lines.slice(-3).join("\n").slice(0, 300) });
     });
   });
 }
@@ -5985,10 +6016,13 @@ ipcMain.handle("companion:chat", async (
       activeChatController = undefined;
       const result = await runErrand(errand);
       console.log(`Errand ${errand.id}: ${result.ok ? "成功" : "失敗"} / ${result.summary}`);
+      // 報告は「やったこと」と「結果」を行で分ける。括弧に入れ子で押し込むと
+      // 何が起きたのか読み取れない（「動いたのか分からない」と言われた）。
+      const headline = result.ok
+        ? `${errand.label}、やっておきました。`
+        : `${errand.label}はうまくできませんでした。`;
       return {
-        text: result.ok
-          ? `${errand.label}、やっておきました。${result.summary ? `（${result.summary}）` : ""}`
-          : `${errand.label}はうまくできませんでした。${result.summary ? `（${result.summary}）` : ""}`,
+        text: result.summary ? `${headline}\n${result.summary}` : headline,
         sources: []
       };
     }

@@ -2297,12 +2297,16 @@ function buildTrayMenu() {
             : "🧹 お願いごとを設定する…",
           click: async () => {
             try {
-              const { directory, configPath, created } = prepareErrandsFolder();
-              await shell.openPath(directory);
+              const { configPath, created } = prepareErrandsFolder();
+              // errands.json は errands フォルダの**ひとつ上**にある。
+              // フォルダの方を開くと設定ファイルが見えず、探しようがない
+              // （「errands.json が入っていない」と言われた）。
+              // 設定ファイルを選んだ状態で開く。
+              shell.showItemInFolder(configPath);
               showAmbientLine({
                 text: created
-                  ? "お願いごとの雛形を置きました。errands.json を書き換えて、実行したいものを errands フォルダへ入れてください。"
-                  : "お願いごとの置き場所を開きました。errands.json を書き換えると、頼めることが変わります。",
+                  ? "お願いごとの雛形を置きました。選ばれている errands.json が設定です。実行するものは、隣の errands フォルダへ入れてください。"
+                  : "お願いごとの設定を開きました。選ばれている errands.json を書き換えると、頼めることが変わります。",
                 sources: []
               });
               console.log(`Errands folder ready: ${configPath}`);

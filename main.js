@@ -6057,7 +6057,7 @@ ipcMain.handle("companion:chat", async (
     }
     pendingErrand = errand;
     return {
-      text: `${errand.label}ですね。やってしまっていいですか？`,
+      text: `「${errand.label}」ですね。やってしまっていいですか？`,
       sources: [],
       choices: CONFIRM_CHOICES
     };

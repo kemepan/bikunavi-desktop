@@ -1849,9 +1849,12 @@ function showChatBubble(busy = false, carriedSources = [], carriedLine = undefin
   // ホバーで入力欄付きの表示へ切り替わっても、選択肢は残す。
   // 押そうとマウスを近づけた瞬間に消えると、ボタンとして使えない。
   if (!busy) {
+    // 会話の返事は履歴（entry）から描かれるので、そこも見る。
+    // いちばん新しい返事を見ている時だけ出す（過去の確認を蒸し返さない）。
+    const latestEntry = chatEntryIndex === chatEntries.length - 1 ? entry : undefined;
     const choiceSource = pendingCharacterCustomization?.choices?.length
       ? pendingCharacterCustomization
-      : carriedLine;
+      : (carriedLine?.choices?.length ? carriedLine : latestEntry);
     const choiceButtons = createChoiceButtons(choiceSource);
     if (choiceButtons) bubble.append(choiceButtons);
   }
@@ -2111,6 +2114,9 @@ async function runChat(rawMessage, { uncertain = false, replyTo } = {}) {
       question: message,
       answer: response.text,
       sources: response.sources,
+      // **選択肢も履歴へ持たせる。** 会話の返事は carriedLine ではなく
+      // ここから描かれるので、積んでおかないとボタンが出ない。
+      choices: response.choices,
       contextLine: isDirectReply ? contextLine : "",
       time: Date.now()
     });

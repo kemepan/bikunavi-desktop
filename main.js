@@ -2290,6 +2290,29 @@ function buildTrayMenu() {
         },
         { type: "separator" },
         {
+          // 「お願いごと」は、設定を置いた人にだけ現れる機能。
+          // 置き場所と雛形をここから用意できるようにする。
+          label: loadErrandRegistry().length
+            ? `🧹 お願いごとの設定（${loadErrandRegistry().length}件）…`
+            : "🧹 お願いごとを設定する…",
+          click: async () => {
+            try {
+              const { directory, configPath, created } = prepareErrandsFolder();
+              await shell.openPath(directory);
+              showAmbientLine({
+                text: created
+                  ? "お願いごとの雛形を置きました。errands.json を書き換えて、実行したいものを errands フォルダへ入れてください。"
+                  : "お願いごとの置き場所を開きました。errands.json を書き換えると、頼めることが変わります。",
+                sources: []
+              });
+              console.log(`Errands folder ready: ${configPath}`);
+            } catch (error) {
+              console.error("Errands folder could not be prepared:", error?.message || error);
+            }
+          }
+        },
+        { type: "separator" },
+        {
           label: "おしゃべり履歴を消去…",
           click: async () => {
             // 取り消せない消去なので、実行前に必ず確認を挟む。
@@ -5825,6 +5848,56 @@ ipcMain.on("companion:audio-finished", (_event, { id, ok } = {}) => {
 // 実体は <userData>/errands/organize-inbox.sh に置く。
 function errandsDirectory() {
   return path.join(app.getPath("userData"), "errands");
+}
+
+function errandsConfigPath() {
+  return path.join(app.getPath("userData"), "errands.json");
+}
+
+// 設定の雛形。**ファイルとして同梱せず、コードに持つ。**
+// 配布物から抜け落ちると「雛形を置く」ができなくなるため。
+// JSONにコメントは書けないので、説明は _memo に入れて読める形にする。
+const ERRANDS_TEMPLATE = [
+  {
+    _memo: "この行は説明です。消しても構いません。label は確認の時に読み上げる名前。",
+    label: "サンプル（このまま使わないでください）",
+    _memo2: "script は errands フォルダの中のファイル名だけ。パスは書けません。",
+    script: "sample.sh",
+    _memo3: "keywords のどれかと、動作の言葉（整理・作る など）が両方そろった時だけ確認します。",
+    keywords: ["サンプル"],
+    _memo4: "verbs は省略できます。省略すると 整理・片付・仕分・作る・用意・実行 を見ます。",
+    verbs: ["実行", "動かし"]
+  }
+];
+
+// 雛形を置いて、置き場所を開く。既にあるものは上書きしない。
+function prepareErrandsFolder() {
+  const directory = errandsDirectory();
+  fs.mkdirSync(directory, { recursive: true });
+  const configPath = errandsConfigPath();
+  let created = false;
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, `${JSON.stringify(ERRANDS_TEMPLATE, null, 2)}\n`, "utf8");
+    created = true;
+  }
+  const samplePath = path.join(directory, "sample.sh");
+  if (!fs.existsSync(samplePath)) {
+    fs.writeFileSync(
+      samplePath,
+      [
+        "#!/bin/bash",
+        "# びくたんに頼める仕事のサンプル。",
+        "# ここへ置いたものだけが実行できます（外のパスは指定できません）。",
+        "# 最後の3行が、そのまま報告として読み上げられます。",
+        "set -euo pipefail",
+        'echo "サンプルの仕事を実行しました"',
+        ""
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o755 }
+    );
+    created = true;
+  }
+  return { directory, configPath, created };
 }
 
 // 承認を待っている仕事。返事は次の発言で受ける。

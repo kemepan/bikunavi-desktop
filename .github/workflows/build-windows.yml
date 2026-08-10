@@ -70,10 +70,16 @@ jobs:
           Write-Host "確認できました"
 
       # 実機で試せるよう、成果物を残す。Release とは別で、
-      # 動作確認のためだけに使う（保存期間は短くてよい）。
+      # 動作確認のためだけに使う。
+      #
+      # **1回150MBあるので、毎回残すと無料枠(500MB)をすぐ使い切る。**
+      # 実際 30件4.5GBまで溜まり、アップロードが失敗してビルドが赤くなった
+      # (2026-08-10)。ビルドが通るかを見たいだけの push では残さず、
+      # 手で起動した時（＝実機で試したい時）だけ残す。
       - name: 成果物を残す
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: bikutan-win32-x64
           path: dist/bikutan-win32-x64
-          retention-days: 14
+          retention-days: 5

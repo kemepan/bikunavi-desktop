@@ -40,6 +40,25 @@ jobs:
       - name: Live2D Cubism Core を取得する
         run: npm run fetch-core
 
+      # 音声認識も gitignore されている。**これが無いとマイクが使えない
+      # 配布物ができる。** 実際 v0.4.0 の Windows 版を組んだ時、release:win の
+      # 警告で初めて気づいた（キャラクターと違って、無くても起動はしてしまう
+      # ので、動かして確かめるまで分からない）。
+      # モデルは141MBあるので、毎回落とさずキャッシュする。
+      - name: 音声認識のモデルを取り出す
+        id: whisper-model
+        uses: actions/cache@v4
+        with:
+          path: models/ggml-base.bin
+          key: whisper-ggml-base-v1
+
+      - name: 音声認識のモデルを取得する
+        if: steps.whisper-model.outputs.cache-hit != 'true'
+        run: npm run fetch-whisper-model
+
+      - name: 音声認識の実行ファイルを取得する
+        run: npm run fetch-whisper-binaries
+
       - name: テストを通す
         run: npm run check
 
@@ -55,18 +74,18 @@ jobs:
             if (Test-Path "$app/$f") { throw "macOS 専用のファイルが含まれています: $f" }
           }
           # 動かすのに要るものが揃っているか。
-          # models/ は gitignore されていて CI には無いので、ここでは見ない
-          # （配布物を作る時は手元のモデルが入る）。
-          foreach ($f in @("main.js", "renderer.js", "assets/bikunavi_desktop", "conversation-providers.js", "vendor/live2dcubismcore.min.js")) {
+          # **配布物はこの CI で組む。** 「手元のモデルが後から入る」という
+          # 前提で models/ を見逃していたが、そんな機会は無く、v0.4.0 の
+          # Windows 版はマイクの使えないものになっていた。ここで止める。
+          foreach ($f in @(
+            "main.js", "renderer.js", "assets/bikunavi_desktop",
+            "conversation-providers.js", "vendor/live2dcubismcore.min.js",
+            "models/ggml-base.bin", "native/stt/win32-x64/whisper-cli.exe"
+          )) {
             if (-not (Test-Path "$app/$f")) { throw "必要なファイルがありません: $f" }
           }
           if (-not (Test-Path "dist/bikutan-win32-x64/bikutan.exe")) { throw "exe が作られていません" }
-          # モデルの有無は配布物の完成度に関わるので、状態だけ知らせる。
-          if (Test-Path "$app/models/ggml-base.bin") {
-            Write-Host "音声認識のモデル: 同梱されています"
-          } else {
-            Write-Host "音声認識のモデル: 含まれていません（CIでは想定どおり。配布時は手元のモデルが入ります）"
-          }
+
           Write-Host "確認できました"
 
       # 実機で試せるよう、成果物を残す。Release とは別で、

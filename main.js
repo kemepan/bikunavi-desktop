@@ -561,11 +561,26 @@ const BIKUTAN_SMALL_ACTIVITIES = [
   "思い出帳をぱらぱらめくる"
 ];
 
+// 集めた見出しから1本選ぶ。件数を言うだけでは中身が無いので、実物に触れる。
+// **英語の見出し（Hacker News）は混ぜない。** 日本語のセリフの中で読み上げても
+// 意味が通らず、8/9に直した「日本語以外で喋り出す」のと同じことになる。
+function pickTopicHeadline() {
+  if (!(latestTopicSources instanceof Map) || latestTopicSources.size === 0) return "";
+  const titles = [];
+  for (const item of latestTopicSources.values()) {
+    const title = String(item?.title || "").trim();
+    if (title && looksJapanese(title)) titles.push(title);
+  }
+  if (!titles.length) return "";
+  return titles[Math.floor(Math.random() * titles.length)];
+}
+
 function makeBikutanWorkLine(force = false) {
   const now = Date.now();
   if (!force && now - lastBikutanWorkLineAt < BIKUTAN_WORK_INTERVAL_MS) return undefined;
   const { learnedWords, sharedMemories, growthAnswers } = getGrowthData();
   const topicCount = latestTopicSources instanceof Map ? latestTopicSources.size : 0;
+  const topicHeadline = pickTopicHeadline();
   const musicPreference = getMusicGenrePreference();
   // 「今日の予定を整えています」のように、実体のない作業を言わせない。
   // びくたんに予定管理もノートも無く、聞いている側には中身のない報告に見える。
@@ -603,9 +618,14 @@ function makeBikutanWorkLine(force = false) {
     Object.keys(growthAnswers).length
       ? "この前答えたことを読み返して、自分ならどう答えるか考え直していました。"
       : "びくたん自身の好きなものも、少しずつ学んでいます。",
-    topicCount
-      ? `気になる見出しを${topicCount}件ほど並べ直しています。`
-      : "見出しがまだ集まっていないので、少し待っているところです。",
+    // ここだけ「◯件」の報告のままだった（8/6に他の行を直した時の拾い漏れ）。
+    // 何の見出しか言わないと、聞いた側は返しようがない。
+    topicHeadline
+      ? `「${topicHeadline.slice(0, 24)}」という見出しが気になって、` +
+        "どう話そうか考えていました。"
+      : topicCount
+        ? "集めた見出しを読み返して、どれから話そうか迷っていました。"
+        : "見出しがまだ集まっていないので、少し待っているところです。",
     diaryCount
       ? `日記が${diaryCount}日分。同じ曜日の自分を並べて読むと、癖が見えてきます。`
       : "日記はまだ0日分です。今日のことから残していけたらいいですね。",

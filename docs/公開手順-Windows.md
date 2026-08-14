@@ -67,7 +67,7 @@ gh release create vX.Y.Z "dist/bikutan-win-x64-vX.Y.Z.zip" --repo kemepan/bikuna
 ```
 
 **公開リポジトリ（`origin` = `kemepan/bikunavi-desktop`）へ出す。**
-開発中のブランチは非公開側（`private` = `kemepan/bikunavi-desktop-private`）に
+開発中のブランチは非公開側（remote 名 `private`）に
 あるので、remote を取り違えないこと。
 
 macOS 版と同時に出す場合は、1つの Release へ両方の zip を添付し、

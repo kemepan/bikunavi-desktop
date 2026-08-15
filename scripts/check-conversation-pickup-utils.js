@@ -104,4 +104,27 @@ const {
   );
 }
 
+// --- AIが別の文字を混ぜて返してきた時 ---
+{
+  // 実際に起きた: 「ファスティング」が「ファ<タイ文字>ティング」で返ってきた。
+  // 覚えるとびくたんがそのまま読み上げるので、拾わない。
+  assert.deepEqual(parsePickups('[{"kind":"word","text":"ファ\u0e2aティング"}]'), []);
+  assert.deepEqual(parsePickups('[{"kind":"word","text":"안녕ぬくぬく"}]'), []);
+  assert.deepEqual(parsePickups('[{"kind":"word","text":"ぬくぬく😊"}]'), []);
+
+  // 日本語の文章にふつうに出るものは通す。
+  assert.deepEqual(
+    parsePickups('[{"kind":"word","text":"ファスティング"}]'),
+    [{ kind: "word", text: "ファスティング" }]
+  );
+  assert.deepEqual(
+    parsePickups('[{"kind":"word","text":"AIニュース"}]'),
+    [{ kind: "word", text: "AIニュース" }]
+  );
+  assert.deepEqual(
+    parsePickups('[{"kind":"memory","text":"コーヒーを飲んでいる（土曜の夕方）"}]'),
+    [{ kind: "memory", text: "コーヒーを飲んでいる（土曜の夕方）" }]
+  );
+}
+
 console.log("conversation-pickup-utils: OK");

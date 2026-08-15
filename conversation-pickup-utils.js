@@ -15,6 +15,25 @@
   if (root) root.BikunaviConversationPickup = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, () => {
   const KINDS = new Set(["word", "memory", "music"]);
+
+  // 日本語の文章に出てよいもの: かな・漢字・全角記号・ASCII・長音や句読点。
+  // ハングル、タイ文字、キリル文字、絵文字などが混ざったら、それは事故。
+  const FOREIGN_SCRIPT = new RegExp(
+    "[^" +
+    "\\u0020-\\u007E" +      // ASCII
+    "\\u00A0-\\u00FF" +      // ラテン補助（é など）
+    "\\u2000-\\u206F" +      // 一般句読点（— … など）
+    "\\u3000-\\u303F" +      // 全角の記号・句読点
+    "\\u3040-\\u309F" +      // ひらがな
+    "\\u30A0-\\u30FF" +      // カタカナ
+    "\\u4E00-\\u9FFF" +      // 漢字
+    "\\uFF00-\\uFFEF" +      // 全角英数・半角カナ
+    "]"
+  );
+
+  function hasForeignScript(text) {
+    return FOREIGN_SCRIPT.test(String(text || ""));
+  }
   const MAX_TEXT = 60;
 
   // 拾ってはいけないもの。覚えられると気持ち悪い・害があるもの。
@@ -75,6 +94,10 @@
       // 短すぎる語は助詞や相づちと紛れる。
       if (kind === "word" && value.length < 2) continue;
       if (isSensitive(value)) continue;
+      // **AIが日本語の中へ別の文字を混ぜて返すことがある。**
+      // 実際に「ファスティング」が「ファ<タイ文字>ティング」で返ってきた。
+      // 覚えるとびくたんがそのまま読み上げるので、ここで捨てる。
+      if (hasForeignScript(value)) continue;
       pickups.push({ kind, text: value });
     }
     return pickups;

@@ -32,6 +32,27 @@
   //
   // 判定は話題のまとまり単位で行う想定。続きものを途中で落とすと話が
   // 宙に浮くので、頭の行ではなくまとまり全体のテキストを渡すこと。
+  // 「20個のうち最大2個」は絶対数だったので、**手持ちが少ないほど同じ語が
+  // 何度も回ってくる。** 実際、ことば帳3語の状態で「同じ言葉ばかり出る」と
+  // 指摘を受けた。3語しか無ければ、2個使うたびにそのどれかになる。
+  // 手持ちの数に合わせて、触れる回数と、1バッチで同じ語を使える回数を絞る。
+  //
+  // **2つを別々に数える。** 触れてよい回数は、ことば帳と思い出帳を合わせた数で
+  // 決めてよい。だが同じ語の重複は **ことば帳の語数だけ** で決める。重複を数える
+  // 仕組み（createLearnedTermLimiter）が見ているのは learnedWords だけなので、
+  // 思い出帳の件数を足して判断すると、ことば帳が3語でも「たくさんある」ことに
+  // なってしまう。
+  function learnedMentionLimits(total = 0, wordCount = total) {
+    const count = Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0;
+    const words = Number.isFinite(wordCount) ? Math.max(0, Math.trunc(wordCount)) : 0;
+    // ことば帳が10語そろえば散らばるので、同じ語が2回出ても目立たない。
+    const maxPerTerm = words >= 10 ? 2 : 1;
+    if (count === 0) return { mentions: 0, maxPerTerm };
+    // 5件以下: 1バッチ(20個)に1回まで。
+    if (count < 6) return { mentions: 1, maxPerTerm };
+    return { mentions: 2, maxPerTerm };
+  }
+
   function createLearnedTermLimiter(terms, { maxPerTerm = 2 } = {}) {
     const termList = (Array.isArray(terms) ? terms : []).filter(Boolean);
     const used = {};
@@ -72,6 +93,7 @@
     extractLearnedTerm,
     extractLearnedTerms,
     createLearnedTermLimiter,
+    learnedMentionLimits,
     pickTermPair
   };
 });

@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const {
+const { learnedMentionLimits,
   extractLearnedTerm,
   extractLearnedTerms,
   createLearnedTermLimiter
@@ -87,6 +87,38 @@ console.log("idle-vocabulary-utils: OK");
   assert.deepEqual(pickTermPair(["お昼寝", "お昼寝"]), []);
   const dup = pickTermPair(["お昼寝", "お昼寝", "カフェラテ"], () => 0);
   assert.notEqual(dup[0], dup[1]);
+}
+
+// --- 手持ちの数に合わせて、触れる回数を絞る ---
+{
+  // 手持ちが3語しか無い状態で「同じ言葉ばかり出る」と指摘を受けた。
+  // 絶対数の上限（20個中2個）だと、少ないほど同じ語が何度も回ってくる。
+  assert.deepEqual(learnedMentionLimits(0), { mentions: 0, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(3), { mentions: 1, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(5), { mentions: 1, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(6), { mentions: 2, maxPerTerm: 1 });
+
+  // **同じ語の重複は、ことば帳の語数だけで決める。**
+  // 指摘を受けた時の実際の状態: ことば帳3語・思い出帳11件。合計14件で判断すると
+  // 「たくさんある」ことになり、3語をぐるぐる回す元の状態のままになってしまう。
+  assert.deepEqual(learnedMentionLimits(14, 3), { mentions: 2, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(30, 9), { mentions: 2, maxPerTerm: 1 });
+  // ことば帳が10語そろえば散らばる。
+  assert.deepEqual(learnedMentionLimits(30, 10), { mentions: 2, maxPerTerm: 2 });
+
+  // 壊れた入力でも落ちない。
+  assert.deepEqual(learnedMentionLimits(), { mentions: 0, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(-5), { mentions: 0, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(NaN), { mentions: 0, maxPerTerm: 1 });
+  assert.deepEqual(learnedMentionLimits(14, NaN), { mentions: 2, maxPerTerm: 1 });
+}
+
+// --- 上限が limiter へ実際に効くか ---
+{
+  const limiter = createLearnedTermLimiter(["お昼寝"], { maxPerTerm: 1 });
+  assert.equal(limiter.accept("お昼寝したいです"), true);
+  assert.equal(limiter.accept("お昼寝の時間ですね"), false, "同じ語の2回目は落とす");
+  assert.equal(limiter.accept("今日はいい天気です"), true, "関係ない行は通す");
 }
 
 console.log("idle-vocabulary-utils（組み合わせのお題）: OK");

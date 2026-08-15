@@ -71,6 +71,7 @@ const { suggestReplyChoices } = require("./idle-choice-utils");
 const {
   createLearnedTermLimiter,
   extractLearnedTerms,
+  learnedMentionLimits,
   pickTermPair
 } = require("./idle-vocabulary-utils");
 const {
@@ -573,6 +574,12 @@ function pickTopicHeadline() {
   }
   if (!titles.length) return "";
   return titles[Math.floor(Math.random() * titles.length)];
+}
+
+// ことば帳と思い出帳の手持ち。少ないほど、触れる回数を絞る。
+function learnedMentionBudget() {
+  const { learnedWords, sharedMemories } = getGrowthData();
+  return learnedMentionLimits(learnedWords.length + sharedMemories.length, learnedWords.length);
 }
 
 function makeBikutanWorkLine(force = false) {
@@ -5683,7 +5690,9 @@ async function generateIdleLines() {
       "ユーザーへ問いかけるセリフも混ぜて構いません。びくたん自身の希望を尋ねる軽い質問（昼〜午後なら『お昼寝してもいいですか？』、夕方〜夜なら『そろそろお茶にしません？』など）も、今の時間帯に合うものだけ候補にしてください。",
       relationshipMemory
         ? [
-          "20個のうち最大2個だけ、ことば帳や思い出帳の内容に触れて構いません。毎回同じ記憶を使わないでください。",
+          // 手持ちが少ない時は回数も減らす。3語しか無いのに毎回2個使えば、
+          // 同じ語が続くのは避けられない。
+          `20個のうち最大${learnedMentionBudget().mentions}個だけ、ことば帳や思い出帳の内容に触れて構いません。毎回同じ記憶を使わないでください。`,
           // 「覚えています」で終わると、報告になって話が閉じる。
           // 覚えた言葉そのものを一段掘り下げて、中身のある話にしてもらう。
           "その時は「覚えています」「使ってみたいです」で終わらせず、**その言葉から一歩踏み込んだ話**にしてください。",
@@ -5774,7 +5783,8 @@ async function generateIdleLines() {
       // 既存の重複排除は文の類似度なので、「お昼寝したい」「お昼寝の時間」の
       // ように文が違えば素通りしてしまう。
       const termLimiter = createLearnedTermLimiter(
-        extractLearnedTerms(getGrowthData().learnedWords)
+        extractLearnedTerms(getGrowthData().learnedWords),
+        { maxPerTerm: learnedMentionBudget().maxPerTerm }
       );
       let termLimited = 0;
       for (const thread of usableThreads) {

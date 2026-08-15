@@ -576,6 +576,50 @@ function pickTopicHeadline() {
   return titles[Math.floor(Math.random() * titles.length)];
 }
 
+// 「フードの向きを、ちょっと直しています。」のような身なりの行は、データに
+// 依らないので**いつも一字一句同じ**になる。11個ほどの候補を順番に回すため、
+// 忘れた頃にきっちり同じ文が戻ってきて、記憶に残ってしまう。
+//
+// 起動のたびにAIへ作り直させて、日替わりにする。**独り言のたびに呼ぶと遅く
+// なる**ので、占いの音声と同じく作り置きにする。作れなければ元の固定文で動く。
+let bikutanLookLines = [];
+const BIKUTAN_LOOK_FALLBACK = [
+  "フードの向きを、ちょっと直しています。",
+  "髪の跳ね方が気になって、少し整えていました。"
+];
+
+async function prepareBikutanLookLines() {
+  const answer = await runAssistant([
+    "びくたんが、自分の身なりや体の様子について言う独り言を6個作ってください。",
+    "",
+    "びくたんはフード付きの服を着た女の子のキャラクターです。",
+    "",
+    "条件:",
+    "- 一人称は使わず、「〜しています」「〜していました」で終わる短い文",
+    "- **体の動きや身なりの話だけ**。持ち物・予定・外の景色・他人の話は入れない",
+    "- びくたんは画面の中にいるので、飲み食い・外出・天気を見ることはできない",
+    "- 1文20〜35文字くらい",
+    "",
+    "例: フードの向きを、ちょっと直しています。",
+    "例: 髪の跳ね方が気になって、少し整えていました。",
+    "",
+    "1行に1個、6行だけ返してください。番号や記号は付けないでください。"
+  ].join("\n"));
+
+  const lines = String(answer || "")
+    .split("\n")
+    .map((line) => line.replace(/^[-*0-9.、。\s]+/, "").trim())
+    .filter((line) => line.length >= 8 && line.length <= 60)
+    // 日本語以外や、できないことの主張が混ざったものは捨てる。
+    .filter((line) => looksJapanese(line) && isIdleCapabilitySafeLine(line))
+    .slice(0, 6);
+
+  if (lines.length >= 2) {
+    bikutanLookLines = lines;
+    console.log(`身なりの独り言を作り置きしました: ${lines.length}個`);
+  }
+}
+
 // ことば帳と思い出帳の手持ち。少ないほど、触れる回数を絞る。
 function learnedMentionBudget() {
   const { learnedWords, sharedMemories } = getGrowthData();
@@ -596,8 +640,7 @@ function makeBikutanWorkLine(force = false) {
   const diaryCount = getDailyDiaries().length;
   const ratedCount = getSourceRatings().length;
   const candidateLines = [
-    "フードの向きを、ちょっと直しています。",
-    "髪の跳ね方が気になって、少し整えていました。",
+    ...(bikutanLookLines.length ? bikutanLookLines : BIKUTAN_LOOK_FALLBACK),
     // 数を言うだけだと報告で終わる。中身に触れて、そこから話が続く形にする。
     // 掘り下げた話そのものは、AI生成の独り言側（relationshipMemory の指示）に
     // 任せる。ここは定型なので、続きを促すところまでにする。
@@ -646,9 +689,11 @@ function makeBikutanWorkLine(force = false) {
       ? `${ratedCount}件の記事に良し悪しをもらったので、次の話題選びに使っています。`
       : "記事の👍と👎をもらえると、次から話題を選びやすくなります。"
   ];
+  // 順番に回すと、フード → 髪 → ことば帳 … と**並びまで毎回同じ**になる。
+  // 開始位置をずらして、パターンを読ませない。
+  bikutanWorkLineIndex += 1 + Math.floor(Math.random() * candidateLines.length);
   for (let attempt = 0; attempt < candidateLines.length; attempt += 1) {
-    const candidate = candidateLines[bikutanWorkLineIndex % candidateLines.length];
-    bikutanWorkLineIndex += 1;
+    const candidate = candidateLines[(bikutanWorkLineIndex + attempt) % candidateLines.length];
     // 「AとBのどちら？」は定型の選択肢を作れないので（suggestReplyChoices は
     // 共感・許可・Yes/No だけ）、候補の側に持たせられるようにする。
     const text = typeof candidate === "string" ? candidate : candidate.text;
@@ -3339,6 +3384,13 @@ app.whenReady().then(() => {
     .catch((error) => {
       console.error("VOICEVOX prewarm failed:", error);
     });
+  // 身なりの独り言を作り直す。会話AIの用意が済むのを少し待つ。
+  // 失敗しても固定文で動くので、握りつぶしてよい。
+  setTimeout(() => {
+    prepareBikutanLookLines().catch((error) => {
+      console.error("Look line prewarm failed:", error?.message || error);
+    });
+  }, 20000);
   maybeShowVoicevoxGuide();
   maybeShowTrayGuide();
   maybeWelcomeBack();

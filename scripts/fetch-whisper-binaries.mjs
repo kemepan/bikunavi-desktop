@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertPinned } from "./download-pins.mjs";
 
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const arch = process.argv.includes("--arm64") ? "arm64" : "x64";
@@ -54,7 +55,11 @@ async function main() {
     if (!response.ok) {
       throw new Error(`ダウンロードに失敗しました（HTTP ${response.status}）: ${downloadUrl}`);
     }
-    fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
+    // 展開する前に確かめる。**展開してから気づくと、もう混ざっている。**
+    // 固定値は GitHub の Release API が返す digest と同じもの（download-pins.mjs）。
+    // Windows arm64 のアセットは上流に無いので、ここで分かる形で止まる。
+    const archive = assertPinned(assetName, Buffer.from(await response.arrayBuffer()));
+    fs.writeFileSync(archivePath, archive);
 
     // 展開は OS 標準のものを使う（依存を増やさない）。
     // macOS/Linux は unzip、Windows は PowerShell の Expand-Archive。

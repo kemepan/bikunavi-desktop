@@ -6,6 +6,10 @@ release/
 # 公開リポジトリへ含めないnote下書き・個人用メモ。
 docs/private/
 vendor/live2dcubismcore.min.js
+# npm から写してくる事前ビルド済みバンドル（postinstall で生成）。
+vendor/pixi.min.js
+vendor/unsafe-eval.min.js
+vendor/cubism4.min.js
 models/
 native/stt/*/whisper-cli
 native/stt/*/whisper-cli.exe

@@ -52,18 +52,21 @@
 
 ## pixi.js
 
+- ファイル: `vendor/pixi.min.js`
 - Copyright (c) 2013-2017 Mathew Groves, Chad Engler
 - The MIT License（下記全文）
 - https://github.com/pixijs/pixijs
 
 ## @pixi/unsafe-eval
 
+- ファイル: `vendor/unsafe-eval.min.js`
 - Copyright (c) 2013-2019 Mathew Groves, Chad Engler
 - The MIT License（下記全文）
 - https://github.com/pixijs/pixijs
 
 ## pixi-live2d-display
 
+- ファイル: `vendor/cubism4.min.js`
 - Copyright (c) 2020 Guan
 - MIT License（下記全文）
 - https://github.com/guansss/pixi-live2d-display

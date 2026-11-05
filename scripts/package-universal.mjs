@@ -72,9 +72,16 @@ function verifyDistributionAssets() {
   assertExecutableArchitecture(speechRecognizer, "arm64");
   if (fs.existsSync(arm64Whisper)) assertExecutableArchitecture(arm64Whisper, "arm64");
   // 同梱モデルを1つに絞ったので、arm64ビルドでも欠品を先に落とす。
+  // 画面が読むものは全部 vendor にある。**ここを見ていなかったせいで、
+  // 2026-07-08 に @pixi/unsafe-eval が欠けた配布物を作った**（ログは正常なのに
+  // キャラクターが出ない形で壊れ、原因に辿り着くまで時間を取られた）。
+  // 欠品はビルドの時点で落とす。
   for (const requiredPath of [
     path.join(projectDirectory, "models", bundledWhisperModel),
-    path.join(projectDirectory, "vendor", "live2dcubismcore.min.js")
+    path.join(projectDirectory, "vendor", "live2dcubismcore.min.js"),
+    path.join(projectDirectory, "vendor", "pixi.min.js"),
+    path.join(projectDirectory, "vendor", "unsafe-eval.min.js"),
+    path.join(projectDirectory, "vendor", "cubism4.min.js")
   ]) {
     if (!fs.existsSync(requiredPath)) {
       throw new Error(`配布に必要なファイルがありません: ${path.relative(projectDirectory, requiredPath)}`);

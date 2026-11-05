@@ -13,6 +13,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // --- 現物の照合 ---
 const targets = [
   ["live2dcubismcore.min.js", path.join(root, "vendor", "live2dcubismcore.min.js")],
+  ["pixi.min.js", path.join(root, "vendor", "pixi.min.js")],
+  ["unsafe-eval.min.js", path.join(root, "vendor", "unsafe-eval.min.js")],
+  ["cubism4.min.js", path.join(root, "vendor", "cubism4.min.js")],
   ["ggml-base.bin", path.join(root, "models", "ggml-base.bin")]
 ];
 const report = [];

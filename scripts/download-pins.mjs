@@ -32,7 +32,21 @@ export const PINS = {
   // arm64 版の Windows アセットは上流に存在しない（Win32 と x64 だけ）。
   // ここに無い名前を要求された時は、404 の前に分かる形で止めたい。
   "whisper-bin-x64.zip":
-    "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
+    "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
+
+  // ここから下は npm から来るが、**画面に読み込まれる事前ビルド済みの
+  // バンドル**なので同じ扱いにする。node_modules から vendor へ写して、
+  // どの実体を配ったのかを残す（scripts/vendor-browser-bundles.mjs）。
+  //
+  // 2026-11-05: pixi.js 6.5.10 / @pixi/unsafe-eval 6.5.10 /
+  // pixi-live2d-display 0.4.0 の dist から実測。版を上げる時は、
+  // ここで止まるので描画を確かめてから入れ替える。
+  "pixi.min.js":
+    "403f2f2ee8145fa17f60c5c89403056efe2680e5096ec2762036486914ed19c5",
+  "unsafe-eval.min.js":
+    "94bb4bfdbd015087772ee03bc4117e253c326e8ca73a61646bd331b22f6847ad",
+  "cubism4.min.js":
+    "af1267e6d52759b245766c578d905bfa025b532d5c3cc727c370957c4409e21b"
 };
 
 export function sha256(buffer) {

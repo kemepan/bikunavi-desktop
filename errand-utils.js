@@ -63,10 +63,25 @@
     return "unclear";
   }
 
-  // 設定から読んだ1件を、使える形か検査する。
+  // 実体のファイル名に許さないもの。**ここが実行の最初の門。**
   //
-  // **script はファイル名だけ。** パス区切りや `..` を許すと、設定ファイル1つで
-  // どこの何でも実行できる箱になってしまう。実体は必ず設定フォルダの中に置く。
+  // パス区切りと `..`: 許すと、設定ファイル1つでどこの何でも実行できる箱に
+  // なってしまう。実体は必ず設定フォルダの中に置く。
+  //
+  // `%`: Windows では実体を cmd.exe 経由でしか起動できず、cmd.exe は二重引用符の
+  // 中でも %VAR% を展開する。コマンドラインの側から打ち消す方法が無いので、名前の
+  // 側で持ち込ませない。`"` は Windows のファイル名では使えない文字だが、設定は
+  // 手で書けるので弾く。制御文字も同じ理由（引用の外へ抜ける形を作れる）。
+  function isSafeErrandScriptName(rawName) {
+    const name = String(rawName || "").trim();
+    if (!name) return false;
+    if (/[\\/]/.test(name) || name.includes("..")) return false;
+    if (/["%]/.test(name)) return false;
+    if (/[\u0000-\u001f]/.test(name)) return false;
+    return true;
+  }
+
+  // 設定から読んだ1件を、使える形か検査する。
   function normalizeErrandEntry(rawEntry) {
     const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
     const label = String(entry.label || "").trim().slice(0, 40);
@@ -80,7 +95,7 @@
       .filter(Boolean)
       .slice(0, 8);
     if (!label || !script || !keywords.length) return undefined;
-    if (/[\\/]/.test(script) || script.includes("..")) return undefined;
+    if (!isSafeErrandScriptName(script)) return undefined;
     return { id: script, label, script, keywords, verbs };
   }
 
@@ -102,6 +117,7 @@
   return {
     matchErrand,
     classifyConfirmation,
+    isSafeErrandScriptName,
     normalizeErrandEntry,
     normalizeErrandRegistry,
     CONFIRM_CHOICES: ["お願い", "やめておく"]

@@ -96,6 +96,7 @@ const {
   matchErrand,
   classifyConfirmation,
   normalizeErrandRegistry,
+  isSafeErrandScriptName,
   CONFIRM_CHOICES
 } = require("./errand-utils");
 const {
@@ -1020,6 +1021,34 @@ function restoreWindowPosition(width, height) {
   };
 }
 
+// 画面は3つとも自前のページだけを映す。window.open もページ内の移動も
+// 使っていないので、どちらも塞ぐ（確認済み: location への代入・window.open・
+// target="_blank" の <a> は renderer / data / apikey のどこにも無い）。
+//
+// 塞ぐ理由は、renderer が何かの理由で乗っ取られた時に外へ出る足を残さない
+// ためだけではない。Electron には「window.open で開いた窓が親の制限
+// （sandbox や browsing context の範囲）を引き継がない」系の不具合が繰り返し
+// 見つかっていて、こちら側で拒否してしまえばその系統の影響を受けない。
+// 使っていない道は、最初から通れないようにしておく。
+//
+// 外部リンクは companion:open-url（http/https のみ）から shell で開く。
+// アプリの中に別ウィンドウとして開かせる必要はどこにも無い。
+function denyWindowOpenAndNavigation(contents) {
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // loadURL による読み込みはここを通らない（プログラムからの移動は対象外）。
+  // 通るのはページ側が起こした移動だけなので、自分のページ以外は止める。
+  contents.on("will-navigate", (event, url) => {
+    if (url.startsWith(`${APP_SCHEME}://app/`)) return;
+    event.preventDefault();
+    console.error(`Blocked navigation: ${url}`);
+  });
+  // <webview> は使っていない。使っていないものは生やせないようにする。
+  contents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+    console.error("Blocked webview attach.");
+  });
+}
+
 function createWindow() {
   const { width, height } = SIZE_PRESETS[currentSize];
   const { x, y } = restoreWindowPosition(width, height);
@@ -1046,6 +1075,8 @@ function createWindow() {
       sandbox: true
     }
   });
+
+  denyWindowOpenAndNavigation(companionWindow.webContents);
 
   // macOSでは全スペース＋フルスクリーンにも付いてくる。
   // Windowsでは何も起きない（仮想デスクトップへの追従には Win32 の
@@ -3289,6 +3320,7 @@ async function speakPreparedAudio(file, text, kind = "answer") {
 app.whenReady().then(() => {
   // 暗号化保存されたAPIキーの復号（safeStorageはready後のみ使用可）
   anthropicApiKey = decryptStoredApiKey();
+  tightenErrandsFolder();
   protocol.handle(APP_SCHEME, (request) => {
     const url = new URL(request.url);
     const requestPath = path.normalize(decodeURIComponent(url.pathname));
@@ -3843,6 +3875,7 @@ function openDataWindow() {
       sandbox: true
     }
   });
+  denyWindowOpenAndNavigation(dataWindow.webContents);
   dataWindow.setMenuBarVisibility?.(false);
   // APIキーの保存先の書き方がOSで違う（apikey.html と同じ理由）。
   dataWindow.loadURL(`${APP_SCHEME}://app/data.html?platform=${process.platform}`);
@@ -4124,6 +4157,7 @@ function openApiKeyWindow(provider = "claude") {
       sandbox: true
     }
   });
+  denyWindowOpenAndNavigation(apiKeyWindow.webContents);
   apiKeyWindow.setMenuBarVisibility?.(false);
   // 保存先も暗号化の仕組みもOSで違う。説明文を実態に合わせるため渡す。
   apiKeyWindow.loadURL(
@@ -4159,6 +4193,19 @@ function writeGeminiApiKey(rawKey) {
   }
 }
 
+// 見せるのは「どのキーか見分けられる」ところまで。発行元の印（sk-ant- / AIza など）と
+// 末尾4文字あれば足りる。
+//
+// 長さを見ずに切ると、短いキーではほとんど全部が画面に出てしまう。今は扱う発行元が
+// 2つだけで長いキーしか来ないが、形の分からない発行元が増えた時に、ここが黙って
+// 「ほぼ平文の表示」に変わるのは避けたい。短いものは有無だけ伝える。
+function maskApiKey(rawKey) {
+  const key = String(rawKey || "");
+  if (!key) return "";
+  if (key.length < 20) return "…";
+  return `${key.slice(0, 7)}…${key.slice(-4)}`;
+}
+
 ipcMain.handle("companion:api-key-status", (_event, requestedProvider) => {
   const provider = requestedProvider === "gemini" ? "gemini" : "claude";
   const key = provider === "gemini"
@@ -4167,7 +4214,7 @@ ipcMain.handle("companion:api-key-status", (_event, requestedProvider) => {
   return {
     provider,
     hasKey: Boolean(key),
-    masked: key ? `${key.slice(0, 10)}…${key.slice(-4)}` : ""
+    masked: maskApiKey(key)
   };
 });
 
@@ -5963,14 +6010,48 @@ const ERRANDS_TEMPLATE = [
   }
 ];
 
+// 既にある置き場所の権限を直す。
+//
+// prepareErrandsFolder は設定を開いた時しか走らないので、そこだけに任せると、
+// すでに使っている人のフォルダは 755 のまま残ってしまう。起動時に一度だけ、
+// 広すぎる時だけ直す。
+//
+// Windows の st_mode は実際のアクセス権を表していない（常に 0666 前後を返す）。
+// ここで POSIX の権限ビットを見ると毎回「広すぎる」と判定してしまうので見ない。
+// Windows ではユーザープロファイル配下の ACL が既定で本人と管理者に限られる。
+function tightenErrandsFolder() {
+  if (process.platform === "win32") return;
+  const directory = errandsDirectory();
+  try {
+    if (!fs.existsSync(directory)) return;
+    if (!(fs.statSync(directory).mode & 0o077)) return;
+    fs.chmodSync(directory, 0o700);
+    console.log("お願いごとの置き場所の権限を 700 へ直しました。");
+  } catch (error) {
+    console.error("お願いごとの置き場所の権限を確認できませんでした:", error?.message || error);
+  }
+}
+
 // 雛形を置いて、置き場所を開く。既にあるものは上書きしない。
 function prepareErrandsFolder() {
   const directory = errandsDirectory();
-  fs.mkdirSync(directory, { recursive: true });
+  // ここは唯一「実行されるもの」の置き場所なので、本人だけが読み書きできる形にする。
+  // 他のデータ（state.json など）は 600 なのに、ここだけ既定の 755 で作られていた。
+  // 既にある分も直す（mkdir の mode は新規作成の時しか効かない）。
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(directory, 0o700);
+  } catch (error) {
+    console.error("お願いごとの置き場所の権限を変更できませんでした:", error?.message || error);
+  }
   const configPath = errandsConfigPath();
   let created = false;
   if (!fs.existsSync(configPath)) {
-    fs.writeFileSync(configPath, `${JSON.stringify(ERRANDS_TEMPLATE, null, 2)}\n`, "utf8");
+    fs.writeFileSync(
+      configPath,
+      `${JSON.stringify(ERRANDS_TEMPLATE, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 }
+    );
     created = true;
   }
   const samplePath = path.join(directory, "sample.sh");
@@ -5990,7 +6071,7 @@ function prepareErrandsFolder() {
         'echo "証拠を errands/サンプルの実行あと.txt に残しました"',
         ""
       ].join("\n"),
-      { encoding: "utf8", mode: 0o755 }
+      { encoding: "utf8", mode: 0o700 }
     );
     created = true;
   }
@@ -6015,7 +6096,8 @@ function loadErrandRegistry() {
 
 function errandScriptPath(errand) {
   const name = String(errand?.script || "").trim();
-  if (!name || /[\\/]/.test(name) || name.includes("..")) return "";
+  // 登録時と同じ門をもう一度通す（登録を経ずにここへ来る道を作らないため）。
+  if (!isSafeErrandScriptName(name)) return "";
   const full = path.join(errandsDirectory(), name);
   // 念のため、解決後も置き場所の中に収まっているか確かめる。
   const base = errandsDirectory() + path.sep;
@@ -6055,8 +6137,23 @@ function runErrand(errand) {
     let output = "";
     // 置き場所を作業フォルダにする。仕事が相対パスで書かれていても、
     // 設定フォルダの外を起点にしない。
+    //
+    // Windows は .bat / .cmd を直接 spawn できない（Node 20.12 以降は塞がれた）ので
+    // cmd.exe を挟むしかない。ただし shell: true は引数を空白で繋ぐだけで何も逃がして
+    // くれないため、置き場所のパスに空白が入っている利用者（C:\Users\My Name\… は
+    // 珍しくない）では、途中で切れた別のコマンドを起動しようとして静かに失敗する。
+    //
+    // `/s` + 全体を二重引用符でくくるのが、空白を含むパスを cmd.exe へ渡す定石。
+    // windowsVerbatimArguments で Node 側の引用を止め、ここで組んだ通りに渡す。
+    // 引用符の中でも %VAR% は展開されるので、それは名前の側で弾いている
+    // （errand-utils の isSafeErrandScriptName）。
     const child = process.platform === "win32"
-      ? spawn(script, [], { stdio: ["ignore", "pipe", "pipe"], cwd: errandsDirectory(), windowsHide: true, shell: true })
+      ? spawn(process.env.COMSPEC || "cmd.exe", ["/d", "/s", "/c", `"${script}"`], {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: errandsDirectory(),
+        windowsHide: true,
+        windowsVerbatimArguments: true
+      })
       : spawn("/bin/bash", [script], { stdio: ["ignore", "pipe", "pipe"], cwd: errandsDirectory(), windowsHide: true });
     // 止まったまま待ち続けない。人が見ていない所で長く走らせない。
     const timer = setTimeout(() => child.kill("SIGTERM"), 120000);

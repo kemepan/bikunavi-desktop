@@ -3,7 +3,8 @@ const {
   matchErrand,
   classifyConfirmation,
   normalizeErrandEntry,
-  normalizeErrandRegistry
+  normalizeErrandRegistry,
+  isSafeErrandScriptName
 } = require("../errand-utils");
 
 // 設定から読んだ想定の登録リスト。
@@ -94,6 +95,39 @@ const registry = normalizeErrandRegistry([
     assert.equal(classifyConfirmation(text), "unclear", text);
   }
   assert.equal(classifyConfirmation("いいです"), "no");
+}
+
+// --- 実体のファイル名（実行の門） ---
+{
+  // 普通の名前は通る。日本語も空白も、ファイル名としては正しい。
+  for (const name of ["sample.sh", "organize-inbox.sh", "今日のメモを作る.sh", "my errand.sh"]) {
+    assert.equal(isSafeErrandScriptName(name), true, name);
+  }
+  // 置き場所の外へ出る形は通さない。
+  for (const name of ["../evil.sh", "sub/evil.sh", "sub\\evil.sh", "/etc/passwd", "..", "a/../../b.sh"]) {
+    assert.equal(isSafeErrandScriptName(name), false, name);
+  }
+  // cmd.exe は二重引用符の中でも %VAR% を展開するので、名前に % は許さない。
+  for (const name of ["%APPDATA%.sh", "a%PATH%b.sh", 'say"hi.sh']) {
+    assert.equal(isSafeErrandScriptName(name), false, name);
+  }
+  // 制御文字（改行・タブ・NUL）で引用の外へ抜ける形も作らせない。
+  for (const name of ["a\nb.sh", "a\tb.sh", "a\u0000b.sh"]) {
+    assert.equal(isSafeErrandScriptName(name), false, name);
+  }
+  assert.equal(isSafeErrandScriptName(""), false);
+  assert.equal(isSafeErrandScriptName("   "), false);
+  assert.equal(isSafeErrandScriptName(undefined), false);
+
+  // 登録の段階で落ちること。危ない名前は registry に入らない。
+  assert.equal(normalizeErrandEntry({ label: "罠", script: "%APPDATA%.sh", keywords: ["罠"] }), undefined);
+  assert.equal(normalizeErrandEntry({ label: "罠", script: "../evil.sh", keywords: ["罠"] }), undefined);
+  const mixed = normalizeErrandRegistry([
+    { label: "まとも", script: "ok.sh", keywords: ["まとも"] },
+    { label: "罠", script: "%PATH%.sh", keywords: ["罠"] }
+  ]);
+  assert.equal(mixed.length, 1);
+  assert.equal(mixed[0].script, "ok.sh");
 }
 
 console.log("errand-utils: OK");

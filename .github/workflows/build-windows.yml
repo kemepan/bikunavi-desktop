@@ -80,6 +80,7 @@ jobs:
           foreach ($f in @(
             "main.js", "renderer.js", "assets/bikunavi_desktop",
             "conversation-providers.js", "vendor/live2dcubismcore.min.js",
+            "vendor/pixi.min.js", "vendor/unsafe-eval.min.js", "vendor/cubism4.min.js",
             "models/ggml-base.bin", "native/stt/win32-x64/whisper-cli.exe"
           )) {
             if (-not (Test-Path "$app/$f")) { throw "必要なファイルがありません: $f" }

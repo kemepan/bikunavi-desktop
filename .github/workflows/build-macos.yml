@@ -62,7 +62,8 @@ jobs:
           # speech-recognizer は universal ビルドで arm64/x86_64 の両方が要る。
           lipo -info native/speech-recognizer.app/Contents/MacOS/speech-recognizer
           lipo -info native/now-playing
-          for f in assets/app-icon.icns vendor/live2dcubismcore.min.js; do
+          for f in assets/app-icon.icns vendor/live2dcubismcore.min.js \
+                   vendor/pixi.min.js vendor/unsafe-eval.min.js vendor/cubism4.min.js; do
             test -s "$f" || { echo "必要なファイルがありません: $f"; exit 1; }
           done
           echo "確認できました"

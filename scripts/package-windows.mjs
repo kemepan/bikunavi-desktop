@@ -47,17 +47,30 @@ function reportWhisperState() {
 // 無いと起動してもキャラクターが表示されない。警告で済ませると
 // 気づかないまま配ってしまうので、macOS 版（package-universal.mjs の
 // verifyDistributionAssets）と同じくビルド自体を止める。
-function verifyCubismCore() {
-  const corePath = path.join(projectDirectory, "vendor", "live2dcubismcore.min.js");
-  if (fs.existsSync(corePath)) return;
-  throw new Error(
-    "vendor/live2dcubismcore.min.js がありません。`npm run fetch-core` を実行してください。" +
-    "（これが無い配布物は、起動してもキャラクターが表示されません）"
-  );
+//
+// 画面（index.html）が読むものは全部 vendor にある。Cubism Core だけを
+// 見ていたので、**2026-07-08 に @pixi/unsafe-eval が欠けた配布物を作った
+// のと同じ穴が Windows 側に残っていた**（ログは正常なのにキャラクターが
+// 出ない形で壊れる）。4ファイルとも欠品はビルドの時点で落とす。
+const RENDERER_ASSETS = [
+  { file: "live2dcubismcore.min.js", recover: "npm run fetch-core" },
+  { file: "pixi.min.js", recover: "npm run vendor-bundles" },
+  { file: "unsafe-eval.min.js", recover: "npm run vendor-bundles" },
+  { file: "cubism4.min.js", recover: "npm run vendor-bundles" }
+];
+
+function verifyRendererAssets() {
+  for (const { file, recover } of RENDERER_ASSETS) {
+    if (fs.existsSync(path.join(projectDirectory, "vendor", file))) continue;
+    throw new Error(
+      `vendor/${file} がありません。\`${recover}\` を実行してください。` +
+      "（これが無い配布物は、起動してもキャラクターが表示されません）"
+    );
+  }
 }
 
 async function main() {
-  verifyCubismCore();
+  verifyRendererAssets();
   reportWhisperState();
   reportIconState();
 

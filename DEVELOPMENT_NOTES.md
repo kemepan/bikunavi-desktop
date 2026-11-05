@@ -250,6 +250,12 @@ npm run fetch-core
 npm start
 ```
 
+Electron 45 から、electron パッケージの `postinstall` が無くなった（本体バイナリを
+npm install では落とさず、`install-electron` を明示的に走らせる形になった）。
+手順書も起動スクリプトも「npm install で本体ごと入る」前提で書いてあるので、
+こちら側の `postinstall` で元の振る舞いに戻している（`npm run fetch-electron` で
+単体でも取得できる）。`--ignore-scripts` を付けた時だけは手で走らせる必要がある。
+
 2026-07-06にLaunchAgentを追加。macOSログイン時に自動起動する。
 
 - 原本: `launchd/online.bikunitan.bikunavi-desktop.plist.template`

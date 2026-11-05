@@ -7,7 +7,7 @@ ELECTRON="$APP_DIR/node_modules/electron/dist/Electron.app/Contents/MacOS/Electr
 export BIKUNAVI_DATA_CHANNEL=dev
 
 if [[ ! -x "$ELECTRON" ]]; then
-  echo "Electron is not installed. Run npm install in $APP_DIR" >&2
+  echo "Electron is not installed. Run npm install (or npm run fetch-electron) in $APP_DIR" >&2
   exit 1
 fi
 
